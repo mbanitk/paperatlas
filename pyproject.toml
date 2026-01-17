@@ -1,0 +1,29 @@
+[project]
+name = "paperatlas"
+version = "0.1.0"
+description = "Concept-centric research paper recommendation system"
+requires-python = ">=3.10"
+
+dependencies = [
+  "torch",
+  "transformers",
+  "sentence-transformers",
+  "faiss-cpu",
+  "numpy",
+  "scipy",
+  "pandas",
+  "scikit-learn",
+  "pydantic>=2.0",
+  "pyyaml",
+  "fastapi",
+  "uvicorn",
+  "httpx"
+]
+
+[tool.uv]
+dev-dependencies = [
+  "pytest",
+  "black",
+  "ruff",
+  "ipykernel"
+]

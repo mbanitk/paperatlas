@@ -1,0 +1,13 @@
+torch
+transformers
+sentence-transformers
+faiss-cpu
+numpy
+scipy
+pandas
+scikit-learn
+pydantic>=2.0
+pyyaml
+fastapi
+uvicorn
+httpx

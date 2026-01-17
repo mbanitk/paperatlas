@@ -1,0 +1,18 @@
+Metadata-Version: 2.4
+Name: paperatlas
+Version: 0.1.0
+Summary: Concept-centric research paper recommendation system
+Requires-Python: >=3.10
+Requires-Dist: torch
+Requires-Dist: transformers
+Requires-Dist: sentence-transformers
+Requires-Dist: faiss-cpu
+Requires-Dist: numpy
+Requires-Dist: scipy
+Requires-Dist: pandas
+Requires-Dist: scikit-learn
+Requires-Dist: pydantic>=2.0
+Requires-Dist: pyyaml
+Requires-Dist: fastapi
+Requires-Dist: uvicorn
+Requires-Dist: httpx

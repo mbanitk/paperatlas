@@ -1,0 +1,6 @@
+project:
+  name: paperatlas
+
+embedding:
+  model: scibert
+  dimension: 768

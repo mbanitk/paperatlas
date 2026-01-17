@@ -1,0 +1,7 @@
+README.md
+pyproject.toml
+paperatlas.egg-info/PKG-INFO
+paperatlas.egg-info/SOURCES.txt
+paperatlas.egg-info/dependency_links.txt
+paperatlas.egg-info/requires.txt
+paperatlas.egg-info/top_level.txt
