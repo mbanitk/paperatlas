@@ -106,7 +106,11 @@ class IngestionPipeline:
 
     def _download_and_parse_pdf(self, pdf_url: str) -> Optional[str]:
         try:
-            response = httpx.get(str(pdf_url), timeout=60.0)
+            response = httpx.get(
+                str(pdf_url),
+                timeout=60.0,
+                follow_redirects=True,
+            )
             response.raise_for_status()
         except httpx.HTTPError as exc:
             logger.warning("Failed to download PDF %s: %s", pdf_url, exc)
