@@ -15,8 +15,15 @@ src/paperatlas/api/routes/recommend.py
 src/paperatlas/api/routes/search.py
 src/paperatlas/concepts/__init__.py
 src/paperatlas/concepts/extraction/__init__.py
+src/paperatlas/concepts/extraction/config.py
 src/paperatlas/concepts/extraction/heuristic_extractor.py
+src/paperatlas/concepts/extraction/ingest.py
 src/paperatlas/concepts/extraction/llm_extractor.py
+src/paperatlas/concepts/extraction/models.py
+src/paperatlas/concepts/extraction/pdf_parser.py
+src/paperatlas/concepts/extraction/pipeline.py
+src/paperatlas/concepts/extraction/sources.py
+src/paperatlas/concepts/extraction/storage.py
 src/paperatlas/concepts/extraction/prompts/__init__.py
 src/paperatlas/concepts/summarization/__init__.py
 src/paperatlas/concepts/summarization/concept_summarizer.py

@@ -16,3 +16,6 @@ Requires-Dist: pyyaml
 Requires-Dist: fastapi
 Requires-Dist: uvicorn
 Requires-Dist: httpx
+Requires-Dist: neo4j
+Requires-Dist: mysql-connector-python
+Requires-Dist: pymupdf

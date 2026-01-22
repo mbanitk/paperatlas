@@ -17,7 +17,10 @@ dependencies = [
   "pyyaml",
   "fastapi",
   "uvicorn",
-  "httpx"
+  "httpx",
+  "neo4j",
+  "mysql-connector-python",
+  "pymupdf"
 ]
 
 [tool.uv]

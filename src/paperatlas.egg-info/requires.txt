@@ -11,3 +11,6 @@ pyyaml
 fastapi
 uvicorn
 httpx
+neo4j
+mysql-connector-python
+pymupdf
