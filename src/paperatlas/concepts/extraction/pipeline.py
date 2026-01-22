@@ -11,7 +11,7 @@ from paperatlas.graph.neo4j_client import Neo4jClient
 from .config import get_mysql_config, get_neo4j_bolt_url, parse_neo4j_bolt_url
 from .models import PaperIdentifier, PaperMetadata, PaperRecord
 from .pdf_parser import PdfParser
-from .sources import ArxivClient, CrossrefClient, OpenAlexClient
+from .sources import ArxivClient
 from .storage import JsonPaperStore, MySQLPaperStore
 
 logger = logging.getLogger(__name__)
@@ -20,9 +20,7 @@ logger = logging.getLogger(__name__)
 class IngestionPipeline:
     def __init__(
         self,
-        openalex_client: Optional[OpenAlexClient] = None,
         arxiv_client: Optional[ArxivClient] = None,
-        crossref_client: Optional[CrossrefClient] = None,
         parser: Optional[PdfParser] = None,
         json_store: Optional[JsonPaperStore] = None,
         mysql_store: Optional[MySQLPaperStore] = None,
@@ -32,9 +30,7 @@ class IngestionPipeline:
         neo4j_bolt_url: Optional[str] = None,
         use_neo4j: bool = True,
     ) -> None:
-        self.openalex_client = openalex_client or OpenAlexClient()
         self.arxiv_client = arxiv_client or ArxivClient()
-        self.crossref_client = crossref_client or CrossrefClient()
         self.parser = parser or PdfParser()
         self.json_store = json_store or JsonPaperStore()
         self.mysql_store = mysql_store
@@ -62,19 +58,27 @@ class IngestionPipeline:
         for identifier in identifiers:
             metadata = self._fetch_metadata(identifier)
             if not metadata:
-                logger.warning("No metadata found for %s", identifier.model_dump())
+                logger.warning(
+                    "No metadata found for %s",
+                    identifier.model_dump(),
+                )
                 continue
             record = self._enrich_record(metadata)
             self._persist(record)
             records.append(record)
         return records
 
-    def ingest_query(self, query: str, max_results: int = 5) -> list[PaperRecord]:
-        metadata_results = self.openalex_client.search(query, per_page=max_results)
-        if not metadata_results:
-            metadata_results = self.crossref_client.search(query, rows=max_results)
-        if not metadata_results:
-            metadata_results = self.arxiv_client.search(query, max_results=max_results)
+    def ingest_query(
+        self,
+        query: str,
+        max_results: int = 5,
+        from_date: Optional[str] = None,
+    ) -> list[PaperRecord]:
+        metadata_results = self.arxiv_client.search(
+            query,
+            max_results=max_results,
+            from_date=from_date,
+        )
         records = []
         for metadata in metadata_results:
             record = self._enrich_record(metadata)
@@ -86,14 +90,12 @@ class IngestionPipeline:
         self,
         identifier: PaperIdentifier,
     ) -> Optional[PaperMetadata]:
-        if identifier.openalex_id:
-            return self.openalex_client.fetch_by_id(identifier.openalex_id)
-        if identifier.doi:
-            return self.openalex_client.fetch_by_doi(
-                identifier.doi
-            ) or self.crossref_client.fetch_by_doi(identifier.doi)
         if identifier.arxiv_id:
             return self.arxiv_client.fetch_by_id(identifier.arxiv_id)
+        if identifier.doi:
+            logger.warning("DOI ingestion is disabled without OpenAlex.")
+        if identifier.openalex_id:
+            logger.warning("OpenAlex ingestion is disabled.")
         return None
 
     def _enrich_record(self, metadata: PaperMetadata) -> PaperRecord:

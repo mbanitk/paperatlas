@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+from datetime import date, timedelta
 from typing import List
 
 from paperatlas.concepts.extraction.models import PaperIdentifier
@@ -14,9 +15,15 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Ingest papers into local storage.")
     parser.add_argument("--doi", action="append", default=[], help="DOI to ingest")
     parser.add_argument("--arxiv", action="append", default=[], help="arXiv ID to ingest")
-    parser.add_argument("--openalex", action="append", default=[], help="OpenAlex work ID to ingest")
+    # OpenAlex ingestion removed; keep CLI focused on arXiv/DOI inputs only.
     parser.add_argument("--query", help="Search query to ingest")
     parser.add_argument("--max-results", type=int, default=5)
+    parser.add_argument("--from-date", help="Filter results from YYYY-MM-DD")
+    parser.add_argument(
+        "--last-days",
+        type=int,
+        help="Filter results from the last N days",
+    )
     parser.add_argument("--mysql-host", help="MySQL host override")
     parser.add_argument("--mysql-port", type=int, help="MySQL port override")
     parser.add_argument("--mysql-user", help="MySQL user override")
@@ -43,16 +50,22 @@ def main() -> None:
         use_neo4j=not args.no_neo4j,
     )
     if args.query:
-        records = pipeline.ingest_query(args.query, max_results=args.max_results)
+        from_date = args.from_date
+        if args.last_days:
+            from_date = (date.today() - timedelta(days=args.last_days)).isoformat()
+        records = pipeline.ingest_query(
+            args.query,
+            max_results=args.max_results,
+            from_date=from_date,
+        )
         logger.info("Ingested %d records from query", len(records))
         return
 
     identifiers: List[PaperIdentifier] = []
     identifiers.extend(PaperIdentifier(doi=doi) for doi in args.doi)
     identifiers.extend(PaperIdentifier(arxiv_id=arxiv_id) for arxiv_id in args.arxiv)
-    identifiers.extend(PaperIdentifier(openalex_id=openalex_id) for openalex_id in args.openalex)
     if not identifiers:
-        raise SystemExit("Provide --doi, --arxiv, --openalex, or --query.")
+        raise SystemExit("Provide --doi, --arxiv, or --query.")
     records = pipeline.ingest_identifiers(identifiers)
     logger.info("Ingested %d records from identifiers", len(records))
 

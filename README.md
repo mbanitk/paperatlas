@@ -29,10 +29,15 @@ Example commands:
 # Search-based ingestion
 python -m paperatlas.concepts.extraction.ingest --query "graph neural networks"
 
+# Search only the last year
+python -m paperatlas.concepts.extraction.ingest \
+  --query "graph neural networks" \
+  --last-days 365 \
+  --max-results 50
+
 # Ingest by identifiers
 python -m paperatlas.concepts.extraction.ingest --doi 10.1038/s41586-020-2649-2
 python -m paperatlas.concepts.extraction.ingest --arxiv 2106.09685
-python -m paperatlas.concepts.extraction.ingest --openalex W2741809807
 
 # Override MySQL or Neo4j connection strings
 python -m paperatlas.concepts.extraction.ingest \

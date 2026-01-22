@@ -7,7 +7,7 @@ data is stored, and paper nodes are written into Neo4j.
 ### Overview
 
 Phase 1 introduces a minimal but functional ingestion pipeline with these goals:
-- Fetch metadata from OpenAlex, arXiv, and Crossref.
+- Fetch metadata from arXiv.
 - Parse PDFs with either GROBID or PyMuPDF (optional dependency).
 - Store raw text + metadata in local JSON, with an optional MySQL backend.
 - Define canonical paper IDs (DOI or arXiv ID, with a hash fallback).
@@ -19,20 +19,16 @@ Phase 1 introduces a minimal but functional ingestion pipeline with these goals:
 - `PaperMetadata` holds normalized metadata fields (title, abstract, authors, IDs,
   URLs, venue, publication year, and source).
 - `PaperRecord` wraps `PaperMetadata` plus raw text and the original source payload.
-- `PaperIdentifier` is a small helper model used when ingesting by DOI/arXiv/OpenAlex.
+- `PaperIdentifier` is a small helper model used when ingesting by DOI/arXiv.
 - Canonical ID logic is provided by `canonical_paper_id()`, which:
   1. uses normalized DOI if present,
   2. otherwise uses normalized arXiv ID,
-  3. otherwise uses a stable hash of a fallback (OpenAlex/Crossref ID or title).
+  3. otherwise uses a stable hash of a fallback (title).
 
 This ensures every paper has a stable `paper_id` used across storage backends.
 
 #### Metadata Sources (`src/paperatlas/concepts/extraction/sources.py`)
-Three lightweight clients call external APIs using `httpx`:
-- `OpenAlexClient` fetches works by DOI/OpenAlex ID or search query. It also
-  reconstructs abstract text from OpenAlex's inverted index.
-- `CrossrefClient` fetches works by DOI or title search. HTML is stripped from
-  abstracts, and the publication year is extracted from the best available date field.
+One lightweight client calls external APIs using `httpx`:
 - `ArxivClient` fetches by arXiv ID or search query. It parses the Atom feed and
   normalizes arXiv IDs, including URLs.
 
@@ -62,9 +58,8 @@ writing.
 
 Key flows:
 - `ingest_identifiers()` accepts a list of `PaperIdentifier` and fetches metadata
-  from OpenAlex, Crossref, or arXiv in that order.
-- `ingest_query()` searches OpenAlex first, then Crossref, then arXiv, and ingests
-  results.
+  from arXiv.
+- `ingest_query()` searches arXiv and ingests results.
 - For each paper, the pipeline:
   1. downloads the PDF (if a URL is available),
   2. parses it into raw text,
@@ -73,7 +68,7 @@ Key flows:
 
 #### CLI Entry Point (`src/paperatlas/concepts/extraction/ingest.py`)
 Provides a small CLI for local ingestion:
-- `--doi`, `--arxiv`, or `--openalex` to ingest by ID.
+- `--doi` or `--arxiv` to ingest by ID.
 - `--query` to ingest by search query.
 
 This is intended to run locally for small batches and quick validation.
