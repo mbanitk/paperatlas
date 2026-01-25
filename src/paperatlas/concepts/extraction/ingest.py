@@ -12,9 +12,27 @@ logger = logging.getLogger(__name__)
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Ingest papers into local storage.")
-    parser.add_argument("--doi", action="append", default=[], help="DOI to ingest")
-    parser.add_argument("--arxiv", action="append", default=[], help="arXiv ID to ingest")
+    parser = argparse.ArgumentParser(
+        description="Ingest papers into local storage."
+    )
+    parser.add_argument(
+        "--doi",
+        action="append",
+        default=[],
+        help="DOI to ingest",
+    )
+    parser.add_argument(
+        "--arxiv",
+        action="append",
+        default=[],
+        help="arXiv ID to ingest",
+    )
+    parser.add_argument(
+        "--url",
+        action="append",
+        default=[],
+        help="Paper URL to ingest",
+    )
     # OpenAlex ingestion removed; keep CLI focused on arXiv/DOI inputs only.
     parser.add_argument("--query", help="Search query to ingest")
     parser.add_argument("--max-results", type=int, default=5)
@@ -29,9 +47,20 @@ def main() -> None:
     parser.add_argument("--mysql-user", help="MySQL user override")
     parser.add_argument("--mysql-password", help="MySQL password override")
     parser.add_argument("--mysql-database", help="MySQL database override")
-    parser.add_argument("--no-mysql", action="store_true", help="Disable MySQL storage")
-    parser.add_argument("--neo4j-bolt-url", help="Neo4j Bolt URL override")
-    parser.add_argument("--no-neo4j", action="store_true", help="Disable Neo4j storage")
+    parser.add_argument(
+        "--no-mysql",
+        action="store_true",
+        help="Disable MySQL storage",
+    )
+    parser.add_argument(
+        "--neo4j-bolt-url",
+        help="Neo4j Bolt URL override",
+    )
+    parser.add_argument(
+        "--no-neo4j",
+        action="store_true",
+        help="Disable Neo4j storage",
+    )
     args = parser.parse_args()
 
     mysql_config = {
@@ -41,7 +70,11 @@ def main() -> None:
         "password": args.mysql_password,
         "database": args.mysql_database,
     }
-    mysql_config = {key: value for key, value in mysql_config.items() if value is not None}
+    mysql_config = {
+        key: value
+        for key, value in mysql_config.items()
+        if value is not None
+    }
 
     pipeline = IngestionPipeline(
         mysql_config=mysql_config or None,
@@ -61,13 +94,19 @@ def main() -> None:
         logger.info("Ingested %d records from query", len(records))
         return
 
+    records = []
+    if args.url:
+        records.extend(pipeline.ingest_urls(args.url))
+
     identifiers: List[PaperIdentifier] = []
     identifiers.extend(PaperIdentifier(doi=doi) for doi in args.doi)
     identifiers.extend(PaperIdentifier(arxiv_id=arxiv_id) for arxiv_id in args.arxiv)
-    if not identifiers:
-        raise SystemExit("Provide --doi, --arxiv, or --query.")
-    records = pipeline.ingest_identifiers(identifiers)
-    logger.info("Ingested %d records from identifiers", len(records))
+    if identifiers:
+        records.extend(pipeline.ingest_identifiers(identifiers))
+
+    if not records:
+        raise SystemExit("Provide --url, --doi, --arxiv, or --query.")
+    logger.info("Ingested %d records from inputs", len(records))
 
 
 if __name__ == "__main__":

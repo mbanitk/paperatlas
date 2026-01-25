@@ -40,6 +40,28 @@ class PaperRecord(BaseModel):
     source_payload: Optional[Dict] = None
 
 
+class ConceptCandidate(BaseModel):
+    name: str
+    source: str
+    evidence: Optional[str] = None
+    post: Optional[str] = None
+
+
+class ConceptSummary(BaseModel):
+    paragraph: str
+    bullets: List[str]
+
+
+class ConceptRecord(BaseModel):
+    concept_id: str
+    paper_id: str
+    name: str
+    summary: str
+    bullets: List[str]
+    source: str
+
+
+
 class PaperIdentifier(BaseModel):
     doi: Optional[str] = None
     arxiv_id: Optional[str] = None
@@ -57,6 +79,12 @@ def canonical_paper_id(doi: Optional[str], arxiv_id: Optional[str], fallback: st
 
     digest = hashlib.sha1(fallback.encode("utf-8")).hexdigest()
     return f"hash:{digest}"
+
+
+def canonical_concept_id(name: str) -> str:
+    normalized = " ".join(name.lower().strip().split())
+    digest = hashlib.sha1(normalized.encode("utf-8")).hexdigest()[:12]
+    return f"concept:{digest}"
 
 
 def normalize_doi(doi: Optional[str]) -> Optional[str]:

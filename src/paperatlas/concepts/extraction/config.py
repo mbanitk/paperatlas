@@ -9,6 +9,12 @@ DEFAULT_MYSQL_USER = "root"
 DEFAULT_MYSQL_PASSWORD = ""
 DEFAULT_MYSQL_DATABASE = "paperatlas"
 DEFAULT_NEO4J_BOLT_URL = "bolt://neo4j:root12345678@localhost:7687"
+DEFAULT_LLM_API_KEY = (
+    "sk-proj-aVmevBkgZRBc7j_wc8ZhlkvzUjYJZ36Au_mTF58maEVKt202ZQ5riexVq"
+    "UvYt2RdZycIqcrhn-T3BlbkFJRF5ooztRvlUeI2c8_nGwMv-oait4i4RSfc-fkVu"
+    "XD4FXH1xJTZktxK1y1bBbaQtTWTOoJ_sb0A"
+)
+DEFAULT_LLM_MODEL = "gpt-5.2"
 
 
 def get_neo4j_bolt_url() -> str:

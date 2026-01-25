@@ -65,6 +65,19 @@ class MySQLPaperStore:
                     )
                     """
                 )
+                cursor.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS paper_concepts (
+                        paper_id VARCHAR(255) NOT NULL,
+                        concept_id VARCHAR(64) NOT NULL,
+                        concept_name TEXT,
+                        summary LONGTEXT,
+                        source VARCHAR(50),
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        PRIMARY KEY (paper_id, concept_id)
+                    )
+                    """
+                )
                 cursor.execute("SELECT DATABASE()")
                 database = cursor.fetchone()[0]
                 cursor.execute(
@@ -160,6 +173,148 @@ class MySQLPaperStore:
                         if record.source_payload
                         else None,
                     ),
+                )
+            finally:
+                cursor.close()
+            conn.commit()
+        finally:
+            conn.close()
+
+    def fetch_papers(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        require_raw_text: bool = True,
+    ) -> list[dict]:
+        conn = self._connect()
+        try:
+            cursor = conn.cursor(dictionary=True)
+            try:
+                if require_raw_text:
+                    condition = "WHERE raw_text IS NOT NULL AND raw_text != ''"
+                else:
+                    condition = ""
+                query = f"""
+                    SELECT
+                        paper_id,
+                        title,
+                        abstract,
+                        venue,
+                        source,
+                        doi,
+                        arxiv_id,
+                        openalex_id,
+                        crossref_id,
+                        url,
+                        pdf_url,
+                        publication_year,
+                        authors,
+                        raw_text,
+                        source_payload
+                    FROM papers
+                    {condition}
+                    ORDER BY paper_id
+                    LIMIT %s OFFSET %s
+                """
+                cursor.execute(query, (limit, offset))
+                rows = cursor.fetchall()
+            finally:
+                cursor.close()
+        finally:
+            conn.close()
+        for row in rows:
+            if row.get("authors"):
+                try:
+                    row["authors"] = json.loads(row["authors"])
+                except Exception:
+                    row["authors"] = []
+            if row.get("source_payload"):
+                try:
+                    row["source_payload"] = json.loads(row["source_payload"])
+                except Exception:
+                    row["source_payload"] = None
+        return rows
+
+    def fetch_paper_by_id(self, paper_id: str) -> Optional[dict]:
+        conn = self._connect()
+        try:
+            cursor = conn.cursor(dictionary=True)
+            try:
+                cursor.execute(
+                    """
+                    SELECT
+                        paper_id,
+                        title,
+                        abstract,
+                        venue,
+                        source,
+                        doi,
+                        arxiv_id,
+                        openalex_id,
+                        crossref_id,
+                        url,
+                        pdf_url,
+                        publication_year,
+                        authors,
+                        raw_text,
+                        source_payload
+                    FROM papers
+                    WHERE paper_id = %s
+                    LIMIT 1
+                    """,
+                    (paper_id,),
+                )
+                row = cursor.fetchone()
+            finally:
+                cursor.close()
+        finally:
+            conn.close()
+        if not row:
+            return None
+        if row.get("authors"):
+            try:
+                row["authors"] = json.loads(row["authors"])
+            except Exception:
+                row["authors"] = []
+        if row.get("source_payload"):
+            try:
+                row["source_payload"] = json.loads(row["source_payload"])
+            except Exception:
+                row["source_payload"] = None
+        return row
+
+    def save_concepts(self, records: list[dict]) -> None:
+        if not records:
+            return
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
+            try:
+                cursor.executemany(
+                    """
+                    INSERT INTO paper_concepts (
+                        paper_id,
+                        concept_id,
+                        concept_name,
+                        summary,
+                        source
+                    )
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON DUPLICATE KEY UPDATE
+                        concept_name = VALUES(concept_name),
+                        summary = VALUES(summary),
+                        source = VALUES(source)
+                    """,
+                    [
+                        (
+                            record["paper_id"],
+                            record["concept_id"],
+                            record["name"],
+                            record["summary"],
+                            record["source"],
+                        )
+                        for record in records
+                    ],
                 )
             finally:
                 cursor.close()

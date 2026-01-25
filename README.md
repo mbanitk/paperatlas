@@ -18,6 +18,10 @@ This repo is intentionally scaffolded with **minimal stubs** so you can iterate 
 uvicorn paperatlas.api.main:app --reload
 ```
 
+## LLM Configuration
+
+LLM credentials and model defaults are configured in code for Phase 2.
+
 ## Phase 1 Ingestion
 
 Phase 1 ingests paper metadata, downloads PDFs when available, stores JSON/MySQL
@@ -52,6 +56,20 @@ python -m paperatlas.concepts.extraction.ingest \
 python -m paperatlas.concepts.extraction.ingest --query "graph neural networks" --no-mysql
 python -m paperatlas.concepts.extraction.ingest --query "graph neural networks" --no-neo4j
 ```
+
+## Phase 2 Concept Extraction
+
+Run the Phase 2 pipeline (pulls from MySQL, extracts concepts, writes logs):
+
+```bash
+python -m paperatlas.concepts.extraction.generate --limit 500 --batch-size 50
+```
+
+Optional flags:
+- `--offset 0` for pagination
+- `--no-neo4j` to skip graph writes
+- `--no-llm` or `--offline` to skip LLM calls (heuristics only)
+- `--log-dir data/concepts/phase2` to customize output logs
 
 ## Notes
 
