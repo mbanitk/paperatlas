@@ -16,8 +16,8 @@ from .config import DEFAULT_LLM_API_KEY, DEFAULT_LLM_MODEL
 logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """You are a world-class research scientist,
-technical communicator,
-and LinkedIn content strategist and content creator. Your task is to deeply read and analyze
+technical communicator, and LinkedIn content strategist and content creator.
+Your task is to deeply read and analyze
 the following research paper and generate a separate, high-impact LinkedIn
 post for each distinct concept introduced, proposed, analyzed, or discussed
 in the paper.
@@ -140,7 +140,7 @@ class LLMConfig:
     api_key: str
     model: str
     base_url: str = "https://api.openai.com/v1"
-    timeout: float = 60.0
+    timeout: float = 300.0  # 5 minutes for processing full papers
 
 
 class LLMClient:
@@ -184,7 +184,7 @@ class LLMClient:
             )
             response.raise_for_status()
         data = response.json()
-
+        print(f"Response: {data}")
         output_blocks = data.get("output", [])
         for block in output_blocks:
             for item in block.get("content", []):
@@ -331,7 +331,7 @@ def build_default_llm_client() -> Optional[LLMClient]:
         "PAPERATLAS_LLM_BASE_URL",
         "https://api.openai.com/v1",
     )
-    timeout = float(os.getenv("PAPERATLAS_LLM_TIMEOUT", "60"))
+    timeout = float(os.getenv("PAPERATLAS_LLM_TIMEOUT", "300"))
     return LLMClient(
         LLMConfig(
             api_key=api_key,

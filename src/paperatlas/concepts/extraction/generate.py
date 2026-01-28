@@ -52,6 +52,17 @@ def main() -> None:
         action="store_true",
         help="Resume from last successful paper checkpoint",
     )
+    parser.add_argument(
+        "--skip-processed",
+        action="store_true",
+        default=True,
+        help="Skip papers that already have concepts in paper_concepts table (default: True)",
+    )
+    parser.add_argument(
+        "--reprocess-all",
+        action="store_true",
+        help="Reprocess all papers, even those already processed (overrides --skip-processed)",
+    )
     parser.add_argument("--offline", action="store_true")
     parser.add_argument("--no-llm", action="store_true")
     parser.add_argument("--no-neo4j", action="store_true")
@@ -163,31 +174,78 @@ def main() -> None:
                         checkpoint.get("last_paper_id"),
                     )
 
+            # Determine whether to skip already-processed papers
+            skip_processed = args.skip_processed and not args.reprocess_all
+
+            if skip_processed:
+                unprocessed_count = pipeline.mysql_store.count_unprocessed_papers()
+                logger.info(
+                    "Processing only unprocessed papers (not in paper_concepts table). "
+                    "Found %d unprocessed papers.",
+                    unprocessed_count,
+                )
+            else:
+                logger.info("Processing all papers (including already-processed)")
+
             for batch_offset in range(
                 start_offset,
                 args.offset + args.limit,
                 args.batch_size,
             ):
-                rows = pipeline.mysql_store.fetch_papers(
-                    limit=min(
-                        args.batch_size,
-                        args.offset + args.limit - batch_offset,
-                    ),
-                    offset=batch_offset,
-                )
+                # Use fetch_unprocessed_papers or fetch_papers based on flag
+                if skip_processed:
+                    rows = pipeline.mysql_store.fetch_unprocessed_papers(
+                        limit=min(
+                            args.batch_size,
+                            args.offset + args.limit - batch_offset,
+                        ),
+                        offset=batch_offset,
+                    )
+                else:
+                    rows = pipeline.mysql_store.fetch_papers(
+                        limit=min(
+                            args.batch_size,
+                            args.offset + args.limit - batch_offset,
+                        ),
+                        offset=batch_offset,
+                    )
                 if not rows:
+                    logger.info(
+                        "No more papers to process at offset %d. "
+                        "Total processed: %d papers, %d concepts.",
+                        batch_offset,
+                        total_processed,
+                        total_concepts,
+                    )
                     break
+                logger.info(
+                    "Processing batch at offset %d (%d papers)",
+                    batch_offset,
+                    len(rows),
+                )
                 for index, row in enumerate(rows):
+                    paper_id = row["paper_id"]
+                    logger.info(
+                        "Processing paper %d/%d: %s",
+                        total_processed + 1,
+                        args.offset + args.limit,
+                        paper_id,
+                    )
                     records = pipeline.process_paper(row)
                     total_processed += 1
                     total_concepts += len(records)
+                    logger.info(
+                        "Paper %s: extracted %d concepts",
+                        paper_id,
+                        len(records),
+                    )
                     if (
                         len(records) < args.min_concepts
                         or len(records) > args.max_concepts
                     ):
                         logger.warning(
                             "Paper %s yielded %d concepts (expected %d-%d).",
-                            row["paper_id"],
+                            paper_id,
                             len(records),
                             args.min_concepts,
                             args.max_concepts,

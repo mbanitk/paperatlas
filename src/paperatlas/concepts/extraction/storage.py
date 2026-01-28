@@ -235,6 +235,91 @@ class MySQLPaperStore:
                     row["source_payload"] = None
         return rows
 
+    def count_unprocessed_papers(self, require_raw_text: bool = True) -> int:
+        """Count papers that haven't been processed yet (not in paper_concepts table)."""
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
+            try:
+                text_condition = (
+                    "AND p.raw_text IS NOT NULL AND p.raw_text != ''"
+                    if require_raw_text
+                    else ""
+                )
+                query = f"""
+                    SELECT COUNT(*) as count
+                    FROM papers p
+                    LEFT JOIN paper_concepts pc ON p.paper_id = pc.paper_id
+                    WHERE pc.paper_id IS NULL
+                    {text_condition}
+                """
+                cursor.execute(query)
+                result = cursor.fetchone()
+                return result[0] if result else 0
+            finally:
+                cursor.close()
+        finally:
+            conn.close()
+
+    def fetch_unprocessed_papers(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        require_raw_text: bool = True,
+    ) -> list[dict]:
+        """Fetch papers that haven't been processed yet (not in paper_concepts table)."""
+        conn = self._connect()
+        try:
+            cursor = conn.cursor(dictionary=True)
+            try:
+                text_condition = (
+                    "AND p.raw_text IS NOT NULL AND p.raw_text != ''"
+                    if require_raw_text
+                    else ""
+                )
+                query = f"""
+                    SELECT
+                        p.paper_id,
+                        p.title,
+                        p.abstract,
+                        p.venue,
+                        p.source,
+                        p.doi,
+                        p.arxiv_id,
+                        p.openalex_id,
+                        p.crossref_id,
+                        p.url,
+                        p.pdf_url,
+                        p.publication_year,
+                        p.authors,
+                        p.raw_text,
+                        p.source_payload
+                    FROM papers p
+                    LEFT JOIN paper_concepts pc ON p.paper_id = pc.paper_id
+                    WHERE pc.paper_id IS NULL
+                    {text_condition}
+                    ORDER BY p.paper_id
+                    LIMIT %s OFFSET %s
+                """
+                cursor.execute(query, (limit, offset))
+                rows = cursor.fetchall()
+            finally:
+                cursor.close()
+        finally:
+            conn.close()
+        for row in rows:
+            if row.get("authors"):
+                try:
+                    row["authors"] = json.loads(row["authors"])
+                except Exception:
+                    row["authors"] = []
+            if row.get("source_payload"):
+                try:
+                    row["source_payload"] = json.loads(row["source_payload"])
+                except Exception:
+                    row["source_payload"] = None
+        return rows
+
     def fetch_paper_by_id(self, paper_id: str) -> Optional[dict]:
         conn = self._connect()
         try:

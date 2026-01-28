@@ -26,8 +26,8 @@ class ConceptSummarizer:
     @staticmethod
     def _system_prompt() -> str:
         return (
-            "You are a technical writer. Summarize the concept in a paragraph "
-            "and 3-5 bullets."
+            "You are a technical writer crafting LinkedIn-style micro posts. "
+            "Write in a clear, professional tone with no emojis."
         )
 
     @staticmethod
@@ -35,32 +35,38 @@ class ConceptSummarizer:
         title = f"Concept: {concept_name}\n\n" if concept_name else ""
         return (
             f"{title}Source text:\n{concept_text}\n\n"
-            "Return JSON with keys: paragraph, bullets."
+            "Output plain text with this exact structure:\n"
+            "1) A single-sentence hook question (end with '?').\n"
+            "2) A short paragraph (2-4 sentences) answering the hook.\n"
+            "3) A line that says: Why this matters:\n"
+            "4) 3-5 bullet lines, each starting with '- '.\n"
+            "5) A one-sentence CTA to explore the paper or concept.\n"
+            "Do not output JSON or extra labels."
         )
 
     @staticmethod
     def _parse_response(response: str) -> Optional[Dict]:
-        match = re.search(r"\{.*\}", response, flags=re.DOTALL)
-        if not match:
-            return None
-        try:
-            import json
-
-            data = json.loads(match.group(0))
-        except Exception:
-            return None
-        paragraph = data.get("paragraph")
-        bullets = data.get("bullets")
-        if not paragraph or not isinstance(bullets, list):
+        lines = [
+            line.strip()
+            for line in response.splitlines()
+            if line.strip()
+        ]
+        if not lines:
             return None
         bullets = [
-            str(bullet).strip()
-            for bullet in bullets
-            if str(bullet).strip()
+            line.lstrip("-•").strip()
+            for line in lines
+            if line.startswith(("-", "•"))
         ]
         if len(bullets) < 3:
             return None
-        return {"paragraph": paragraph.strip(), "bullets": bullets[:5]}
+        non_bullets = [
+            line for line in lines if not line.startswith(("-", "•"))
+        ]
+        if not non_bullets:
+            return None
+        paragraph = "\n\n".join(non_bullets).strip()
+        return {"paragraph": paragraph, "bullets": bullets[:5]}
 
     @staticmethod
     def _heuristic_summary(
@@ -68,17 +74,37 @@ class ConceptSummarizer:
         concept_name: Optional[str],
     ) -> Dict:
         sentences = re.split(r"(?<=[.!?])\s+", concept_text.strip())
-        sentences = [sentence.strip() for sentence in sentences if sentence.strip()]
+        sentences = [
+            sentence.strip()
+            for sentence in sentences
+            if sentence.strip()
+        ]
         if not sentences and concept_name:
             sentences = [
                 f"{concept_name} is a key concept discussed in this paper."
             ]
         paragraph = " ".join(sentences[:3]).strip()
+        question = (
+            f"How does {concept_name} work?"
+            if concept_name
+            else "Why does this concept matter?"
+        )
+        cta = (
+            f"If you're exploring {concept_name}, this is worth a closer look."
+            if concept_name
+            else "If you're exploring this area, it's worth a closer look."
+        )
+        paragraph = "\n\n".join(
+            [question, paragraph, "Why this matters:", cta]
+        )
         bullets = _select_bullets(sentences, concept_name)
         return {"paragraph": paragraph, "bullets": bullets}
 
 
-def _select_bullets(sentences: List[str], concept_name: Optional[str]) -> List[str]:
+def _select_bullets(
+    sentences: List[str],
+    concept_name: Optional[str],
+) -> List[str]:
     candidates = sentences[3:10]
     if len(candidates) < 3:
         candidates = sentences[:5]
