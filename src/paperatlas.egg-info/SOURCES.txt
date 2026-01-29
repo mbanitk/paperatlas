@@ -16,6 +16,7 @@ src/paperatlas/api/routes/search.py
 src/paperatlas/concepts/__init__.py
 src/paperatlas/concepts/extraction/__init__.py
 src/paperatlas/concepts/extraction/config.py
+src/paperatlas/concepts/extraction/generate.py
 src/paperatlas/concepts/extraction/heuristic_extractor.py
 src/paperatlas/concepts/extraction/ingest.py
 src/paperatlas/concepts/extraction/llm_extractor.py
@@ -27,6 +28,9 @@ src/paperatlas/concepts/extraction/storage.py
 src/paperatlas/concepts/extraction/prompts/__init__.py
 src/paperatlas/concepts/summarization/__init__.py
 src/paperatlas/concepts/summarization/concept_summarizer.py
+src/paperatlas/concepts/tests/__init__.py
+src/paperatlas/concepts/tests/test_extraction.py
+src/paperatlas/concepts/tests/test_summarization.py
 src/paperatlas/concepts/validation/__init__.py
 src/paperatlas/concepts/validation/deduplication.py
 src/paperatlas/config/__init__.py
@@ -65,6 +69,8 @@ src/paperatlas/recommender/__init__.py
 src/paperatlas/recommender/concept_recommender.py
 src/paperatlas/recommender/hybrid_ranker.py
 src/paperatlas/recommender/paper_recommender.py
+src/paperatlas/scripts/__init__.py
+src/paperatlas/scripts/run_phase2_pipeline.py
 src/paperatlas/tests/__init__.py
 src/paperatlas/ui/__init__.py
 src/paperatlas/user/__init__.py

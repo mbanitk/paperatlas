@@ -1,7 +1,53 @@
 # PaperAtlas UI Development Prompt for Replit
 
 ## Project Overview
-Build a **LinkedIn-style social feed application** for academic research papers and concepts. This is the frontend + backend API for **PaperAtlas** - a research paper recommendation system that extracts concepts from papers and presents them as engaging, digestible content.
+Build a **LinkedIn-style social feed application** for academic research papers and concepts. This is the frontend + backend API for **PaperAtlas** - a research paper recommendation system that extracts concepts from papers and presents them as engaging, digestible content. I want exact linkedin feed page which i am attaching the screenshot here, the concept from the paper would normal linkedin feed. the concept will be on the feed as any other human make post on the feed. 
+
+Sample feed are these: 
+mysql> select summary from paper_concepts limit 5 \G
+*************************** 1. row ***************************
+summary: How do Transformers train autoregressive decoders in parallel without letting the model “see” future tokens?
+
+They use masked (causal) self-attention in the decoder: each position can attend only to earlier positions, never to subsequent ones. The mask is applied inside attention by setting disallowed attention logits to −∞ before the softmax. This keeps the autoregressive factorization correct while still computing attention for all positions in one parallel pass during training.
+
+Why this matters:
+
+Revisit the Transformer decoder section with causal masking in mind—it’s the key step that makes “Transformer as a language model” click.
+*************************** 2. row ***************************
+summary: Can a model built for translation prove it’s truly general-purpose?
+
+The Transformer wasn’t just a better alignment machine for machine translation; it also worked well on English constituency parsing, even when training data was limited. That result matters because parsing has different outputs, constraints, and failure modes than translation. It helped establish attention-based modeling as a reusable building block rather than a task-specific design.
+
+Why this matters:
+
+If you’re exploring model generalization, revisit the Transformer’s parsing results and ask what they imply about architectural primitives.
+*************************** 3. row ***************************
+summary: Why does translation require more than just generating the next word?
+
+In Transformer-style encoder–decoder models, the decoder uses cross-attention to look back at the encoder’s outputs while it generates each token. Queries come from the decoder’s current state, while keys and values come from the encoded source sequence. This creates a direct, dynamic alignment between source positions and each generated output token.
+
+Why this matters:
+
+If you build conditional generation systems, study cross-attention as the core pattern for grounding outputs in external context.
+*************************** 4. row ***************************
+summary: Have you ever wondered why a single square root can make attention train reliably instead of collapsing into tiny gradients?
+
+Scaled dot-product attention computes softmax(QKᵀ / √dₖ) V, and the √dₖ term is doing real work. As the key/query dimension grows, raw dot products grow in magnitude, which makes the softmax distribution overly sharp. Dividing by √dₖ keeps logits in a healthier range so gradients stay usable during optimization.
+
+Why this matters:
+
+Revisit the scaling argument in the original Transformer paper and trace how √dₖ changes the optimization behavior.
+*************************** 5. row ***************************
+summary: Why should modeling long-range dependencies require a long computation chain?
+
+Self-attention makes every token able to directly reference every other token within a layer, so distant relationships don’t have to be relayed step-by-step. In RNNs, information must traverse many time steps; in CNNs, it must pass through multiple layers as receptive fields grow. With self-attention, the maximum path length between any two tokens becomes O(1) per layer, making “global context” a first-class operation.
+
+Why this matters:
+
+Explore the Transformer paper’s complexity and path-length comparison to internalize why self-attention scales so well for global dependencies.
+5 rows in set (0.00 sec)
+
+mysql>
 
 ---
 
