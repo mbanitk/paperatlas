@@ -55,6 +55,17 @@ def clean_text(value: Optional[str]) -> Optional[str]:
     return value.replace("\x00", "") if value else value
 
 
+def clean_json(value: Any) -> Any:
+    """Recursively strip NUL characters, which JSONB rejects."""
+    if isinstance(value, str):
+        return value.replace("\x00", "")
+    if isinstance(value, dict):
+        return {key: clean_json(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [clean_json(item) for item in value]
+    return value
+
+
 def paper_row(paper: Paper) -> dict[str, Any]:
     return {field: getattr(paper, field) for field in PAPER_ROW_FIELDS}
 
@@ -234,7 +245,12 @@ class PaperStore:
                 )
                 session.add(concept)
                 session.flush()
+                concept.summary = clean_text(concept.summary)
                 claim_data = concept_data.get("claim")
+                if claim_data:
+                    claim_data = {
+                        key: (item if key == "embedding" else clean_json(item)) for key, item in claim_data.items()
+                    }
                 if claim_data:
                     claim = Claim(
                         paper_id=paper_id, concept_id=concept.id, **claim_data

@@ -17,6 +17,7 @@ from sqlalchemy import func, select, update
 
 from paperatlas.db.engine import session_scope
 from paperatlas.db.schema import Claim, Concept, Match, Paper, PaperTopic, Project, Topic
+from paperatlas.db.store import clean_json
 from paperatlas.llm.client import LLMClient, LLMError, build_default_llm_client
 
 logger = logging.getLogger(__name__)
@@ -210,7 +211,7 @@ def evidence_window(raw_text: Optional[str], quote: Optional[str], width: int = 
 
 
 def _stamp(payload: dict[str, Any], llm: LLMClient) -> dict[str, Any]:
-    return {**payload, "generated_at": datetime.now(UTC).isoformat(), "model": llm.model}
+    return clean_json({**payload, "generated_at": datetime.now(UTC).isoformat(), "model": llm.model})
 
 
 def _require_llm(llm: Optional[LLMClient]) -> LLMClient:
