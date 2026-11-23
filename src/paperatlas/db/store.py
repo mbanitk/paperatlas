@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from typing import Any, Iterable, Optional, Sequence
 
@@ -55,10 +56,13 @@ def clean_text(value: Optional[str]) -> Optional[str]:
     return value.replace("\x00", "") if value else value
 
 
+_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+
+
 def clean_json(value: Any) -> Any:
-    """Recursively strip NUL characters, which JSONB rejects."""
+    """Recursively strip NUL/control characters (JSONB rejects NUL; others are model glitches)."""
     if isinstance(value, str):
-        return value.replace("\x00", "")
+        return _CONTROL.sub("", value)
     if isinstance(value, dict):
         return {key: clean_json(item) for key, item in value.items()}
     if isinstance(value, list):
