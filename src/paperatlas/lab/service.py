@@ -554,6 +554,7 @@ def _stage_progress(status: str, error: Optional[str]) -> list[dict[str, str]]:
     for stage in STAGES:
         if status in ("failed", "cancelled", "cancelling") and stage == current:
             state = status
+            reached = False
         elif stage == current:
             state = "done" if status in ("merged", "dropped") else ("waiting" if status in GATE_OF_STATUS else "active")
             if status == "rejected":

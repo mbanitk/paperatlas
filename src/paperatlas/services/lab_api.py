@@ -97,7 +97,10 @@ def read_project(project_id: int) -> dict[str, Any]:
 @app.post("/projects/{project_id}/profile", tags=["projects"])
 def reprofile(project_id: int) -> dict[str, Any]:
     project = _project_or_404(project_id)
-    return register_project(project.repo_path, project.name)
+    try:
+        return register_project(project.repo_path, project.name)
+    except ProfileError as exc:
+        raise service.ServiceError(str(exc)) from exc
 
 
 @app.post("/projects/{project_id}/match", tags=["recommendations"], response_model=JobQueued)

@@ -148,5 +148,5 @@ def test_failed_experiment_reports_the_stage_it_stopped_in(lab, monkeypatch):
     drain()
     detail = service.get_experiment(experiment_id)
     assert detail["status"] == "failed" and detail["stage"] == "build"
-    assert [s["state"] for s in detail["stages"]][:3] == ["done", "done", "failed"]
+    assert [s["state"] for s in detail["stages"]] == ["done", "done", "failed"] + ["pending"] * 4
     assert "compiler exploded" in detail["error"]
