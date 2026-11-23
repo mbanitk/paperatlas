@@ -44,6 +44,7 @@ def run_command(
     log_path.parent.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
     last_progress = started
+    last_reported = ""
     tail: deque[str] = deque(maxlen=tail_lines)
     shell = isinstance(command, str)
     full_env = {**os.environ, **(env or {})}
@@ -97,7 +98,13 @@ def run_command(
                 return CommandResult(124, "\n".join(tail), now - started, log_path)
             if on_progress and now - last_progress > progress_every_s:
                 latest = next((entry for entry in reversed(tail) if entry.strip()), "")
-                on_progress(latest or f"still running ({now - started:.0f}s elapsed)")
+                if latest and latest != last_reported:
+                    on_progress(latest)
+                    last_reported = latest
+                elif now - last_progress > progress_every_s * 3:
+                    on_progress(f"still running ({now - started:.0f}s elapsed)")
+                else:
+                    continue
                 last_progress = now
         process.wait()
         log.write(f"[exit {process.returncode}]\n")
