@@ -3,7 +3,7 @@ import { useExplainClaim, useExplainPaper, useExplainTopic } from '../api/querie
 import type { Claim, ClaimExplainer, PaperExplainer, Project } from '../api/types'
 import { claimedEffectView, compareHardware, EFFORT_LEVEL, riskLevel, type Level } from '../lib/claims'
 import { formatPct, relativeTime } from '../lib/format'
-import { changedNodes, FlowDiagram } from './FlowDiagram'
+import { FlowDiagram } from './FlowDiagram'
 import { AlertIcon, CheckIcon, SparkIcon } from './Icons'
 import { useToast } from './Toast'
 import { Button, Chip, InlineError, cx, errorMessage } from './ui'
@@ -245,28 +245,6 @@ export function ClaimLead({ claim, explainer, clamp = true }: { claim: Claim; ex
           <GlossaryText text={explainer.problem} glossary={explainer.glossary} />
         </p>
       )}
-    </div>
-  )
-}
-
-/** Mini diagram thumbnail + "adds: …" caption. */
-export function DiagramThumb({ explainer, className }: { explainer?: { diagram?: ClaimExplainer['diagram'] } | null; className?: string }) {
-  const diagram = explainer?.diagram
-  if (!diagram?.nodes?.length) return null
-  const added = changedNodes(diagram)
-  return (
-    <div className={cx('rounded-md border border-line-muted bg-canvas-subtle/50 px-2.5 py-2', className)}>
-      <FlowDiagram diagram={diagram} variant="mini" />
-      <div className="mt-1 line-clamp-2 text-[11px] leading-snug text-muted">
-        {added.length ? (
-          <>
-            <span className="font-medium text-accent">adds </span>
-            {added.join(' · ')}
-          </>
-        ) : (
-          diagram.title
-        )}
-      </div>
     </div>
   )
 }

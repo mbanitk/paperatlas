@@ -4,7 +4,7 @@ import { usePaper, useProjects } from '../../api/queries'
 import type { Author, ConceptNode } from '../../api/types'
 import { CategoryChip, DocTypeChip } from '../../components/Badges'
 import { ClaimChips, ClaimedEffect } from '../../components/ClaimCard'
-import { ClaimLead, DiagramThumb, ExplainerFootnote, GeneratePaperExplainer, NumberedSteps, ResultTiles } from '../../components/Explainers'
+import { ClaimDiagram, ClaimLead, ExplainerFootnote, GeneratePaperExplainer, NumberedSteps, ResultTiles } from '../../components/Explainers'
 import { ConceptMapCard } from '../../components/ConceptMap'
 import { FlowDiagram } from '../../components/FlowDiagram'
 import { RelatedStrip } from '../../components/Related'
@@ -180,7 +180,7 @@ export default function PaperDetailPage() {
                     id={`claim-${claim.id}`}
                     className={cx('scroll-mt-20 px-4 py-3 transition-colors duration-700', flash === claim.id && 'bg-accent-subtle')}
                   >
-                    <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_200px]">
+                    <div>
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-baseline justify-between gap-x-3">
                           <Link to={`/research/claims/${claim.id}`} className="font-semibold text-fg hover:text-accent">
@@ -194,12 +194,12 @@ export default function PaperDetailPage() {
                           </span>
                         </div>
                         <ClaimLead claim={claim} explainer={claim.explainer} />
+                        <ClaimDiagram diagram={claim.explainer?.diagram} className="mt-3" />
                         <RelatedStrip related={claim.related} claimId={claim.id} paperId={data.paper_id} showPosition={false} className="mt-2" />
                         <div className="mt-2">
                           <ClaimChips claim={claim} />
                         </div>
                       </div>
-                      <DiagramThumb explainer={claim.explainer} className="self-start" />
                     </div>
                   </li>
                 ))}
