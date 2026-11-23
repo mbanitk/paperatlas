@@ -136,7 +136,11 @@ class PaperStore:
             session.execute(
                 update(Paper)
                 .where(Paper.paper_id == paper_id)
-                .values(raw_text=clean_text(raw_text), text_fetched_at=_now(), updated_at=_now())
+                .values(
+                    raw_text=clean_text(raw_text),
+                    text_fetched_at=_now(),
+                    updated_at=_now(),
+                )
             )
 
     def papers_missing_embeddings(

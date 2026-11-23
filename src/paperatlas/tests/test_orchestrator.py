@@ -150,3 +150,30 @@ def test_failed_experiment_reports_the_stage_it_stopped_in(lab, monkeypatch):
     assert detail["status"] == "failed" and detail["stage"] == "build"
     assert [s["state"] for s in detail["stages"]] == ["done", "done", "failed"] + ["pending"] * 4
     assert "compiler exploded" in detail["error"]
+
+
+def test_lost_checkpoint_is_rebuilt_from_the_experiment_row(lab):
+    from sqlalchemy import text
+
+    from paperatlas.db.engine import get_engine
+
+    claim_id = service.recommendations(lab["project"]["id"])[0]["claim_id"]
+    experiment_id = service.create_experiments(lab["project"]["id"], [claim_id])[0]["id"]
+    drain()
+    service.decide_spec(experiment_id, "approve")
+    drain()
+    assert service.experiment_status(experiment_id) == "awaiting_decision"
+    with get_engine(lab_db_url()).begin() as connection:
+        for table in ("checkpoint_writes", "checkpoint_blobs", "checkpoints"):
+            connection.execute(text(f"DELETE FROM agent.{table}"))
+    service.decide_merge(experiment_id, "drop")
+    drain()
+    assert service.experiment_status(experiment_id) == "dropped"
+    assert lab["calls"]["build"] == 1
+    assert any(e["stage"] == "recover" for e in service.experiment_events(experiment_id))
+
+
+def lab_db_url():
+    import os
+
+    return os.environ["PAPERATLAS_DATABASE_URL"]

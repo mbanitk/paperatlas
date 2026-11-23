@@ -25,7 +25,7 @@ from langgraph.types import Command, interrupt
 from sqlalchemy import select, update
 
 from paperatlas.db.engine import session_scope
-from paperatlas.db.schema import Experiment, Topic, Triage, Verdict
+from paperatlas.db.schema import Experiment, Run, Topic, Triage, Verdict
 from paperatlas.lab import service
 from paperatlas.lab.builder import build_experiment
 from paperatlas.lab.events import reporter
@@ -102,6 +102,7 @@ def experiment_step(stage: str) -> Callable:
             experiment_id = state["experiment_id"]
             report = reporter(experiment_id=experiment_id)
             try:
+                set_experiment(experiment_id, error=None)
                 return func(state, report)
             except Cancelled as exc:
                 set_experiment(experiment_id, status="cancelled", error=f"{stage}: {exc}")
@@ -369,6 +370,42 @@ def build_experiment_graph() -> StateGraph:
     return graph
 
 
+REHYDRATE_AFTER = {
+    "awaiting_approval": ("plan", {}),
+    "approving": ("gate_spec", {"decision": "approve"}),
+    "building": ("gate_spec", {"decision": "approve"}),
+    "smoke_testing": ("build", {}),
+    "judging": ("run", {}),
+    "awaiting_decision": ("judge", {}),
+    "finalizing": ("judge", {}),
+}
+STAGE_REHYDRATE = {
+    "approve": ("plan", {}),
+    "build": ("gate_spec", {"decision": "approve"}),
+    "smoke": ("build", {}),
+    "judge": ("run", {}),
+    "decide": ("judge", {}),
+}
+
+
+def rehydration_point(experiment_id: int) -> tuple[Optional[str], dict]:
+    """Where to rebuild a lost checkpoint from, based on the experiment row (source of truth)."""
+    with session_scope() as session:
+        experiment = session.get(Experiment, experiment_id)
+        smoke_done = session.scalar(
+            select(Run.id).where(Run.experiment_id == experiment_id, Run.kind == "smoke", Run.status == "done")
+        )
+    status = experiment.status
+    if status in ("running", "waiting_gpu"):
+        return ("smoke" if smoke_done else "build"), {}
+    if status in ("failed", "cancelled", "queued"):
+        stage = service.stage_of(status, experiment.error)
+        if stage == "run":
+            return ("smoke" if smoke_done else "build"), {}
+        return STAGE_REHYDRATE.get(stage or "", (None, {}))
+    return REHYDRATE_AFTER.get(status, (None, {}))
+
+
 def run_experiment(experiment_id: int, resume: Optional[dict] = None) -> str:
     """Advance an experiment's graph until the next gate or the end. Returns the status."""
     with session_scope() as session:
@@ -377,6 +414,16 @@ def run_experiment(experiment_id: int, resume: Optional[dict] = None) -> str:
     with checkpointer() as saver:
         graph = build_experiment_graph().compile(checkpointer=saver)
         snapshot = graph.get_state(config)
+        if not snapshot.values:
+            as_node, values = rehydration_point(experiment_id)
+            if as_node:
+                graph.update_state(config, {"experiment_id": experiment_id, **values}, as_node=as_node)
+                reporter(experiment_id=experiment_id)(
+                    "recover", f"Rebuilt orchestration state after step '{as_node}'", None, level="warning"
+                )
+                if graph.get_state(config).next[:1] in (("gate_spec",), ("gate_merge",)):
+                    graph.invoke(None, config)
+                snapshot = graph.get_state(config)
         interrupted = any(task.interrupts for task in snapshot.tasks)
         if resume is not None and interrupted:
             graph.invoke(Command(resume=resume), config)
@@ -389,6 +436,7 @@ def run_experiment(experiment_id: int, resume: Optional[dict] = None) -> str:
                 set_experiment(
                     experiment_id,
                     status="awaiting_approval" if gate == "approve_spec" else "awaiting_decision",
+                    error=None,
                 )
             else:
                 set_experiment(experiment_id, error=None)

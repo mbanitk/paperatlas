@@ -8,12 +8,13 @@ from paperatlas.db.schema import AGENT, LAB, RESEARCH, Base
 config = context.config
 target_metadata = Base.metadata
 SCHEMAS = (RESEARCH, LAB, AGENT)
+MANAGED_SCHEMAS = (RESEARCH, LAB)  # `agent` holds LangGraph's own checkpoint tables
 
 
 def _include_name(name, type_, parent_names):
     if type_ == "schema":
-        return name in SCHEMAS
-    return True
+        return name in MANAGED_SCHEMAS
+    return parent_names.get("schema_name") in MANAGED_SCHEMAS if type_ == "table" else True
 
 
 def run_migrations_online() -> None:

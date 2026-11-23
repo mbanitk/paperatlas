@@ -85,6 +85,22 @@
     .flow{flex-direction:column}.arrow{transform:rotate(90deg);flex-basis:22px}.loop{display:none}
     .grid,.story,.ms,.two{grid-template-columns:1fr}
   }
+
+  /* ---- Status ---- */
+  .status-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+  .st{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;font-size:13px}
+  .st h4{margin:0 0 6px;font-size:13.5px;display:flex;align-items:center;gap:8px}
+  .st ul{margin:0;padding-left:16px}.st li{margin:2px 0}
+  .pill{font-size:10.5px;font-weight:700;padding:1px 8px;border-radius:999px;white-space:nowrap}
+  .p-done{background:#dafbe1;color:var(--p1)}.p-wip{background:#ddf4ff;color:var(--p2)}.p-next{background:#fff8c5;color:var(--gate)}.p-you{background:#ffebe9;color:var(--p5)}
+  .kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:14px}
+  .kpi{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+  .kpi b{display:block;font-size:22px}.kpi span{font-size:12px;color:var(--muted)}
+  .result{display:grid;grid-template-columns:auto 1fr;gap:16px;align-items:center;background:var(--card);border:1px solid var(--line);border-left:4px solid var(--p5);border-radius:10px;padding:12px 16px;margin-top:12px}
+  .bars{display:flex;flex-direction:column;gap:6px;min-width:260px}
+  .bar{display:grid;grid-template-columns:120px 1fr 64px;gap:8px;align-items:center;font-size:12.5px}
+  .bar i{display:block;height:10px;border-radius:6px}
+  @media (max-width:900px){.status-grid,.kpis{grid-template-columns:1fr 1fr}.result{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -95,31 +111,80 @@
   <p class="lead">Find new research, break it into testable ideas, try the best 1–2 in <em>your</em> project,
      and prove whether the claimed gain is real.</p>
   <div class="chips">
-    <span class="chip"><b>Working today:</b> arXiv → 5 papers → 51 concepts</span>
+    <span class="chip"><b>Live:</b> 1,088 papers · 10 topics · 404 claim cards · 1 verdict</span>
     <span class="chip">Agents do the work · you approve at 3 gates</span>
     <span class="chip">Runs on your M5 Pro · 64 GB</span>
     <span class="chip">Every verdict backed by repeated A/B runs</span>
+  </div>
+
+  <!-- ===================== STATUS ===================== -->
+  <h2>Status <span style="font-weight:400;color:var(--muted);font-size:14px">· updated Nov 23, 2026</span></h2>
+  <div class="kpis">
+    <div class="kpi"><b>10</b><span>trending topics</span></div>
+    <div class="kpi"><b>1,088</b><span>papers pooled · 50 distilled</span></div>
+    <div class="kpi"><b>404</b><span>claim cards · 305 testable</span></div>
+    <div class="kpi"><b>51</b><span>testable on inference-lab</span></div>
+    <div class="kpi"><b>35</b><span>backend tests passing</span></div>
+  </div>
+  <div class="status-grid">
+    <div class="st"><h4>Done <span class="pill p-done">M0–M7</span></h4><ul>
+      <li>Postgres 18 + pgvector (MySQL kept, Neo4j removed)</li>
+      <li>5 sources, auto top‑10 topics, ranking</li>
+      <li>Claim cards (no LinkedIn posts)</li>
+      <li><code>inference-lab</code>: Qwen3‑30B‑A3B int8, ~25 tok/s, ~31 GB</li>
+      <li>LangGraph loop + 3 gates, Copilot CLI builder</li>
+      <li>Microservices + React console</li>
+      <li>Digest + weekly schedule (opt‑in)</li>
+    </ul></div>
+    <div class="st"><h4>In progress <span class="pill p-wip">now</span></h4><ul>
+      <li>Explainers on topics, papers/patents and claim cards (plain‑language + approach diagram)</li>
+      <li>Clean infographics: trend bars, source mix, result tiles, at‑a‑glance strip</li>
+      <li>Checkpoint‑loss recovery (done, being shipped)</li>
+    </ul></div>
+    <div class="st"><h4>Next <span class="pill p-next">queued</span></h4><ul>
+      <li>Backfill explainers for 10 topics, 50 papers, top claims</li>
+      <li>Restart services so the worker runs the latest code</li>
+      <li>Pick the next 1–2 claims (e.g. a KV‑cache or scheduling idea)</li>
+    </ul></div>
+    <div class="st"><h4>Needs you <span class="pill p-you">action</span></h4><ul>
+      <li><b>Gate 3</b> for experiment #1: merge or drop</li>
+      <li><b>Rotate the OpenAI key</b> (it was in the public repo history)</li>
+      <li>Optional keys: Semantic Scholar, OpenAlex, USPTO</li>
+    </ul></div>
+  </div>
+  <div class="result">
+    <div>
+      <div style="font-size:12px;color:var(--muted)">First end‑to‑end experiment · #1</div>
+      <div style="font-weight:700;font-size:15px">DLoop confidence‑gated speculative decoding</div>
+      <div style="font-size:12.5px;color:var(--muted)">Copilot CLI built it in 18 min · tests + smoke passed · 8 ABBA rounds on Qwen3‑30B‑A3B</div>
+      <div style="margin-top:6px"><span class="pill p-you">REGRESSION</span> <span style="font-size:12.5px">outputs identical, but MoE target + small draft = more work per token on MPS</span></div>
+    </div>
+    <div class="bars">
+      <div class="bar"><span>Paper (H100)</span><i style="background:#8250df;width:41%"></i><b style="color:#8250df">+41%</b></div>
+      <div class="bar"><span>Your M5 Pro</span><i style="background:#cf222e;width:66.8%"></i><b style="color:#cf222e">−66.8%</b></div>
+      <div class="bar"><span>Decode tok/s</span><span style="font-size:12px;color:var(--muted)">24.4 → 8.1 (95% CI −67.2…−66.4%)</span><span></span></div>
+    </div>
   </div>
 
   <!-- ===================== LOOP ===================== -->
   <h2>The loop</h2>
   <div class="flow">
     <div class="step" style="--c:var(--p1)">
-      <span class="badge part">PARTLY DONE</span>
+      <span class="badge done">LIVE</span>
       <div class="n">Phase 1</div><h3>Discover</h3>
       <p>Top‑10 topics → papers &amp; patents from the outside world</p>
       <span class="out">→ ranked papers</span>
     </div>
     <div class="arrow">➜</div>
     <div class="step" style="--c:var(--p2)">
-      <span class="badge part">PARTLY DONE</span>
+      <span class="badge done">LIVE</span>
       <div class="n">Phase 2</div><h3>Distill</h3>
       <p>Each paper → 5–10 technical concepts → testable claim cards</p>
       <span class="out">→ claim cards</span>
     </div>
     <div class="arrow">➜</div>
     <div class="step" style="--c:var(--p3)">
-      <span class="badge new">NEW</span>
+      <span class="badge done">LIVE</span>
       <div class="n">Phase 3</div><h3>Match &amp; Plan</h3>
       <p>Score claims against your project, write the experiment</p>
       <span class="out">→ experiment spec</span>
@@ -127,14 +192,14 @@
     </div>
     <div class="arrow">➜</div>
     <div class="step" style="--c:var(--p4)">
-      <span class="badge new">NEW</span>
+      <span class="badge done">LIVE</span>
       <div class="n">Phase 4</div><h3>Build &amp; Run</h3>
       <p>Coding agent implements on a branch, sandbox A/B runs</p>
       <span class="out">→ branch + metrics</span>
     </div>
     <div class="arrow">➜</div>
     <div class="step" style="--c:var(--p5)">
-      <span class="badge new">NEW</span>
+      <span class="badge done">LIVE</span>
       <div class="n">Phase 5</div><h3>Validate &amp; Learn</h3>
       <p>Statistics vs the paper's claim → verdict + report</p>
       <span class="out">→ verdict + PR</span>
@@ -375,7 +440,7 @@
     <div><b>M7 · Always‑on</b>Scheduled scans, triage, weekly digest.</div>
   </div>
 
-  <footer>Plan v2 · decisions confirmed · tasks tracked per milestone.</footer>
+  <footer>Plan v3 · all milestones live · status above is the source of truth.</footer>
 </main>
 </body>
 </html>

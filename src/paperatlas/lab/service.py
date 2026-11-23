@@ -68,7 +68,7 @@ STEP_TO_STAGE = {"plan": "plan", "approve": "approve", "build": "build", "smoke"
 
 def stage_of(status: str, error: Optional[str]) -> Optional[str]:
     """Current stage; for failed/cancelled experiments, the stage they stopped in."""
-    if status in ("failed", "cancelled", "cancelling") and error:
+    if status in ("failed", "cancelled", "cancelling", "queued") and error:
         return STEP_TO_STAGE.get(error.split(":", 1)[0].strip())
     return STAGE_OF_STATUS.get(status)
 
@@ -779,9 +779,7 @@ def cancel_experiment(experiment_id: int) -> dict[str, Any]:
 def retry_experiment(experiment_id: int) -> dict[str, Any]:
     _require_status(experiment_id, ("failed", "cancelled"))
     with session_scope() as session:
-        session.execute(
-            update(Experiment).where(Experiment.id == experiment_id).values(status="queued", error=None)
-        )
+        session.execute(update(Experiment).where(Experiment.id == experiment_id).values(status="queued"))
     emit("retry", "Retrying from the last completed step", experiment_id=experiment_id)
     enqueue("experiment.run", {"experiment_id": experiment_id}, experiment_id=experiment_id)
     return get_experiment(experiment_id)

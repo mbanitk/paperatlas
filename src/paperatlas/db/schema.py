@@ -69,6 +69,7 @@ class Topic(Base):
     needs_gpu_cluster: Mapped[bool] = mapped_column(Boolean, server_default="false")
     status: Mapped[str] = mapped_column(Text, server_default="active")
     stats: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default="{}")
+    explainer: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB)
     embedding = mapped_column(Vector(EMBEDDING_DIM), nullable=True)
     created_at: Mapped[datetime] = _now()
     refreshed_at: Mapped[datetime] = _now()
@@ -107,6 +108,7 @@ class Paper(Base):
     hf_upvotes: Mapped[Optional[int]] = mapped_column(Integer)
     raw_text: Mapped[Optional[str]] = mapped_column(Text)
     source_payload: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB)
+    explainer: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB)
     tsv = mapped_column(
         TSVECTOR,
         Computed(
@@ -250,6 +252,8 @@ class Match(Base):
     blockers: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default="{}")
     target_metric: Mapped[Optional[str]] = mapped_column(Text)
     rationale: Mapped[Optional[str]] = mapped_column(Text)
+    explainer: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB)
+    explained_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = _now()
 
 
