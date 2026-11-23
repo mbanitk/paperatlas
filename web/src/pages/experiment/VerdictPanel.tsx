@@ -8,7 +8,7 @@ import { Modal } from '../../components/Dialog'
 import { CheckIcon, ExternalIcon, FileIcon, GateIcon, MergeIcon, XIcon } from '../../components/Icons'
 import { useToast } from '../../components/Toast'
 import { Button, Card, Chip, DefinitionList, Field, InlineError, cx, errorMessage } from '../../components/ui'
-import { formatCI, formatNumber, formatPct, humanize } from '../../lib/format'
+import { displayValue, formatCI, formatNumber, formatPct, formatWorkload, humanize } from '../../lib/format'
 
 const REPRODUCED_FRACTION_OF_CLAIM = 0.7
 
@@ -158,7 +158,6 @@ export function VerdictPanel({ experiment, verdict, project }: { experiment: Exp
   const quality = details.quality ?? {}
   const problems = details.quality_problems ?? []
   const environment = details.environment ?? {}
-  const model = details.model && typeof details.model === 'object' ? details.model.id : details.model
   const reportUrl = api.lab.reportUrl(experiment.id)
 
   return (
@@ -218,7 +217,7 @@ export function VerdictPanel({ experiment, verdict, project }: { experiment: Exp
           <h3 className="mb-2 text-sm font-semibold">Quality</h3>
           <DefinitionList
             items={[
-              ['Exact match', `${quality.baseline?.exact_match ?? '—'} → ${quality.variant?.exact_match ?? '—'}`],
+              ['Exact match', `${displayValue(quality.baseline?.exact_match)} → ${displayValue(quality.variant?.exact_match)}`],
               ['Output agreement', typeof quality.output_agreement === 'number' ? `${(quality.output_agreement * 100).toFixed(0)}%` : '—'],
               ['Problems', problems.length ? <span className="text-danger">{problems.join('; ')}</span> : 'none'],
             ]}
@@ -228,8 +227,18 @@ export function VerdictPanel({ experiment, verdict, project }: { experiment: Exp
           <h3 className="mb-2 text-sm font-semibold">Environment</h3>
           <DefinitionList
             items={[
-              ['Model · workload', `${model ?? '—'} · ${details.workload ?? experiment.spec.workload ?? '—'}`],
-              ['Machine', [environment.chip, environment.macos && `macOS ${environment.macos}`, environment.torch && `torch ${environment.torch}`].filter(Boolean).join(' · ') || '—'],
+              ['Model', displayValue(details.model ?? experiment.spec.model)],
+              ['Workload', formatWorkload(details.workload ?? experiment.spec.workload)],
+              [
+                'Machine',
+                [
+                  displayValue(environment.chip, ''),
+                  environment.macos ? `macOS ${displayValue(environment.macos)}` : '',
+                  environment.torch ? `torch ${displayValue(environment.torch)}` : '',
+                ]
+                  .filter(Boolean)
+                  .join(' · ') || '—',
+              ],
               [
                 'Conditions',
                 <span key="cond" className="flex flex-wrap gap-1">

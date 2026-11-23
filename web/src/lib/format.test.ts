@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatClaimedEffect, formatDuration, formatNumber, formatPct, relativeTime, tailLines } from './format'
+import { displayValue, formatClaimedEffect, formatDuration, formatNumber, formatPct, formatWorkload, relativeTime, tailLines } from './format'
 
 describe('formatPct', () => {
   it('signs and rounds', () => {
@@ -59,5 +59,24 @@ describe('tailLines', () => {
   it('keeps the last lines', () => {
     expect(tailLines('a\nb\nc\n', 2)).toBe('b\nc')
     expect(tailLines('a', 5)).toBe('a')
+  })
+})
+
+describe('formatWorkload / displayValue', () => {
+  it('summarises the bench-contract workload object', () => {
+    expect(formatWorkload({ name: 'concurrent_4', requests_per_round: 4, max_new_tokens: 128, concurrency: 4 })).toBe(
+      'concurrent_4 · 4 req/round · 128 tokens · concurrency 4',
+    )
+    expect(formatWorkload({ name: 'short_chat', requests_per_round: 4, max_new_tokens: 128, concurrency: 1 })).toBe('short_chat · 4 req/round · 128 tokens')
+    expect(formatWorkload('long_prompt')).toBe('long_prompt')
+    expect(formatWorkload(null)).toBe('—')
+  })
+
+  it('never renders [object Object]', () => {
+    expect(displayValue({ id: 'Qwen/Qwen3-0.6B', dtype: 'bfloat16' })).toBe('Qwen/Qwen3-0.6B')
+    expect(displayValue({ value: 0.82 })).toBe('{"value":0.82}')
+    expect(displayValue({ version: '2.9.1' })).toBe('2.9.1')
+    expect(displayValue(0.84)).toBe('0.84')
+    expect(displayValue(undefined)).toBe('—')
   })
 })

@@ -3,7 +3,7 @@ import { useExperimentLog } from '../../api/queries'
 import type { BuildInfo, Experiment, Project, RunInfo } from '../../api/types'
 import { BranchIcon, ChevronDown, ChevronRight, LogIcon, MergeIcon, RefreshIcon } from '../../components/Icons'
 import { Button, Card, Checkbox, Chip, DefinitionList, EmptyState, ErrorState, ExternalLink, Loading, RelativeTime, cx } from '../../components/ui'
-import { durationBetween, formatDuration, formatNumber, tailLines } from '../../lib/format'
+import { displayValue, durationBetween, formatDuration, formatNumber, tailLines } from '../../lib/format'
 
 export function BuildCard({ experiment }: { experiment: Experiment }) {
   const build: BuildInfo = experiment.build ?? {}
@@ -145,7 +145,7 @@ function SummaryTable({ summary, primary }: { summary: Record<string, unknown>; 
 
 function RunItem({ run, primary }: { run: RunInfo; primary?: string }) {
   const [open, setOpen] = useState(false)
-  const model = run.model && typeof run.model === 'object' ? run.model.id : run.model
+  const model = run.model ? displayValue(run.model) : null
   const running = run.status === 'running'
   return (
     <li className="rounded-md border border-line-muted">
@@ -167,7 +167,7 @@ function RunItem({ run, primary }: { run: RunInfo; primary?: string }) {
           {run.summary ? <SummaryTable summary={run.summary} primary={primary} /> : <p className="text-xs text-muted">{running ? 'Results appear when the run finishes.' : 'No summary.'}</p>}
           {run.quality && (
             <p className="text-xs text-muted">
-              Quality: exact match {run.quality.baseline?.exact_match ?? '—'} → {run.quality.variant?.exact_match ?? '—'}
+              Quality: exact match {displayValue(run.quality.baseline?.exact_match)} → {displayValue(run.quality.variant?.exact_match)}
               {typeof run.quality.output_agreement === 'number' && <> · output agreement {(run.quality.output_agreement * 100).toFixed(0)}%</>}
             </p>
           )}

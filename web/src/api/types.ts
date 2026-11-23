@@ -434,6 +434,14 @@ export interface MetricResult {
   pairs: number
 }
 
+export interface WorkloadInfo {
+  name?: string
+  requests_per_round?: number
+  max_new_tokens?: number
+  concurrency?: number
+  [extra: string]: unknown
+}
+
 export interface VerdictDetails {
   verdict?: VerdictName
   reason?: string
@@ -450,7 +458,7 @@ export interface VerdictDetails {
   quality_problems?: string[]
   environment?: Record<string, unknown> | null
   model?: { id?: string; dtype?: string } | string | null
-  workload?: string | null
+  workload?: string | WorkloadInfo | null
   [extra: string]: unknown
 }
 

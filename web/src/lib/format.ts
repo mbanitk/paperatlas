@@ -133,3 +133,34 @@ export function tailLines(text: string, maxLines: number): string {
   const lines = text.replace(/\n$/, '').split('\n')
   return lines.length > maxLines ? lines.slice(lines.length - maxLines).join('\n') : lines.join('\n')
 }
+
+/** Any API value as short text: objects show their `name`/`id`/`version` (or compact JSON), never "[object Object]". */
+export function displayValue(value: unknown, fallback = '—'): string {
+  if (value === null || value === undefined || value === '') return fallback
+  if (typeof value === 'number') return Number.isFinite(value) ? formatNumber(value) : fallback
+  if (typeof value === 'string' || typeof value === 'boolean') return String(value)
+  if (Array.isArray(value)) return value.map((item) => displayValue(item, '')).filter(Boolean).join(', ') || fallback
+  if (typeof value === 'object') {
+    const record = value as Record<string, unknown>
+    for (const key of ['name', 'id', 'alias', 'version']) if (typeof record[key] === 'string' && record[key]) return record[key] as string
+    return JSON.stringify(value)
+  }
+  return String(value)
+}
+
+/** Bench-contract workload ({name, requests_per_round, max_new_tokens, concurrency}) or a plain name. */
+export function formatWorkload(workload: unknown, fallback = '—'): string {
+  if (!workload || typeof workload !== 'object' || Array.isArray(workload)) return displayValue(workload, fallback)
+  const w = workload as Record<string, unknown>
+  const num = (key: string) => (typeof w[key] === 'number' && Number.isFinite(w[key]) ? (w[key] as number) : null)
+  const requests = num('requests_per_round')
+  const tokens = num('max_new_tokens')
+  const concurrency = num('concurrency')
+  const parts = [
+    displayValue(w.name ?? w.id, 'workload'),
+    requests !== null ? `${requests} req/round` : null,
+    tokens !== null ? `${tokens} tokens` : null,
+    concurrency !== null && concurrency > 1 ? `concurrency ${concurrency}` : null,
+  ]
+  return parts.filter(Boolean).join(' · ')
+}
