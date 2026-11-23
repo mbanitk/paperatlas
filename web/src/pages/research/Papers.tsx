@@ -5,31 +5,57 @@ import { usePapers, useQueueJob, useTopics } from '../../api/queries'
 import type { PaperSummary } from '../../api/types'
 import { DocTypeChip } from '../../components/Badges'
 import { BookIcon, RefreshIcon, SearchIcon } from '../../components/Icons'
+import { ResultTiles } from '../../components/Explainers'
 import { useToast } from '../../components/Toast'
 import { Button, Chip, EmptyState, ErrorState, Loading, Pagination, errorMessage, useDebounced } from '../../components/ui'
 import { formatDate, pluralize, truncate } from '../../lib/format'
 
 const LIMIT = 25
 
-function PaperRow({ paper }: { paper: PaperSummary }) {
+function Signals({ paper }: { paper: PaperSummary }) {
   return (
-    <li className="px-4 py-3 hover:bg-canvas-subtle">
-      <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11.5px] text-muted">
+      <span title="Citations">
+        <span className="text-subtle">cites</span> <span className="font-semibold text-fg tabular-nums">{paper.citation_count ?? '—'}</span>
+      </span>
+      <span title="Hugging Face upvotes">
+        <span className="text-subtle">HF ↑</span> <span className="font-semibold text-fg tabular-nums">{paper.hf_upvotes ?? '—'}</span>
+      </span>
+      {paper.code_url ? (
+        <a href={paper.code_url} target="_blank" rel="noreferrer noopener" className="inline-flex items-center gap-1 text-success">
+          ‹/› code
+        </a>
+      ) : (
+        <span className="text-subtle">no code</span>
+      )}
+      <span className="inline-flex flex-wrap items-center gap-1">
+        {paper.sources.map((source) => (
+          <span key={source} className="rounded bg-canvas-inset px-1.5 py-px text-[10.5px]">
+            {source}
+          </span>
+        ))}
+      </span>
+    </div>
+  )
+}
+
+function PaperRow({ paper }: { paper: PaperSummary }) {
+  const explainer = paper.explainer
+  return (
+    <li className="px-4 py-4 hover:bg-canvas-subtle/60">
+      <div className="flex flex-col gap-1.5 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
         <div className="min-w-0">
-          <Link to={`/research/papers/${encodePaperId(paper.paper_id)}`} className="font-semibold text-fg hover:text-accent">
-            {paper.title}
-          </Link>
-          <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
+          <div className="flex flex-wrap items-center gap-2">
             <DocTypeChip docType={paper.doc_type} />
-            <span>{paper.venue ?? 'unknown venue'}</span>
-            <span>· {formatDate(paper.publication_date)}</span>
-            {paper.citation_count !== null && <span>· {pluralize(paper.citation_count, 'citation')}</span>}
-            {paper.hf_upvotes !== null && <span>· {paper.hf_upvotes} HF ↑</span>}
-            {paper.code_url && <span>· code</span>}
+            <Link to={`/research/papers/${encodePaperId(paper.paper_id)}`} className="font-semibold text-fg hover:text-accent">
+              {paper.title}
+            </Link>
           </div>
-          {paper.abstract && <p className="mt-1 text-sm text-muted">{truncate(paper.abstract, 220)}</p>}
+          <div className="mt-0.5 text-xs text-muted">
+            {paper.venue ?? 'unknown venue'} · {formatDate(paper.publication_date)}
+          </div>
         </div>
-        <div className="flex shrink-0 flex-wrap gap-1.5 sm:flex-col sm:items-end">
+        <div className="shrink-0">
           {paper.distilled ? (
             <Chip tone={paper.testable_claims ? 'success' : 'neutral'}>
               {paper.claims} claims · {paper.testable_claims} testable
@@ -37,14 +63,23 @@ function PaperRow({ paper }: { paper: PaperSummary }) {
           ) : (
             <Chip tone="muted">not distilled</Chip>
           )}
-          <span className="flex flex-wrap gap-1">
-            {paper.sources.map((source) => (
-              <span key={source} className="rounded bg-canvas-inset px-1.5 py-0.5 text-[11px] text-muted">
-                {source}
-              </span>
-            ))}
-          </span>
         </div>
+      </div>
+      {explainer?.tldr ? (
+        <p className="mt-2 text-sm text-fg">
+          <span className="mr-1 rounded bg-done-subtle px-1 py-px text-[10.5px] font-semibold text-done">TL;DR</span>
+          {explainer.tldr}
+        </p>
+      ) : (
+        paper.abstract && <p className="mt-2 text-sm text-muted">{truncate(paper.abstract, 220)}</p>
+      )}
+      {!!explainer?.key_results?.length && (
+        <div className="mt-2.5 max-w-3xl">
+          <ResultTiles results={explainer.key_results} max={4} />
+        </div>
+      )}
+      <div className="mt-2.5">
+        <Signals paper={paper} />
       </div>
     </li>
   )

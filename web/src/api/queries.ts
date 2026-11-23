@@ -1,6 +1,23 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, type ClaimParams, type PaperParams, type RecommendationParams } from './client'
-import type { Experiment, ExperimentStatus, MergeDecisionBody, PickBody, SpecDecisionBody, TriageOptions } from './types'
+import type {
+  Claim,
+  ClaimDetail,
+  ClaimExplainer,
+  Experiment,
+  ExperimentStatus,
+  MergeDecisionBody,
+  Paged,
+  PaperDetail,
+  PaperExplainer,
+  PaperSummary,
+  PickBody,
+  Recommendation,
+  SpecDecisionBody,
+  Topic,
+  TopicExplainer,
+  TriageOptions,
+} from './types'
 import { isActiveStatus } from '../lib/stages'
 
 export const keys = {
@@ -17,12 +34,13 @@ export const keys = {
   activity: (limit: number) => ['activity', limit] as const,
   jobs: (limit: number, status?: string) => ['jobs', limit, status ?? 'all'] as const,
   topics: (archived: boolean) => ['topics', archived] as const,
+  topic: (slug: string) => ['topic', slug] as const,
   seeds: ['seeds'] as const,
   categories: ['categories'] as const,
   papers: (params: PaperParams) => ['papers', params] as const,
   paper: (id: string) => ['paper', id] as const,
   claims: (params: ClaimParams) => ['claims', params] as const,
-  claim: (id: number) => ['claim', id] as const,
+  claim: (id: number, projectId?: number) => ['claim', id, projectId ?? 'any'] as const,
 }
 
 export const useServices = () =>
@@ -149,8 +167,78 @@ export const useClaims = (params: ClaimParams) =>
     placeholderData: keepPreviousData,
   })
 
-export const useClaim = (id: number) =>
-  useQuery({ queryKey: keys.claim(id), queryFn: () => api.research.claim(id), enabled: Number.isFinite(id) && id > 0 })
+export const useClaim = (id: number, projectId?: number) =>
+  useQuery({
+    queryKey: keys.claim(id, projectId),
+    queryFn: () => api.research.claim(id, projectId),
+    enabled: Number.isFinite(id) && id > 0,
+  })
+
+export const useTopic = (slug: string) =>
+  useQuery({ queryKey: keys.topic(slug), queryFn: () => api.research.topic(slug), enabled: !!slug })
+
+// ---- explainers (sync LLM calls, ~15 s) --------------------------------------------------------
+
+export const useExplainClaim = (projectId: number | undefined) => {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: (claimId: number) => {
+      if (!projectId) throw new Error('Register a project first — claim explanations are written for a target project.')
+      return api.lab.explainClaim(projectId, claimId)
+    },
+    onSuccess: (explainer: ClaimExplainer, claimId) => {
+      const patch = <T extends { id?: number; claim_id?: number }>(item: T): T =>
+        item.id === claimId || item.claim_id === claimId ? { ...item, explainer } : item
+      client.setQueriesData<Recommendation[]>({ queryKey: ['recommendations'] }, (old) => old?.map(patch))
+      client.setQueriesData<Paged<Claim>>({ queryKey: ['claims'] }, (old) => (old ? { ...old, items: old.items.map(patch) } : old))
+      client.setQueriesData<ClaimDetail>({ queryKey: ['claim', claimId] }, (old) => (old ? { ...old, explainer } : old))
+      client.setQueriesData<PaperDetail>({ queryKey: ['paper'] }, (old) => (old ? { ...old, claims: old.claims.map(patch) } : old))
+      for (const key of ['recommendations', 'claims', 'claim', 'paper']) client.invalidateQueries({ queryKey: [key] })
+    },
+  })
+}
+
+export const useExplainPaper = () => {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: (paperId: string) => api.research.explainPaper(paperId),
+    onSuccess: (explainer: PaperExplainer, paperId) => {
+      client.setQueriesData<Paged<PaperSummary>>({ queryKey: ['papers'] }, (old) =>
+        old ? { ...old, items: old.items.map((item) => (item.paper_id === paperId ? { ...item, explainer } : item)) } : old,
+      )
+      client.setQueryData<PaperDetail>(keys.paper(paperId), (old) => (old ? { ...old, explainer } : old))
+      for (const key of ['papers', 'paper', 'claim']) client.invalidateQueries({ queryKey: [key] })
+    },
+  })
+}
+
+export const useExplainTopic = () => {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: (slug: string) => api.research.explainTopic(slug),
+    onSuccess: (explainer: TopicExplainer, slug) => {
+      client.setQueriesData<Topic[]>({ queryKey: ['topics'] }, (old) => old?.map((topic) => (topic.slug === slug ? { ...topic, explainer } : topic)))
+      client.setQueryData<Topic>(keys.topic(slug), (old) => (old ? { ...old, explainer } : old))
+      for (const key of ['topics', 'topic']) client.invalidateQueries({ queryKey: [key] })
+    },
+  })
+}
+
+export const useExplainBackfill = () => {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { project_id?: number | null; claims_top?: number }) => api.research.explainBackfill(body),
+    onSuccess: () => client.invalidateQueries({ queryKey: ['jobs'] }),
+  })
+}
+
+/** Most recent jobs of one kind (newest first); polls quickly while one is queued or running. */
+export const useJobsOfKind = (kind: string, filter?: (payload: Record<string, unknown>) => boolean) =>
+  useQuery({
+    queryKey: ['jobs', 'kind', kind] as const,
+    queryFn: async () => (await api.lab.jobs(200)).filter((job) => job.kind === kind && (!filter || filter(job.payload ?? {}))),
+    refetchInterval: (query) => (query.state.data?.some((job) => job.status === 'queued' || job.status === 'running') ? 3_000 : 15_000),
+  })
 
 // ---- mutations ----------------------------------------------------------------------
 

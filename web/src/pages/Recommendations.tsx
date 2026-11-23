@@ -4,10 +4,11 @@ import { Link, useNavigate, useSearchParams } from 'react-router'
 import { ApiError } from '../api/client'
 import { keys, useCategories, useCreateExperiments, useProjects, useRecommendations, useStartTriage, useTopics, useTriage, useTriageList } from '../api/queries'
 import { mergeEvents, useEventStream } from '../api/sse'
-import type { LabEvent, Recommendation, TriageOptions, TriageStatus, TriageSummary } from '../api/types'
+import type { LabEvent, Project, Recommendation, TriageOptions, TriageStatus, TriageSummary } from '../api/types'
 import { api } from '../api/client'
-import { BlockerBadge, CategoryChip, DocTypeChip, EffortChip, LiveDot, StatusChip } from '../components/Badges'
+import { BlockerBadge, CategoryChip, DocTypeChip, LiveDot, StatusChip } from '../components/Badges'
 import { ClaimCardDetails, ClaimedEffect, Requirements } from '../components/ClaimCard'
+import { ClaimDiagram, ClaimExplainDetails, ClaimLead, GenerateClaimExplainer, GlanceStrip } from '../components/Explainers'
 import { ConfirmDialog, Modal } from '../components/Dialog'
 import { EventTimeline } from '../components/EventTimeline'
 import { ChevronDown, ChevronRight, RefreshIcon, SearchIcon, SparkIcon } from '../components/Icons'
@@ -216,16 +217,19 @@ function TriageBanner({ triage, logOpen, onToggleLog }: { triage: TriageSummary;
 
 // ---- recommendation card --------------------------------------------------------------------
 
-function RecommendationCard({ item, selected, disabledReason, onToggle, shortlisted }: {
+function RecommendationCard({ item, selected, disabledReason, onToggle, shortlisted, project }: {
   item: Recommendation
   selected: boolean
   disabledReason: string | null
   onToggle: () => void
   shortlisted: boolean
+  project?: Project
 }) {
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState<'explain' | 'card' | null>(null)
   const blocked = !item.testable_here || item.blockers.length > 0
   const checkboxId = `pick-${item.claim_id}`
+  const explainer = item.explainer
+  const toggle = (panel: 'explain' | 'card') => setOpen((current) => (current === panel ? null : panel))
   return (
     <article
       className={cx(
@@ -251,46 +255,36 @@ function RecommendationCard({ item, selected, disabledReason, onToggle, shortlis
           </span>
         </div>
         <div className="min-w-0 flex-1">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-            <div className="min-w-0">
-              <h3 id={`rec-title-${item.claim_id}`} className="text-base leading-snug font-semibold">
-                <label htmlFor={checkboxId} className="cursor-pointer">
-                  {item.name}
-                </label>
-              </h3>
-              <div className="mt-0.5 text-xs text-muted">
-                <PaperLink paperId={item.paper_id} title={item.paper_title ?? item.paper_id} className="text-muted hover:text-accent" />
-                {item.paper_date && <span> · {item.paper_date.slice(0, 7)}</span>}
-                {item.paper_url && (
-                  <>
-                    {' · '}
-                    <ExternalLink href={item.paper_url} className="text-muted">
-                      source
-                    </ExternalLink>
-                  </>
-                )}
-              </div>
-            </div>
-            <div className="flex shrink-0 flex-col items-start gap-1 sm:items-end">
-              <div className="text-sm">
-                <ClaimedEffect claim={item} />
-              </div>
-              {item.target_metric && (
-                <div className="text-xs text-muted">
-                  measured as <code className="code-inline">{item.target_metric}</code>
-                </div>
+          <div className="min-w-0">
+            <h3 id={`rec-title-${item.claim_id}`} className="text-base leading-snug font-semibold">
+              <label htmlFor={checkboxId} className="cursor-pointer">
+                {item.name}
+              </label>
+            </h3>
+            <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs text-muted">
+              <DocTypeChip docType={item.paper_doc_type} />
+              <PaperLink paperId={item.paper_id} title={item.paper_title ?? item.paper_id} className="min-w-0 text-muted hover:text-accent" />
+              {item.paper_date && <span>· {item.paper_date.slice(0, 7)}</span>}
+              {item.paper_url && (
+                <>
+                  <span>·</span>
+                  <ExternalLink href={item.paper_url} className="text-muted">
+                    source
+                  </ExternalLink>
+                </>
               )}
             </div>
+            <ClaimLead claim={item} explainer={explainer} />
           </div>
 
-          <p className="mt-2 text-sm text-fg">{item.technique}</p>
+          <div className="mt-3">
+            <GlanceStrip claim={item} explainer={explainer} project={project} fit={item.fit} blockers={item.blockers} />
+          </div>
 
           <div className="mt-3 flex flex-wrap items-center gap-1.5">
             <CategoryChip category={item.category} />
-            <EffortChip effort={item.effort} />
-            <DocTypeChip docType={item.paper_doc_type} />
             {item.topics.map((topic) => (
-              <Link key={topic.slug} to={`/research/papers?topic=${topic.slug}`} className="chip border-line bg-canvas text-muted hover:border-accent hover:text-accent hover:no-underline">
+              <Link key={topic.slug} to={`/research/topics/${topic.slug}`} className="chip border-line bg-canvas text-muted hover:border-accent hover:text-accent hover:no-underline">
                 {topic.name}
               </Link>
             ))}
@@ -300,6 +294,8 @@ function RecommendationCard({ item, selected, disabledReason, onToggle, shortlis
             ))}
             <Requirements claim={item} />
           </div>
+
+          <ClaimDiagram diagram={explainer?.diagram} className="mt-3" />
 
           {item.rationale && (
             <p className="mt-3 rounded-md bg-canvas-subtle px-3 py-2 text-sm text-fg">
@@ -311,23 +307,34 @@ function RecommendationCard({ item, selected, disabledReason, onToggle, shortlis
           )}
 
           <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-3 text-xs text-muted">
-              <div className="w-24">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
+              <div className="w-20">
                 <Meter value={Math.min(item.score, 1)} label={`Match score ${formatScore(item.score)}`} tone="done" />
               </div>
-              <span title="score = fit × (0.4 + gain) ÷ effort cost">
-                score <strong className="text-fg tabular-nums">{formatScore(item.score)}</strong> · fit {item.fit.toFixed(2)} · gain {item.gain.toFixed(2)} · effort ×
-                {item.effort_cost}
+              <span title="score = fit × (0.4 + gain) ÷ effort cost · gain and effort are shown above">
+                score <strong className="text-fg tabular-nums">{formatScore(item.score)}</strong>
               </span>
+              {item.target_metric && (
+                <span>
+                  measured as <code className="code-inline">{item.target_metric}</code>
+                </span>
+              )}
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-1">
               {item.experiment_id && item.experiment_status && (
-                <Link to={`/experiments/${item.experiment_id}`} className="inline-flex items-center gap-1.5 text-xs hover:no-underline">
+                <Link to={`/experiments/${item.experiment_id}`} className="mr-1 inline-flex items-center gap-1.5 text-xs hover:no-underline">
                   Experiment #{item.experiment_id} <StatusChip status={item.experiment_status} />
                 </Link>
               )}
-              <Button size="sm" variant="invisible" onClick={() => setOpen(!open)} aria-expanded={open} icon={open ? <ChevronDown /> : <ChevronRight />}>
-                {open ? 'Hide' : 'Claim card'}
+              {explainer ? (
+                <Button size="sm" variant="invisible" onClick={() => toggle('explain')} aria-expanded={open === 'explain'} icon={<SparkIcon size={14} />}>
+                  {open === 'explain' ? 'Hide explanation' : 'Explain'}
+                </Button>
+              ) : (
+                <GenerateClaimExplainer claimId={item.claim_id} projectId={item.project_id} />
+              )}
+              <Button size="sm" variant="invisible" onClick={() => toggle('card')} aria-expanded={open === 'card'} icon={open === 'card' ? <ChevronDown /> : <ChevronRight />}>
+                Claim card
               </Button>
             </div>
           </div>
@@ -336,7 +343,12 @@ function RecommendationCard({ item, selected, disabledReason, onToggle, shortlis
               {disabledReason}
             </p>
           )}
-          {open && (
+          {open === 'explain' && explainer && (
+            <div className="mt-3 border-t border-line-muted pt-4">
+              <ClaimExplainDetails explainer={explainer} projectName={project?.name} showDiagram={false} />
+            </div>
+          )}
+          {open === 'card' && (
             <div className="mt-3 border-t border-line-muted pt-3">
               <ClaimCardDetails claim={item} showPaper={false} />
             </div>
@@ -570,6 +582,7 @@ export default function Recommendations() {
                 disabledReason={disabledReason(item)}
                 onToggle={() => toggle(item)}
                 shortlisted={shortlist.has(item.claim_id)}
+                project={project}
               />
             ))}
           </div>

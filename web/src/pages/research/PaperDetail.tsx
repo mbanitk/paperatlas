@@ -1,15 +1,18 @@
 import { Link, useParams } from 'react-router'
-import { usePaper } from '../../api/queries'
+import { usePaper, useProjects } from '../../api/queries'
 import type { Author } from '../../api/types'
 import { CategoryChip, DocTypeChip } from '../../components/Badges'
 import { ClaimChips, ClaimedEffect } from '../../components/ClaimCard'
-import { BookIcon } from '../../components/Icons'
+import { ClaimLead, DiagramThumb, ExplainerFootnote, GeneratePaperExplainer, NumberedSteps, ResultTiles } from '../../components/Explainers'
+import { FlowDiagram } from '../../components/FlowDiagram'
+import { AlertIcon, BookIcon, SparkIcon } from '../../components/Icons'
 import { Card, Chip, DefinitionList, EmptyState, ErrorState, ExternalLink, Loading, RelativeTime } from '../../components/ui'
 import { formatDate, pluralize } from '../../lib/format'
 
 export default function PaperDetailPage() {
   const paperId = useParams()['*'] ?? ''
   const paper = usePaper(paperId)
+  const projects = useProjects()
 
   if (paper.isLoading) return <Loading label="Loading paper…" />
   if (paper.isError || !paper.data)
@@ -22,7 +25,9 @@ export default function PaperDetailPage() {
       </div>
     )
   const data = paper.data
+  const explainer = data.explainer
   const authors = data.authors.map((author) => (typeof author === 'string' ? author : (author as Author).name)).filter(Boolean)
+  const projectId = projects.data?.[0]?.id
 
   return (
     <div className="space-y-6">
@@ -33,7 +38,12 @@ export default function PaperDetailPage() {
         <h2 className="mt-2 text-xl leading-snug font-semibold">{data.title}</h2>
         <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted">
           <DocTypeChip docType={data.doc_type} />
-          {authors.length > 0 && <span>{authors.slice(0, 6).join(', ')}{authors.length > 6 && ' et al.'}</span>}
+          {authors.length > 0 && (
+            <span>
+              {authors.slice(0, 6).join(', ')}
+              {authors.length > 6 && ' et al.'}
+            </span>
+          )}
           <span>· {data.venue ?? 'unknown venue'}</span>
           <span>· {formatDate(data.publication_date)}</span>
         </div>
@@ -42,13 +52,84 @@ export default function PaperDetailPage() {
           {data.pdf_url && <ExternalLink href={data.pdf_url}>PDF</ExternalLink>}
           {data.code_url && <ExternalLink href={data.code_url}>Code</ExternalLink>}
         </div>
+        {explainer?.tldr && (
+          <p className="mt-3 max-w-3xl rounded-md border border-done/20 bg-done-subtle/50 px-3 py-2 text-[15px] leading-snug text-fg">
+            <span className="mr-1.5 rounded bg-done px-1.5 py-px text-[10.5px] font-semibold text-white">TL;DR</span>
+            {explainer.tldr}
+          </p>
+        )}
       </div>
 
       <div className="grid gap-6 lg:grid-cols-3">
-        <div className="space-y-6 lg:col-span-2">
-          <Card title="Abstract">
-            <p className="text-sm leading-relaxed whitespace-pre-line">{data.abstract || 'No abstract available.'}</p>
-          </Card>
+        <div className="min-w-0 space-y-6 lg:col-span-2">
+          {explainer ? (
+            <Card
+              title={
+                <span className="flex items-center gap-2">
+                  <SparkIcon className="text-done" /> In plain language
+                </span>
+              }
+            >
+              <div className="space-y-5 text-sm">
+                {!!explainer.key_results?.length && <ResultTiles results={explainer.key_results} size="md" />}
+                {explainer.problem && (
+                  <section>
+                    <h3 className="mb-1 text-xs font-semibold tracking-wide text-muted uppercase">Problem</h3>
+                    <p className="text-fg">{explainer.problem}</p>
+                  </section>
+                )}
+                {!!explainer.approach?.length && (
+                  <section>
+                    <h3 className="mb-2 text-xs font-semibold tracking-wide text-muted uppercase">Approach</h3>
+                    <NumberedSteps steps={explainer.approach} />
+                  </section>
+                )}
+                {explainer.diagram?.nodes?.length ? (
+                  <div className="overflow-x-auto rounded-md border border-line-muted px-3 py-3">
+                    <div className="min-w-[420px]">
+                      <FlowDiagram diagram={explainer.diagram} />
+                    </div>
+                  </div>
+                ) : null}
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {explainer.novelty && (
+                    <section className="rounded-md border border-accent/30 bg-accent-subtle/40 px-3 py-2">
+                      <h3 className="mb-0.5 text-xs font-semibold tracking-wide text-accent uppercase">What is new</h3>
+                      <p className="text-fg">{explainer.novelty}</p>
+                    </section>
+                  )}
+                  {explainer.who_should_care && (
+                    <section className="rounded-md border border-success/25 bg-success-subtle/50 px-3 py-2">
+                      <h3 className="mb-0.5 text-xs font-semibold tracking-wide text-success uppercase">Who should care</h3>
+                      <p className="text-fg">{explainer.who_should_care}</p>
+                    </section>
+                  )}
+                </div>
+                {!!explainer.limitations?.length && (
+                  <section>
+                    <h3 className="mb-1.5 text-xs font-semibold tracking-wide text-muted uppercase">Limitations</h3>
+                    <ul className="space-y-1">
+                      {explainer.limitations.map((limitation) => (
+                        <li key={limitation} className="flex gap-2 text-fg">
+                          <AlertIcon size={14} className="mt-0.5 shrink-0 text-attention" />
+                          {limitation}
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                )}
+                <ExplainerFootnote explainer={explainer} />
+              </div>
+            </Card>
+          ) : (
+            <Card title="In plain language">
+              <div className="space-y-2 text-sm text-muted">
+                <p>No plain-language summary yet{data.distilled_at ? '' : ' — the paper has not been distilled'}.</p>
+                <GeneratePaperExplainer paperId={data.paper_id} />
+              </div>
+            </Card>
+          )}
+
           <Card title={`Claim cards (${data.claims.length})`} bodyClassName="p-0">
             {data.claims.length === 0 ? (
               <EmptyState title={data.distilled_at ? 'No claims extracted' : 'Not distilled yet'} icon={<BookIcon size={28} />}>
@@ -58,27 +139,37 @@ export default function PaperDetailPage() {
               <ul className="divide-y divide-line-muted">
                 {data.claims.map((claim) => (
                   <li key={claim.id} className="px-4 py-3">
-                    <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+                    <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_200px]">
                       <div className="min-w-0">
-                        <Link to={`/research/claims/${claim.id}`} className="font-semibold text-fg hover:text-accent">
-                          {claim.name}
-                        </Link>
-                        <p className="mt-0.5 text-sm text-muted">{claim.technique}</p>
+                        <div className="flex flex-wrap items-baseline justify-between gap-x-3">
+                          <Link to={`/research/claims/${claim.id}`} className="font-semibold text-fg hover:text-accent">
+                            {claim.name}
+                          </Link>
+                          <span className="text-sm">
+                            <ClaimedEffect claim={claim} />
+                          </span>
+                        </div>
+                        <ClaimLead claim={claim} explainer={claim.explainer} />
+                        <div className="mt-2">
+                          <ClaimChips claim={claim} />
+                        </div>
                       </div>
-                      <div className="shrink-0 text-sm sm:text-right">
-                        <ClaimedEffect claim={claim} />
-                      </div>
-                    </div>
-                    <div className="mt-2">
-                      <ClaimChips claim={claim} />
+                      <DiagramThumb explainer={claim.explainer} className="self-start" />
                     </div>
                   </li>
                 ))}
               </ul>
             )}
           </Card>
+
+          {data.abstract && (
+            <details className="card group">
+              <summary className="cursor-pointer px-4 py-3 text-sm font-semibold select-none">Abstract</summary>
+              <p className="border-t border-line-muted px-4 py-3 text-sm leading-relaxed whitespace-pre-line">{data.abstract}</p>
+            </details>
+          )}
         </div>
-        <div className="space-y-6">
+        <div className="min-w-0 space-y-6">
           <Card title="Details">
             <DefinitionList
               items={[
@@ -98,7 +189,7 @@ export default function PaperDetailPage() {
               <ul className="space-y-2 text-sm">
                 {data.topics.map((topic) => (
                   <li key={topic.slug} className="flex items-center justify-between gap-2">
-                    <Link to={`/research/papers?topic=${topic.slug}`}>{topic.name}</Link>
+                    <Link to={`/research/topics/${topic.slug}`}>{topic.name}</Link>
                     {topic.rank && <Chip tone="neutral">#{topic.rank} in topic</Chip>}
                   </li>
                 ))}
@@ -113,6 +204,7 @@ export default function PaperDetailPage() {
                 ))}
               </div>
               <p className="mt-2 text-xs text-muted">{pluralize(data.claims.filter((claim) => claim.testable).length, 'testable claim')}</p>
+              {projectId && <p className="mt-1 text-xs text-muted">Claim explanations are written for your project on the Recommendations page.</p>}
             </Card>
           )}
         </div>

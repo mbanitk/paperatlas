@@ -1,12 +1,54 @@
 import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router'
-import { useCategories, useClaims, useTopics } from '../../api/queries'
-import { ClaimChips, ClaimedEffect } from '../../components/ClaimCard'
+import { useCategories, useClaims, useProjects, useTopics } from '../../api/queries'
+import type { Claim, Project } from '../../api/types'
+import { ClaimChips } from '../../components/ClaimCard'
+import { ClaimDiagram, ClaimExplainDetails, ClaimLead, GenerateClaimExplainer, GlanceStrip } from '../../components/Explainers'
 import { SearchIcon, SparkIcon } from '../../components/Icons'
-import { EmptyState, ErrorState, Loading, Pagination, PaperLink, useDebounced } from '../../components/ui'
+import { Button, EmptyState, ErrorState, Loading, Pagination, PaperLink, useDebounced } from '../../components/ui'
 import { formatScore, humanize, pluralize } from '../../lib/format'
 
 const LIMIT = 30
+
+function ClaimRow({ claim, project }: { claim: Claim; project?: Project }) {
+  const [open, setOpen] = useState(false)
+  const explainer = claim.explainer
+  return (
+    <li className="px-4 py-4">
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+          <Link to={`/research/claims/${claim.id}`} className="font-semibold text-fg hover:text-accent">
+            {claim.name}
+          </Link>
+          {typeof claim.search_score === 'number' && <span className="text-[11px] text-muted">relevance {formatScore(claim.search_score)}</span>}
+        </div>
+        <div className="mt-0.5 truncate text-xs text-muted">
+          <PaperLink paperId={claim.paper_id} title={claim.paper_title ?? claim.paper_id} className="text-muted hover:text-accent" />
+        </div>
+        <ClaimLead claim={claim} explainer={explainer} />
+      </div>
+      <div className="mt-3">
+        <GlanceStrip claim={claim} explainer={explainer} project={project} />
+      </div>
+      <ClaimDiagram diagram={explainer?.diagram} className="mt-3" />
+      <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2">
+        <ClaimChips claim={claim} />
+        {explainer ? (
+          <Button size="sm" variant="invisible" onClick={() => setOpen(!open)} aria-expanded={open} icon={<SparkIcon size={14} />}>
+            {open ? 'Hide explanation' : 'Explain'}
+          </Button>
+        ) : (
+          claim.testable && <GenerateClaimExplainer claimId={claim.id} projectId={project?.id} />
+        )}
+      </div>
+      {open && explainer && (
+        <div className="mt-3 border-t border-line-muted pt-4">
+          <ClaimExplainDetails explainer={explainer} projectName={project?.name} showDiagram={false} />
+        </div>
+      )}
+    </li>
+  )
+}
 
 export default function Claims() {
   const [params, setParams] = useSearchParams()
@@ -18,6 +60,8 @@ export default function Claims() {
   const q = useDebounced(search.trim(), 450)
   const categories = useCategories()
   const topics = useTopics()
+  const projects = useProjects()
+  const project = projects.data?.[0]
   const claims = useClaims({
     q: q || undefined,
     category: category || undefined,
@@ -122,26 +166,7 @@ export default function Claims() {
             </div>
             <ul className="divide-y divide-line-muted">
               {claims.data.items.map((claim) => (
-                <li key={claim.id} className="px-4 py-3 hover:bg-canvas-subtle">
-                  <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
-                    <div className="min-w-0">
-                      <Link to={`/research/claims/${claim.id}`} className="font-semibold text-fg hover:text-accent">
-                        {claim.name}
-                      </Link>
-                      <div className="mt-0.5 truncate text-xs text-muted">
-                        <PaperLink paperId={claim.paper_id} title={claim.paper_title ?? claim.paper_id} className="text-muted hover:text-accent" />
-                      </div>
-                      <p className="mt-1 text-sm text-fg">{claim.technique}</p>
-                    </div>
-                    <div className="shrink-0 text-sm sm:text-right">
-                      <ClaimedEffect claim={claim} />
-                      {typeof claim.search_score === 'number' && <div className="text-[11px] text-muted">relevance {formatScore(claim.search_score)}</div>}
-                    </div>
-                  </div>
-                  <div className="mt-2">
-                    <ClaimChips claim={claim} />
-                  </div>
-                </li>
+                <ClaimRow key={claim.id} claim={claim} project={project} />
               ))}
             </ul>
           </>

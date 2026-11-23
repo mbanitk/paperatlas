@@ -101,24 +101,6 @@ export function formatDateTime(iso: string | null | undefined): string {
   })
 }
 
-/** Paper's claimed effect as a short label in the claim's own direction: `↑45%`, `↓2.6×`, `not quantified`. */
-export function formatClaimedEffect(claim: {
-  claimed_gain_pct?: number | null
-  claimed_value?: number | null
-  claimed_unit?: string | null
-  direction?: string | null
-}): string {
-  const unit = (claim.claimed_unit || '').trim().toLowerCase()
-  const arrow = claim.direction === 'decrease' ? '↓' : claim.direction === 'increase' ? '↑' : ''
-  if (claim.claimed_value !== null && claim.claimed_value !== undefined && ['x', '×', 'times', 'fold'].includes(unit)) {
-    return `${arrow}${formatNumber(claim.claimed_value, 2)}×`
-  }
-  if (claim.claimed_gain_pct !== null && claim.claimed_gain_pct !== undefined && arrow) {
-    return `${arrow}${formatNumber(Math.abs(claim.claimed_gain_pct), 1)}%`
-  }
-  return 'not quantified'
-}
-
 export function pluralize(count: number, singular: string, plural = `${singular}s`): string {
   return `${count} ${count === 1 ? singular : plural}`
 }

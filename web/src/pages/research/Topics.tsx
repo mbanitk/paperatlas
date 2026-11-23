@@ -4,23 +4,16 @@ import { api } from '../../api/client'
 import { useQueueJob, useSeeds, useTopics } from '../../api/queries'
 import type { Topic } from '../../api/types'
 import { Meter } from '../../components/Charts'
+import { CategoryCounts, KpiRow, SparkBars } from '../../components/Insights'
 import { ConfirmDialog } from '../../components/Dialog'
 import { AlertIcon, RefreshIcon } from '../../components/Icons'
 import { useToast } from '../../components/Toast'
 import { Button, Card, Checkbox, Chip, EmptyState, ErrorState, Loading, RelativeTime } from '../../components/ui'
 import { formatNumber } from '../../lib/format'
 
-const STAT_LABELS: [string, string, (v: number) => string][] = [
-  ['papers', 'papers', (v) => String(Math.round(v))],
-  ['recency', 'recency', (v) => v.toFixed(2)],
-  ['velocity', 'last 60 d', (v) => `${Math.round(v * 100)}%`],
-  ['citations', 'log cites', (v) => v.toFixed(1)],
-  ['upvotes', 'log HF ↑', (v) => v.toFixed(1)],
-  ['code', 'with code', (v) => `${Math.round(v * 100)}%`],
-]
-
 function TopicCard({ topic }: { topic: Topic }) {
-  const stats = topic.stats ?? {}
+  const insights = topic.insights
+  const summary = topic.explainer?.summary || topic.description
   return (
     <article className="card flex flex-col p-4" aria-labelledby={`topic-${topic.id}`}>
       <div className="flex items-start gap-3">
@@ -29,7 +22,9 @@ function TopicCard({ topic }: { topic: Topic }) {
         </span>
         <div className="min-w-0 flex-1">
           <h3 id={`topic-${topic.id}`} className="leading-snug font-semibold">
-            {topic.name}
+            <Link to={`/research/topics/${topic.slug}`} className="text-fg hover:text-accent">
+              {topic.name}
+            </Link>
           </h3>
           <div className="mt-1 flex flex-wrap gap-1.5">
             {topic.seed && <Chip tone="neutral">{topic.seed}</Chip>}
@@ -42,38 +37,40 @@ function TopicCard({ topic }: { topic: Topic }) {
           </div>
         </div>
       </div>
-      {topic.description && <p className="mt-3 text-sm text-muted">{topic.description}</p>}
-      <div className="mt-3">
-        <div className="mb-1 flex items-center justify-between text-xs">
-          <span className="text-muted">trend score</span>
-          <span className="font-semibold tabular-nums">{formatNumber(topic.trend_score, 3)}</span>
-        </div>
-        <Meter value={topic.trend_score} label={`Trend score ${topic.trend_score}`} />
-      </div>
-      <dl className="mt-3 grid grid-cols-3 gap-x-3 gap-y-1 text-xs">
-        {STAT_LABELS.filter(([key]) => typeof stats[key] === 'number').map(([key, label, fmt]) => (
-          <div key={key}>
-            <dt className="text-muted">{label}</dt>
-            <dd className="font-semibold tabular-nums">{fmt(stats[key])}</dd>
+      {summary && <p className="mt-3 line-clamp-3 text-sm text-muted">{summary}</p>}
+      {insights && (
+        <div className="mt-3 rounded-md border border-line-muted bg-canvas-subtle/50 px-3 py-2.5">
+          <KpiRow insights={insights} compact />
+          <div className="mt-2.5 flex items-end justify-between gap-3">
+            <div>
+              <SparkBars data={insights.monthly} />
+              <div className="mt-0.5 text-[10.5px] text-subtle">papers / month</div>
+            </div>
+            <div className="min-w-0 flex-1 pl-2">
+              <div className="mb-1 flex items-center justify-between text-[11px]">
+                <span className="text-muted">trend</span>
+                <span className="font-semibold tabular-nums">{formatNumber(topic.trend_score, 2)}</span>
+              </div>
+              <Meter value={topic.trend_score} label={`Trend score ${topic.trend_score}`} />
+            </div>
           </div>
-        ))}
-      </dl>
-      {!!topic.keywords?.length && (
-        <div className="mt-3 flex flex-wrap gap-1">
-          {topic.keywords.map((keyword) => (
-            <span key={keyword} className="rounded bg-canvas-inset px-1.5 py-0.5 text-[11px] text-muted">
-              {keyword}
-            </span>
-          ))}
         </div>
       )}
-      <div className="mt-auto flex items-center justify-between gap-2 pt-4 text-xs">
+      {!!insights?.claim_categories?.length && (
+        <div className="mt-3">
+          <CategoryCounts categories={insights.claim_categories} max={3} />
+        </div>
+      )}
+      <div className="mt-auto flex flex-wrap items-center justify-between gap-2 pt-4 text-xs">
         <span className="text-muted">
           refreshed <RelativeTime iso={topic.refreshed_at} />
         </span>
         <span className="flex gap-3">
           <Link to={`/research/papers?topic=${topic.slug}`}>Papers</Link>
           <Link to={`/recommendations?topic=${topic.slug}`}>Recommendations</Link>
+          <Link to={`/research/topics/${topic.slug}`} className="font-semibold">
+            Details →
+          </Link>
         </span>
       </div>
     </article>

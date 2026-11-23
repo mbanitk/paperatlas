@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { displayValue, formatClaimedEffect, formatDuration, formatNumber, formatPct, formatWorkload, relativeTime, tailLines } from './format'
+import { displayValue, formatDuration, formatNumber, formatPct, formatWorkload, relativeTime, tailLines } from './format'
 
 describe('formatPct', () => {
   it('signs and rounds', () => {
@@ -43,15 +43,6 @@ describe('relativeTime', () => {
   it('handles bad input', () => {
     expect(relativeTime(null, now)).toBe('—')
     expect(relativeTime('nope', now)).toBe('—')
-  })
-})
-
-describe('formatClaimedEffect', () => {
-  it('keeps the claim’s own unit and direction', () => {
-    expect(formatClaimedEffect({ claimed_value: 2.6, claimed_unit: 'x', direction: 'decrease', claimed_gain_pct: 61.5 })).toBe('↓2.6×')
-    expect(formatClaimedEffect({ claimed_value: 45, claimed_unit: '%', direction: 'increase', claimed_gain_pct: 45 })).toBe('↑45%')
-    expect(formatClaimedEffect({ claimed_value: 46, claimed_unit: '%', direction: 'decrease', claimed_gain_pct: 46 })).toBe('↓46%')
-    expect(formatClaimedEffect({ claimed_value: 0.8, claimed_unit: '%', direction: 'none', claimed_gain_pct: null })).toBe('not quantified')
   })
 })
 

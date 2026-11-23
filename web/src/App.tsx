@@ -13,6 +13,7 @@ import Claims from './pages/research/Claims'
 import PaperDetailPage from './pages/research/PaperDetail'
 import Papers from './pages/research/Papers'
 import ResearchLayout from './pages/research/ResearchLayout'
+import TopicDetail from './pages/research/TopicDetail'
 import Topics from './pages/research/Topics'
 
 export default function App() {
@@ -27,6 +28,7 @@ export default function App() {
           <Route path="research" element={<ResearchLayout />}>
             <Route index element={<Navigate to="topics" replace />} />
             <Route path="topics" element={<Topics />} />
+            <Route path="topics/:slug" element={<TopicDetail />} />
             <Route path="papers" element={<Papers />} />
             <Route path="papers/*" element={<PaperDetailPage />} />
             <Route path="claims" element={<Claims />} />

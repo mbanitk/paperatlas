@@ -19,12 +19,20 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from seed_explainers import BACKGROUND_PAPERS, CLAIM_EXPLAINERS, PAPER_EXPLAINERS, TOPIC_EXPLAINERS  # noqa: E402
+
 MARKER = ".seed_demo"
 NOW = datetime.now(UTC).replace(microsecond=0)
 
 
 def ago(minutes: float = 0, hours: float = 0, days: float = 0) -> datetime:
     return NOW - timedelta(minutes=minutes, hours=hours, days=days)
+
+
+def stamp(explainer: dict[str, Any], minutes: float = 0, hours: float = 0) -> dict[str, Any]:
+    """Explainer fixture with the metadata the LLM pipeline adds."""
+    return {**explainer, "generated_at": ago(minutes=minutes, hours=hours).isoformat(), "model": "gpt-5.2"}
 
 
 # ---- target project ------------------------------------------------------------------
@@ -935,12 +943,40 @@ class Seeder:
                     session.flush()
                     self.claims[concept_data["key"]] = claim.id
                     self.claim_rows[concept_data["key"]] = {"concept": concept_data, "paper": paper_data, "card": card}
+            self.seed_background_papers(session, topic_ids)
+            for slug, explainer in TOPIC_EXPLAINERS.items():
+                session.query(Topic).filter(Topic.slug == slug).update({"explainer": stamp(explainer, hours=20)})
+            for paper_id, explainer in PAPER_EXPLAINERS.items():
+                session.get(Paper, paper_id).explainer = stamp(explainer, hours=24)
             group = ClaimGroup(label="Adaptive speculation length", category="speculative_decoding",
                                canonical_claim_id=self.claims["c_draft_len"], size=2)
             session.add(group)
             session.flush()
             for key in ("c_draft_len", "c_adaptive_ngram"):
                 session.get(Claim, self.claims[key]).group_id = group.id
+
+    @staticmethod
+    def seed_background_papers(session: Any, topic_ids: dict[str, int]) -> None:
+        """A few undistilled papers per topic so the topic infographics (papers/month, sources) have data."""
+        from paperatlas.db.schema import Paper, PaperTopic
+
+        serial = 40000
+        for slug, papers in BACKGROUND_PAPERS.items():
+            existing = sum(1 for paper in PAPERS for topic_slug, *_ in paper["topics"] if topic_slug == slug)
+            for index, (title, published, sources, citations, upvotes, code) in enumerate(papers, start=1):
+                serial += 7
+                arxiv = f"{published.year % 100:02d}{published.month:02d}.{serial:05d}"
+                pid = f"arxiv:{arxiv}" if "arxiv" in sources else f"doi:10.5555/demo.{serial}"
+                session.add(Paper(
+                    paper_id=pid, doc_type="paper", title=title, venue="arXiv" if "arxiv" in sources else "preprint",
+                    abstract=f"{title}. (Background paper in the demo fixture; not distilled.)", source=sources[0], sources=sources,
+                    arxiv_id=arxiv if "arxiv" in sources else None, url=f"https://arxiv.org/abs/{arxiv}" if "arxiv" in sources else None,
+                    code_url=f"https://github.com/example/{slug[:18]}-{index}" if code else None, publication_date=published,
+                    publication_year=published.year, authors=[{"name": "Demo Author"}], citation_count=citations, hf_upvotes=upvotes,
+                    ingested_at=ago(hours=27), updated_at=ago(hours=27),
+                ))
+                session.flush()
+                session.add(PaperTopic(paper_id=pid, topic_id=topic_ids[slug], relevance=0.6, score=round(0.7 - 0.04 * index, 3), rank=existing + index))
 
     def seed_project(self) -> int:
         from paperatlas.db.engine import session_scope
@@ -989,10 +1025,12 @@ class Seeder:
                     score *= 0.3
                 if blockers:
                     score *= 0.05
+                explainer = CLAIM_EXPLAINERS.get(key)
+                extra = {"explainer": stamp(explainer, minutes=50), "explained_at": ago(minutes=50)} if explainer else {}
                 session.add(Match(
                     project_id=project_id, claim_id=self.claims[key], fit=round(fit, 4), gain=round(gain, 4),
                     effort_cost=cost, score=round(score, 5), testable_here=not blockers, blockers=blockers,
-                    target_metric=info["target_metric"], rationale=info["rationale"], created_at=ago(hours=1),
+                    target_metric=info["target_metric"], rationale=info["rationale"], created_at=ago(hours=1), **extra,
                 ))
 
     # -- triage + experiments --

@@ -2,14 +2,15 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router'
 import { api } from '../api/client'
-import { keys, useCancelExperiment, useExperiment, useProject, useRetryExperiment } from '../api/queries'
+import { keys, useCancelExperiment, useClaim, useExperiment, useProject, useRetryExperiment } from '../api/queries'
 import { mergeEvents, useEventStream } from '../api/sse'
-import type { Experiment, LabEvent } from '../api/types'
+import type { Experiment, LabEvent, Project } from '../api/types'
 import { CategoryChip, LiveDot, StatusChip, VerdictBadge } from '../components/Badges'
 import { ClaimCardDetails } from '../components/ClaimCard'
 import { ConfirmDialog } from '../components/Dialog'
 import { EventTimeline } from '../components/EventTimeline'
-import { AlertIcon, BranchIcon, GateIcon, RefreshIcon, StopIcon } from '../components/Icons'
+import { AlertIcon, BranchIcon, ChevronDown, ChevronRight, GateIcon, RefreshIcon, SparkIcon, StopIcon } from '../components/Icons'
+import { ClaimDiagram, ClaimExplainDetails, ClaimLead, GenerateClaimExplainer, GlanceStrip } from '../components/Explainers'
 import { Stepper } from '../components/Stepper'
 import { useToast } from '../components/Toast'
 import { Banner, Button, Card, ErrorState, ExternalLink, Loading, PageHeader, PaperLink, RelativeTime, errorMessage } from '../components/ui'
@@ -43,6 +44,44 @@ function useExperimentEvents(id: number, enabled: boolean) {
   )
   const status = useEventStream(enabled ? api.streams.experiment(id) : null, { after: 0, onEvents })
   return { events, status }
+}
+
+/** Claim panel: plain-language lead + mini diagram + glance strip, explanation and raw claim card on demand. */
+function ClaimUnderTest({ experiment, project }: { experiment: Experiment; project?: Project }) {
+  const claim = useClaim(experiment.claim_id, experiment.project_id)
+  const [open, setOpen] = useState<'explain' | 'card' | null>(null)
+  const explainer = claim.data?.explainer
+  const subject = { ...experiment.claim, explainer }
+  const toggle = (panel: 'explain' | 'card') => setOpen((current) => (current === panel ? null : panel))
+  return (
+    <div className="space-y-3">
+      <ClaimLead claim={subject} explainer={explainer} />
+      <GlanceStrip claim={subject} explainer={explainer} project={project} />
+      <ClaimDiagram diagram={explainer?.diagram} />
+      <div className="flex flex-wrap items-center gap-1">
+        {explainer ? (
+          <Button size="sm" variant="invisible" onClick={() => toggle('explain')} aria-expanded={open === 'explain'} icon={<SparkIcon size={14} />}>
+            {open === 'explain' ? 'Hide explanation' : 'Explain'}
+          </Button>
+        ) : (
+          !claim.isLoading && <GenerateClaimExplainer claimId={experiment.claim_id} projectId={experiment.project_id} />
+        )}
+        <Button size="sm" variant="invisible" onClick={() => toggle('card')} aria-expanded={open === 'card'} icon={open === 'card' ? <ChevronDown /> : <ChevronRight />}>
+          Claim card
+        </Button>
+      </div>
+      {open === 'explain' && explainer && (
+        <div className="border-t border-line-muted pt-4">
+          <ClaimExplainDetails explainer={explainer} projectName={experiment.project.name} showDiagram={false} />
+        </div>
+      )}
+      {open === 'card' && (
+        <div className="border-t border-line-muted pt-3">
+          <ClaimCardDetails claim={experiment.claim} />
+        </div>
+      )}
+    </div>
+  )
 }
 
 function Actions({ experiment }: { experiment: Experiment }) {
@@ -251,7 +290,7 @@ export default function ExperimentDetail() {
                 </Link>
               }
             >
-              <ClaimCardDetails claim={data.claim} />
+              <ClaimUnderTest experiment={data} project={project.data} />
             </Card>
             <BuildCard experiment={data} />
             <RunsCard experiment={data} />

@@ -77,6 +77,83 @@ export interface ClaimCardData {
   [extra: string]: unknown
 }
 
+// ---- explainers (plain-language descriptions + flow diagrams) --------------------------------
+
+export type DiagramNodeKind = 'input' | 'model' | 'step' | 'decision' | 'memory' | 'output' | 'hardware' | 'data'
+
+export interface DiagramNode {
+  id: string
+  label: string
+  kind: DiagramNodeKind | string
+  highlight?: boolean
+}
+
+export interface DiagramEdge {
+  from: string
+  to: string
+  label?: string | null
+  style?: 'normal' | 'loop' | 'skip' | string
+}
+
+export interface FlowDiagramData {
+  title?: string
+  nodes: DiagramNode[]
+  edges: DiagramEdge[]
+}
+
+export interface ClaimExplainer {
+  headline?: string
+  problem?: string
+  how_it_works?: string[]
+  why_it_helps?: string
+  claimed_result?: { summary?: string; is_relative_gain?: boolean } | null
+  in_this_project?: { where?: string; change?: string; measure?: string } | null
+  lossless?: boolean | null
+  caveats?: string[]
+  glossary?: { term: string; meaning: string }[]
+  diagram?: FlowDiagramData | null
+  generated_at?: string | null
+  model?: string | null
+}
+
+export interface PaperExplainer {
+  tldr?: string
+  problem?: string
+  approach?: string[]
+  key_results?: { label: string; value: string; context?: string }[]
+  novelty?: string
+  who_should_care?: string
+  limitations?: string[]
+  diagram?: FlowDiagramData | null
+  generated_at?: string | null
+  model?: string | null
+}
+
+export interface TopicExplainer {
+  summary?: string
+  why_now?: string
+  key_ideas?: { name: string; one_liner: string }[]
+  typical_gains?: string
+  open_problems?: string[]
+  relevance?: string
+  generated_at?: string | null
+  model?: string | null
+}
+
+export interface TopicInsights {
+  papers: number
+  patents: number
+  distilled: number
+  with_code: number
+  citations: number
+  upvotes: number
+  monthly: { month: string; papers: number }[]
+  sources: { source: string; papers: number }[]
+  claim_categories: { category: string; claims: number; testable: number }[]
+  median_claimed_gain_pct: number | null
+  top_papers: { paper_id: string; title: string; score: number | null; rank: number | null }[]
+}
+
 export interface Claim {
   id: number
   claim_id: number
@@ -107,9 +184,11 @@ export interface Claim {
   paper_date: string | null
   created_at: string | null
   search_score?: number | null
+  explainer?: ClaimExplainer | null
 }
 
 export interface ClaimDetail extends Claim {
+  paper_explainer?: PaperExplainer | null
   group?: {
     id: number
     label: string
@@ -162,6 +241,7 @@ export interface PaperSummary {
   distilled: boolean
   claims: number
   testable_claims: number
+  explainer?: PaperExplainer | null
 }
 
 export interface Author {
@@ -188,6 +268,7 @@ export interface PaperDetail {
   distilled_at: string | null
   topics: { slug: string; name: string; rank: number | null; score: number | null }[]
   claims: Claim[]
+  explainer?: PaperExplainer | null
 }
 
 export interface Topic {
@@ -204,6 +285,8 @@ export interface Topic {
   stats: Record<string, number>
   status: string
   refreshed_at: string | null
+  explainer?: TopicExplainer | null
+  insights?: TopicInsights | null
 }
 
 export interface Seeds {

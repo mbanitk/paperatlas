@@ -23,6 +23,9 @@ import type {
   Triage,
   TriageOptions,
   TriageSummary,
+  ClaimExplainer,
+  PaperExplainer,
+  TopicExplainer,
 } from './types'
 
 export const API_BASE = '/api'
@@ -142,6 +145,11 @@ export const api = {
     stats: (signal?: AbortSignal) => get<Stats>('/research/stats', signal),
     seeds: () => get<Seeds>('/research/seeds'),
     topics: (includeArchived = false) => get<Topic[]>(`/research/topics${buildQuery({ include_archived: includeArchived || undefined })}`),
+    topic: (slug: string) => get<Topic>(`/research/topics/${encodeURIComponent(slug)}`),
+    explainTopic: (slug: string) => post<TopicExplainer>(`/research/topics/${encodeURIComponent(slug)}/explain`),
+    explainPaper: (paperId: string) => post<PaperExplainer>(`/research/papers/${encodePaperId(paperId)}/explain`),
+    explainBackfill: (body: { project_id?: number | null; claims_top?: number; papers?: boolean; topics?: boolean; force?: boolean }) =>
+      post<JobQueued>('/research/explain', body),
     refreshTopics: (useLlm = true) => post<JobQueued>('/research/topics/refresh', { use_llm: useLlm }),
     discover: (body: { topics?: string[] | null; per_topic?: number | null; expand?: boolean } = {}) =>
       post<JobQueued>('/research/discover', body),
@@ -153,7 +161,7 @@ export const api = {
     categories: () => get<string[]>('/research/categories'),
     claims: (params: ClaimParams = {}, signal?: AbortSignal) =>
       get<Paged<Claim>>(`/research/claims${buildQuery({ ...params })}`, signal),
-    claim: (id: number) => get<ClaimDetail>(`/research/claims/${id}`),
+    claim: (id: number, projectId?: number) => get<ClaimDetail>(`/research/claims/${id}${buildQuery({ project_id: projectId })}`),
     jobs: (limit = 50, status?: string) => get<Job[]>(`/research/jobs${buildQuery({ limit, status })}`),
   },
 
@@ -162,6 +170,7 @@ export const api = {
     project: (id: number) => get<Project>(`/lab/projects/${id}`),
     registerProject: (body: { repo_path: string; name?: string | null }) => post<Project>('/lab/projects', body),
     reprofile: (id: number) => post<Project>(`/lab/projects/${id}/profile`),
+    explainClaim: (projectId: number, claimId: number) => post<ClaimExplainer>(`/lab/projects/${projectId}/claims/${claimId}/explain`),
     rematch: (id: number, useLlm = true) => post<JobQueued>(`/lab/projects/${id}/match${buildQuery({ use_llm: useLlm })}`),
     recommendations: (projectId: number, params: RecommendationParams = {}, signal?: AbortSignal) =>
       get<Recommendation[]>(`/lab/projects/${projectId}/recommendations${buildQuery({ ...params })}`, signal),

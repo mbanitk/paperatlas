@@ -2,11 +2,10 @@ import { useState, type ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router'
 import { ApiError } from '../api/client'
 import { useMatchJobs, useProjects, useRegisterProject, useRematch, useReprofile } from '../api/queries'
-import type { Job, Project } from '../api/types'
+import type { Project } from '../api/types'
 import { ConfirmDialog, Modal } from '../components/Dialog'
-import { EventTimeline } from '../components/EventTimeline'
 import { BranchIcon, FlaskIcon, RefreshIcon, ServerIcon, SparkIcon } from '../components/Icons'
-import { useLiveEvents } from '../components/LiveEvents'
+import { JobStatus } from '../components/JobStatus'
 import { useToast } from '../components/Toast'
 import {
   Banner,
@@ -25,10 +24,8 @@ import {
   cx,
   errorMessage,
 } from '../components/ui'
-import { durationBetween, formatDuration, humanize, pluralize } from '../lib/format'
-import type { Tone } from '../lib/stages'
+import { humanize, pluralize } from '../lib/format'
 
-const JOB_TONE: Record<string, Tone> = { queued: 'attention', running: 'accent', done: 'success', failed: 'danger', cancelled: 'muted' }
 
 function hardwareSummary(project: Project): string {
   const hardware = project.hardware ?? {}
@@ -127,49 +124,6 @@ function RegisterDialog({ open, onClose, onRegistered }: { open: boolean; onClos
 }
 
 // ---- re-match job -----------------------------------------------------------------------------
-
-function JobStatus({ job }: { job: Job }) {
-  const live = useLiveEvents()
-  const events = live.events.filter((event) => event.job_id === job.id)
-  const active = job.status === 'queued' || job.status === 'running'
-  return (
-    <div className="rounded-md border border-line-muted">
-      <div className="flex flex-wrap items-center gap-2 px-3 py-2 text-sm">
-        <span className="font-semibold">Re-match job #{job.id}</span>
-        <Chip tone={JOB_TONE[job.status] ?? 'neutral'}>
-          {job.status === 'running' && <span className="size-1.5 animate-pulse-dot rounded-full bg-current" />}
-          {job.status}
-        </Chip>
-        <span className="text-xs text-muted">
-          queued <RelativeTime iso={job.created_at} />
-          {job.started_at && <> · ran {formatDuration(durationBetween(job.started_at, job.finished_at))}</>}
-          {job.payload?.use_llm === false && ' · heuristics only'}
-        </span>
-        {job.status === 'done' && (
-          <Link to={`/recommendations?project=${String(job.payload?.project_id ?? '')}`} className="ml-auto text-xs">
-            View recommendations
-          </Link>
-        )}
-      </div>
-      {job.status === 'queued' && (
-        <p className="border-t border-line-muted px-3 py-2 text-xs text-muted">
-          Waiting for a worker (<code className="code-inline">paperatlas services up</code> runs one).
-        </p>
-      )}
-      {job.error && <pre className="max-h-40 overflow-auto border-t border-line-muted bg-danger-subtle p-2 text-xs whitespace-pre-wrap text-danger">{job.error}</pre>}
-      {job.result && !job.error && (
-        <p className="border-t border-line-muted px-3 py-2 text-xs text-muted">
-          Result: {Object.entries(job.result).map(([key, value]) => `${humanize(key)} ${String(value)}`).join(' · ')}
-        </p>
-      )}
-      {(events.length > 0 || active) && (
-        <div className="border-t border-line-muted px-3">
-          <EventTimeline events={events} dense emptyText="No progress events yet." />
-        </div>
-      )}
-    </div>
-  )
-}
 
 function RematchDialog({ project, open, onClose }: { project: Project; open: boolean; onClose: () => void }) {
   const rematch = useRematch(project.id)
@@ -364,6 +318,7 @@ function ProjectDetail({ project }: { project: Project }) {
 
   return (
     <Card
+      className="min-w-0"
       title={
         <span className="flex flex-wrap items-center gap-2">
           <ServerIcon className="text-muted" /> {project.name}
@@ -406,7 +361,17 @@ function ProjectDetail({ project }: { project: Project }) {
       )}
       {latestJob && (
         <div className="mb-6">
-          <JobStatus job={latestJob} />
+          <JobStatus
+            job={latestJob}
+            title={`Re-match job #${latestJob.id}`}
+            action={
+              latestJob.status === 'done' ? (
+                <Link to={`/recommendations?project=${project.id}`} className="ml-auto text-xs">
+                  View recommendations
+                </Link>
+              ) : undefined
+            }
+          />
           {jobs.data && jobs.data.length > 1 && <p className="mt-1 text-xs text-muted">{pluralize(jobs.data.length - 1, 'earlier re-match job')} on the System page.</p>}
         </div>
       )}
@@ -452,7 +417,7 @@ export default function Projects() {
         </EmptyState>
       ) : (
         <div className="grid gap-6 lg:grid-cols-[280px_1fr]">
-          <nav aria-label="Projects" className="space-y-2 self-start">
+          <nav aria-label="Projects" className="min-w-0 space-y-2 self-start">
             {projects.data.map((project) => {
               const active = project.id === selected?.id
               return (

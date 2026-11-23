@@ -1,9 +1,11 @@
 import { Fragment, useState } from 'react'
 import { Link } from 'react-router'
-import { useJobs, useServices } from '../api/queries'
+import { useExplainBackfill, useJobs, useJobsOfKind, useProjects, useServices } from '../api/queries'
+import { JobStatus } from '../components/JobStatus'
+import { useToast } from '../components/Toast'
 import type { Job } from '../api/types'
-import { ChevronDown, ChevronRight, RefreshIcon, ServerIcon } from '../components/Icons'
-import { Button, Card, Chip, EmptyState, ErrorState, Loading, PageHeader, RelativeTime, cx } from '../components/ui'
+import { ChevronDown, ChevronRight, RefreshIcon, ServerIcon, SparkIcon } from '../components/Icons'
+import { Button, Card, Chip, EmptyState, ErrorState, InlineError, Loading, PageHeader, RelativeTime, cx, errorMessage } from '../components/ui'
 import { durationBetween, formatDuration } from '../lib/format'
 import type { Tone } from '../lib/stages'
 
@@ -62,6 +64,52 @@ function JobRow({ job }: { job: Job }) {
   )
 }
 
+function ExplanationsCard() {
+  const projects = useProjects()
+  const project = projects.data?.[0]
+  const backfill = useExplainBackfill()
+  const jobs = useJobsOfKind('explain')
+  const toast = useToast()
+  const latest = jobs.data?.[0]
+  return (
+    <Card
+      title={
+        <span className="flex items-center gap-2">
+          <SparkIcon className="text-done" /> Explanations
+        </span>
+      }
+      className="self-start"
+    >
+      <p className="text-sm text-muted">
+        Plain-language overviews for topics and papers, and claim explanations with flow diagrams for the top {project ? <strong className="text-fg">{project.name}</strong> : ''}{' '}
+        recommendations. Only missing ones are written (about 15 s each, on the worker).
+      </p>
+      <Button
+        className="mt-3"
+        icon={<SparkIcon size={14} />}
+        loading={backfill.isPending}
+        onClick={() =>
+          backfill.mutate(
+            { project_id: project?.id ?? null, claims_top: 25 },
+            {
+              onSuccess: (job) => toast.success(`Queued job #${job.job_id} (${job.kind})`),
+              onError: (error) => toast.error(errorMessage(error)),
+            },
+          )
+        }
+      >
+        Generate missing explanations
+      </Button>
+      <InlineError error={backfill.error} />
+      {latest && (
+        <div className="mt-3">
+          <JobStatus job={latest} title={`Explain job #${latest.id}`} />
+        </div>
+      )}
+    </Card>
+  )
+}
+
 export default function System() {
   const services = useServices()
   const [status, setStatus] = useState('')
@@ -71,9 +119,9 @@ export default function System() {
     <>
       <PageHeader title="System" description="Health of the microservices behind this console and the Postgres job queue the worker consumes." />
       <div className="grid gap-6 lg:grid-cols-3">
+        <div className="min-w-0 space-y-6 self-start">
         <Card
           title="Services"
-          className="self-start"
           actions={
             <Button size="sm" onClick={() => services.refetch()} loading={services.isFetching} icon={<RefreshIcon size={14} />}>
               Check
@@ -116,9 +164,11 @@ export default function System() {
           </ul>
           {services.isError && <p className="mt-3 text-xs text-danger">Start everything with <code className="code-inline">paperatlas services up</code>.</p>}
         </Card>
+        <ExplanationsCard />
+        </div>
 
         <Card
-          className="lg:col-span-2"
+          className="min-w-0 lg:col-span-2"
           title="Jobs"
           bodyClassName="p-0"
           actions={

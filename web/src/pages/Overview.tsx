@@ -278,11 +278,11 @@ export default function Overview() {
         <StatsRow stats={stats.data} />
       )}
       <div className="mt-6 grid gap-6 lg:grid-cols-3">
-        <div className="space-y-6 lg:col-span-2">
+        <div className="min-w-0 space-y-6 lg:col-span-2">
           <NeedsYou />
           <ActiveExperiments />
         </div>
-        <div className="space-y-6">
+        <div className="min-w-0 space-y-6">
           <Activity />
           <ServicesCard />
         </div>

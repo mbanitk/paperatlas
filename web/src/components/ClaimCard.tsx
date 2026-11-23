@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import type { Claim } from '../api/types'
-import { formatClaimedEffect, formatNumber, humanize } from '../lib/format'
+import { claimedEffectView } from '../lib/claims'
+import { formatNumber, humanize } from '../lib/format'
 import { CategoryChip, DocTypeChip, EffortChip } from './Badges'
 import { AlertIcon } from './Icons'
 import { Chip, DefinitionList, ExternalLink, PaperLink } from './ui'
@@ -32,11 +33,13 @@ export function ClaimChips({ claim, showCategory = true }: { claim: Claim; showC
   )
 }
 
+/** Reported effect; only relative gains get a direction arrow and colour, absolute values stay neutral. */
 export function ClaimedEffect({ claim }: { claim: Claim }) {
+  const view = claimedEffectView(claim, claim.explainer)
   return (
-    <span className="tabular-nums">
-      <span className="font-semibold text-done">{formatClaimedEffect(claim)}</span>
-      {claim.primary_metric && <span className="text-muted"> {claim.primary_metric}</span>}
+    <span className="tabular-nums" title={view.summary ?? (view.kind === 'neutral' ? 'Reported value, not a relative gain over a baseline' : undefined)}>
+      <span className={view.kind === 'gain' ? 'font-semibold text-done' : 'font-semibold text-fg'}>{view.text}</span>
+      {view.metric && <span className="text-muted"> {view.metric}</span>}
     </span>
   )
 }
