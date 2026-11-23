@@ -31,6 +31,7 @@ from paperatlas.lab.builder import build_experiment
 from paperatlas.lab.events import reporter
 from paperatlas.lab.judge import judge
 from paperatlas.lab.planner import plan_experiment
+from paperatlas.lab.profiler import register_project
 from paperatlas.lab.process import Cancelled
 from paperatlas.lab.report import render_report
 from paperatlas.lab.runner import run_benchmark
@@ -136,12 +137,17 @@ def node_plan(state: ExperimentState, report) -> dict:
     set_experiment(experiment_id, status="planning", error=None)
     report("plan", "Writing the experiment spec", None)
     llm = build_default_llm_client()
+    if context["experiment"].get("depends_on_experiment_id"):
+        register_project(context["project"]["repo_path"], context["project"]["name"])
+        context = service.experiment_context(experiment_id)
     spec = plan_experiment(
-        context["claim"],
+        {**context["claim"], "bundle": context["bundle"]},
         context["profile"],
         context["match"].get("target_metric") if context["match"] else None,
         llm,
         feedback=state.get("feedback"),
+        companions=context["bundle"],
+        baseline_flags=context["prerequisite_flags"],
     )
     set_experiment(experiment_id, spec=spec, flag_name=spec["flag_name"], status="awaiting_approval")
     report("approve", "Spec ready — waiting for approval (Gate 2)", {"spec": spec})
@@ -174,6 +180,7 @@ def route_after_spec(state: ExperimentState) -> str:
 
 def node_rejected(state: ExperimentState) -> dict:
     set_experiment(state["experiment_id"], status="rejected")
+    service.release_dependents(state["experiment_id"], merged=False)
     return {}
 
 
@@ -190,7 +197,7 @@ def node_build(state: ExperimentState, report) -> dict:
         experiment_id,
         worktree,
         spec,
-        context["claim"],
+        {**context["claim"], "bundle": context["bundle"]},
         profile,
         artifacts_dir(experiment_id),
         report,
@@ -339,10 +346,13 @@ def node_finalize(state: ExperimentState, report) -> dict:
         remove_worktree(repo, experiment.get("worktree_path"), experiment["branch"], delete_branch=False)
         set_experiment(experiment_id, status="merged", build={**(experiment.get("build") or {}), "merge_sha": sha})
         report("decide", f"Merged into {base} at {sha[:10]} (flag stays off by default)", {"sha": sha})
+        register_project(repo, context["project"]["name"])
+        service.release_dependents(experiment_id, merged=True)
     else:
         remove_worktree(repo, experiment.get("worktree_path"), experiment["branch"], delete_branch=True)
         set_experiment(experiment_id, status="dropped")
         report("decide", "Dropped: branch and worktree removed; results kept", None)
+        service.release_dependents(experiment_id, merged=False)
     return {}
 
 

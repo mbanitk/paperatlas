@@ -177,3 +177,96 @@ def lab_db_url():
     import os
 
     return os.environ["PAPERATLAS_DATABASE_URL"]
+
+
+CONCEPT_MAP = {
+    "order": [1, 2, 3],
+    "roles": [{"concept": 1, "role": "foundation"}, {"concept": 2, "role": "core"}, {"concept": 3, "role": "core"}],
+    "links": [
+        {"from": 3, "to": 2, "relation": "requires", "why": "the loop needs the gate", "evidence": "Sec 3"},
+        {"from": 2, "to": 1, "relation": "requires", "why": "the gate scores drafts", "evidence": None},
+        {"from": 1, "to": 3, "relation": "complements", "why": "together", "evidence": None},
+        {"from": 2, "to": 2, "relation": "builds_on", "why": "self link is dropped", "evidence": None},
+        {"from": 9, "to": 1, "relation": "requires", "why": "bad index is dropped", "evidence": None},
+    ],
+    "bundles": [{"name": "DLoop", "concepts": [1, 2, 3], "effect": "+41% speedup", "is_headline_result": True}],
+    "reading_path": "Start with the drafter, then the gate, then the loop.",
+}
+
+
+@pytest.fixture()
+def linked(lab):
+    from paperatlas.db.engine import session_scope
+    from paperatlas.db.schema import Claim, Concept
+    from sqlalchemy import select
+
+    PaperStore().upsert(PaperMetadata(title="DLoop", abstract="Looped drafting. " * 30, arxiv_id="2610.07659", source="arxiv"))
+    llm = FakeLLM(
+        {
+            "paper_distillation": {
+                "paper_summary": "s",
+                "concepts": [
+                    concept("Draft tokens with a small model", value=10, unit="%"),
+                    concept("Gate on summed log probabilities", value=5, unit="%"),
+                    concept("Loop over drafted blocks before verifying", value=41, unit="%"),
+                ],
+            },
+            "concept_map": CONCEPT_MAP,
+        }
+    )
+    DistillPipeline(extractor=ClaimExtractor(llm)).run(paper_ids=["arxiv:2610.07659"])
+    match_project(lab["project"]["id"], use_llm=False)
+    with session_scope() as session:
+        rows = session.execute(
+            select(Concept.name, Claim.id).join(Claim, Claim.concept_id == Concept.id).where(Concept.paper_id == "arxiv:2610.07659")
+        ).all()
+    ids = {name.split()[0]: claim_id for name, claim_id in rows}
+    return {**lab, "draft": ids["Draft"], "gate": ids["Gate"], "loop": ids["Loop"]}
+
+
+def test_concept_map_links_related_claims_and_prerequisites(linked):
+    from paperatlas.distill.relations import paper_concept_map, related_for_claims
+
+    related = related_for_claims([linked["loop"]])[linked["loop"]]
+    assert [r["claim_id"] for r in related["requires"]] == [linked["gate"]]
+    assert [r["claim_id"] for r in related["complements"]] == [linked["draft"]]
+    assert [p["claim_id"] for p in related["prerequisites"]] == [linked["draft"], linked["gate"]]
+    assert related["bundles"][0]["effect"] == "+41% speedup" and related["order"] == 3
+    concept_map = paper_concept_map("arxiv:2610.07659")
+    assert [n["claim_id"] for n in concept_map["nodes"]] == [linked["draft"], linked["gate"], linked["loop"]]
+    assert len(concept_map["links"]) == 3 and concept_map["nodes"][0]["role"] == "foundation"
+
+
+def test_bundle_mode_creates_one_experiment_with_prerequisites(linked):
+    experiment = service.create_experiments(linked["project"]["id"], [linked["loop"]], mode="bundle")[0]
+    assert experiment["bundle_claim_ids"] == [linked["draft"], linked["gate"]]
+    drain()
+    detail = service.get_experiment(experiment["id"])
+    assert detail["status"] == "awaiting_approval"
+    assert detail["spec"]["bundle_claim_ids"] == [linked["draft"], linked["gate"]]
+    assert [b["claim_id"] for b in detail["bundle"]] == [linked["draft"], linked["gate"]]
+
+
+def test_chain_mode_runs_prerequisites_first_and_builds_on_merged_flags(linked):
+    created = service.create_experiments(linked["project"]["id"], [linked["loop"]], mode="chain")
+    assert [(e["claim_id"], e["status"]) for e in created] == [
+        (linked["draft"], "queued"),
+        (linked["gate"], "blocked"),
+        (linked["loop"], "blocked"),
+    ]
+    first, second, third = (e["id"] for e in created)
+    drain()
+    service.decide_spec(first, "approve")
+    drain()
+    service.decide_merge(first, "merge")
+    drain()
+    assert service.experiment_status(first) == "merged"
+    assert service.experiment_status(second) == "awaiting_approval"
+    assert service.experiment_status(third) == "blocked"
+    first_flag = service.get_experiment(first)["flag_name"]
+    assert service.get_experiment(second)["spec"]["baseline_flags"] == [first_flag]
+
+    service.decide_spec(second, "reject", comment="not now")
+    drain()
+    third_detail = service.get_experiment(third)
+    assert third_detail["status"] == "blocked" and "was not merged" in third_detail["error"]

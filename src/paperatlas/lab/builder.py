@@ -100,8 +100,15 @@ def build_prompt(
     spec: dict[str, Any], claim: dict[str, Any], profile: dict[str, Any], feedback: Optional[str]
 ) -> str:
     commands = profile.get("commands") or {}
+    baseline_flags = spec.get("baseline_flags") or []
     smoke = commands.get("bench_ab", "").format(
-        model="smoke", flags=spec["flag_name"], workload=spec["workload"], rounds=2, out="/tmp/r2e-smoke.json"
+        model="smoke",
+        flags=",".join([*baseline_flags, spec["flag_name"]]),
+        baseline_flags=",".join(baseline_flags),
+        workload=spec["workload"],
+        rounds=2,
+        out="/tmp/r2e-smoke.json",
+        warmup=1,
     )
     card = claim.get("card") or {}
     lines = [
@@ -129,6 +136,16 @@ def build_prompt(
         "- Commit your work on the current branch with a clear message.",
         "When finished, reply with a short summary of what you changed and the smoke A/B result.",
     ]
+    companions = claim.get("bundle") or []
+    if companions:
+        lines += ["", "This experiment bundles related concepts from the same paper; implement them together behind the one flag:"]
+        lines += [f"- {c.get('name')}: {c.get('technique')} (change: {c.get('change_required')})" for c in companions]
+    if baseline_flags:
+        lines += [
+            "",
+            f"Prerequisite techniques {baseline_flags} are already merged (off by default). Build on them: "
+            "your flag is enabled together with them, and the baseline has them enabled too.",
+        ]
     if feedback:
         lines += ["", "A previous attempt did not pass verification. Fix these problems:", feedback]
     return "\n".join(lines)

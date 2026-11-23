@@ -137,15 +137,12 @@ class DistillPipeline:
         if group and stats.claim_ids:
             stats.grouped = assign_claim_groups(stats.claim_ids)
         if explain and self.extractor.client and distilled:
+            from paperatlas.distill.concept_map import map_paper
             from paperatlas.r2e.explainers import _run_all, explain_paper
 
-            _run_all(
-                lambda pid: explain_paper(pid, self.extractor.client, force=True),
-                distilled,
-                self.concurrency,
-                "papers",
-                lambda stage, message, data=None: logger.info("[%s] %s", stage, message),
-            )
+            log = lambda stage, message, data=None: logger.info("[%s] %s", stage, message)  # noqa: E731
+            _run_all(lambda pid: map_paper(pid, self.extractor.client, force=True), distilled, self.concurrency, "concept maps", log)
+            _run_all(lambda pid: explain_paper(pid, self.extractor.client, force=True), distilled, self.concurrency, "papers", log)
         stats.testable_claims = self._count_testable(stats.claim_ids)
         stats.log_path = self._log_path
         return stats

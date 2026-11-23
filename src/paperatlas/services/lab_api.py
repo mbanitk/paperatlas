@@ -43,6 +43,11 @@ class PickRequest(BaseModel):
     claim_ids: list[int] = Field(..., min_length=1, max_length=5)
     triage_id: Optional[int] = None
     force: bool = Field(False, description="Allow claims the matcher marked as blocked")
+    mode: Literal["single", "bundle", "chain"] = Field(
+        "single",
+        description="single: one experiment per claim; bundle: one experiment with the claim's prerequisites "
+        "from the same paper; chain: prerequisite experiments first, dependents start after each merge",
+    )
 
 
 class SpecEdit(BaseModel):
@@ -110,6 +115,13 @@ def rematch(project_id: int, use_llm: bool = True) -> JobQueued:
     return JobQueued(job_id=enqueue("match", {"project_id": project_id, "use_llm": use_llm}), kind="match")
 
 
+@app.get("/claims/{claim_id}/prerequisites", tags=["recommendations"])
+def prerequisites(claim_id: int) -> list[dict[str, Any]]:
+    from paperatlas.distill.relations import prerequisite_chain
+
+    return prerequisite_chain(claim_id)
+
+
 @app.get("/projects/{project_id}/recommendations", tags=["recommendations"])
 def recommendations(
     project_id: int,
@@ -157,7 +169,7 @@ def stream_triage(triage_id: int, request: Request, after: int = 0):
 
 @app.post("/experiments", tags=["experiments"])
 def pick_claims(body: PickRequest) -> list[dict[str, Any]]:
-    return service.create_experiments(body.project_id, body.claim_ids, body.triage_id, body.force)
+    return service.create_experiments(body.project_id, body.claim_ids, body.triage_id, body.force, body.mode)
 
 
 @app.get("/experiments", tags=["experiments"])

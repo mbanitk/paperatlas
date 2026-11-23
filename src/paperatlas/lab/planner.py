@@ -45,6 +45,8 @@ class ExperimentSpec(BaseModel):
     success_threshold_pct: float = Field(5.0, ge=0.0, le=500.0)
     claimed_gain_pct: Optional[float] = None
     lossless: bool = False
+    baseline_flags: list[str] = Field(default_factory=list)
+    bundle_claim_ids: list[int] = Field(default_factory=list)
     guardrails: Guardrails = Field(default_factory=Guardrails)
     paper_vs_project: Optional[str] = None
     build_timeout_s: int = 3600
@@ -124,7 +126,11 @@ def plan_experiment(
     target_metric: Optional[str],
     llm: Optional[LLMClient],
     feedback: Optional[str] = None,
+    companions: Optional[list[dict[str, Any]]] = None,
+    baseline_flags: Optional[list[str]] = None,
 ) -> dict[str, Any]:
+    companions = companions or []
+    baseline_flags = baseline_flags or []
     metrics = {m["name"]: m for m in profile.get("metrics") or [] if m.get("name")}
     workloads = _workload_names(profile) or ["short_chat"]
     primary = target_metric if target_metric in metrics else next(iter(metrics), "decode_tokens_per_s")
@@ -173,6 +179,25 @@ def plan_experiment(
                 f"existing techniques={[t.get('name') for t in profile.get('techniques') or []]}",
                 f"Suggested target metric: {target_metric}",
             ]
+            + (
+                [
+                    "",
+                    "Implement this claim TOGETHER with these related concepts from the same paper "
+                    "(prerequisites / complements), behind the same single flag:",
+                ]
+                + [f"- {c.get('name')}: {c.get('technique')} | change: {c.get('change_required')}" for c in companions]
+                if companions
+                else []
+            )
+            + (
+                [
+                    "",
+                    f"Already merged prerequisite techniques (flags {baseline_flags}) are ON in BOTH arms; "
+                    "measure only the increment of this technique on top of them.",
+                ]
+                if baseline_flags
+                else []
+            )
             + ([f"\nReviewer feedback on the previous spec (address it): {feedback}"] if feedback else [])
         )
         try:
@@ -185,6 +210,8 @@ def plan_experiment(
         direction=_direction(metrics.get(draft["primary_metric"], {})),
         claimed_gain_pct=claimed,
         model="eval",
+        baseline_flags=baseline_flags,
+        bundle_claim_ids=[c["id"] for c in companions if c.get("id")],
     )
     if claimed is not None and spec.success_threshold_pct > claimed:
         spec.success_threshold_pct = round(max(1.0, claimed * 0.5), 2)

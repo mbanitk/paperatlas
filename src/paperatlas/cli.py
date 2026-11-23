@@ -175,7 +175,7 @@ def cmd_scan(args: argparse.Namespace) -> None:
 def cmd_pick(args: argparse.Namespace) -> None:
     from paperatlas.lab import service
 
-    experiments = service.create_experiments(_project_id(args.project), args.claim_ids, args.triage, args.force)
+    experiments = service.create_experiments(_project_id(args.project), args.claim_ids, args.triage, args.force, args.mode)
     for experiment in experiments:
         print(f"experiment {experiment['id']} created for claim {experiment['claim_id']}: {experiment['title']}")
     if args.inline:
@@ -251,8 +251,13 @@ def cmd_explain(args: argparse.Namespace) -> None:
     from paperatlas.r2e.explainers import backfill
 
     project_id = _project_id(args.project) if args.project else None
-    result = backfill(project_id, args.claims, not args.no_papers, not args.no_topics, args.force, args.workers)
-    print(f"explained {result['topics']} topics, {result['papers']} papers, {result['claims']} claims")
+    result = backfill(
+        project_id, args.claims, not args.no_papers, not args.no_topics, args.force, args.workers, maps=not args.no_maps
+    )
+    print(
+        f"explained {result['topics']} topics, {result['papers']} papers, {result['claims']} claims; "
+        f"{result['maps']} concept maps"
+    )
 
 
 def cmd_schedule(args: argparse.Namespace) -> None:
@@ -350,6 +355,8 @@ def build_parser() -> argparse.ArgumentParser:
     pick.add_argument("--project", required=True)
     pick.add_argument("--triage", type=int)
     pick.add_argument("--force", action="store_true")
+    pick.add_argument("--mode", choices=["single", "bundle", "chain"], default="single",
+                      help="bundle: include prerequisites in one experiment; chain: prerequisites first")
     pick.add_argument("--inline", action="store_true")
     pick.set_defaults(func=cmd_pick)
 
@@ -401,6 +408,7 @@ def build_parser() -> argparse.ArgumentParser:
     explain.add_argument("--claims", type=int, default=25, help="top N recommendations to explain")
     explain.add_argument("--no-papers", action="store_true")
     explain.add_argument("--no-topics", action="store_true")
+    explain.add_argument("--no-maps", action="store_true", help="skip concept maps (links between a paper's concepts)")
     explain.add_argument("--force", action="store_true", help="regenerate existing explainers")
     explain.add_argument("--workers", type=int, default=4)
     explain.set_defaults(func=cmd_explain)

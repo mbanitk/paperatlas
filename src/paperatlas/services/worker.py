@@ -77,6 +77,7 @@ def _explain(payload: dict, job: dict) -> dict:
         topics=payload.get("topics", True),
         force=payload.get("force", False),
         report=reporter(job_id=job["id"]),
+        maps=payload.get("maps", True),
     )
 
 

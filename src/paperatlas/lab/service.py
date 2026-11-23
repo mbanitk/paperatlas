@@ -26,10 +26,12 @@ from paperatlas.db.schema import (
     Triage,
     Verdict,
 )
+from paperatlas.distill.relations import paper_concept_map, prerequisite_chain, related_for_claims
 from paperatlas.lab.events import emit, enqueue, event_dict, events_since
 from paperatlas.lab.planner import EDITABLE_FIELDS, apply_overrides
 
 ACTIVE_STATUSES = (
+    "blocked",
     "queued",
     "planning",
     "awaiting_approval",
@@ -46,6 +48,7 @@ ACTIVE_STATUSES = (
 TERMINAL_STATUSES = ("merged", "dropped", "rejected", "failed", "cancelled")
 STAGES = ["plan", "approve", "build", "smoke", "run", "judge", "decide"]
 STAGE_OF_STATUS = {
+    "blocked": "plan",
     "queued": "plan",
     "planning": "plan",
     "awaiting_approval": "approve",
@@ -142,6 +145,7 @@ def get_claim(claim_id: int, project_id: Optional[int] = None) -> dict[str, Any]
             raise ServiceError(f"claim {claim_id} not found", 404)
         data = claim_dict(*row)
         data["explainer"] = _explainers_for(session, [claim_id], project_id).get(claim_id)
+        data["related"] = related_for_claims([claim_id]).get(claim_id)
         data["paper_explainer"] = row[2].explainer
         if row[0].group_id:
             group = session.get(ClaimGroup, row[0].group_id)
@@ -200,8 +204,10 @@ def list_claims(
         rows = session.execute(query.order_by(Claim.id.desc()).limit(limit if not q else None).offset(offset if not q else 0)).all()
         items = [claim_dict(*row) for row in rows]
         explainers = _explainers_for(session, [item["id"] for item in items])
+        related = related_for_claims([item["id"] for item in items])
         for item in items:
             item["explainer"] = explainers.get(item["id"])
+            item["related"] = related.get(item["id"])
     if q:
         items.sort(key=lambda item: scores.get(item["id"], 0), reverse=True)
         for item in items:
@@ -295,6 +301,7 @@ def get_paper(paper_id: str) -> dict[str, Any]:
             "topics": [{"slug": t.slug, "name": t.name, "rank": t.rank, "score": t.score} for t in topics],
         }
     data["claims"] = list_claims(paper_id=paper_id, limit=50)["items"]
+    data["concept_map"] = paper_concept_map(paper_id)
     return data
 
 
@@ -376,6 +383,7 @@ def recommendations(
         ).all():
             topics_by_paper.setdefault(paper_id, []).append({"slug": slug, "name": name})
         items = []
+        related = related_for_claims([row[1].id for row in rows])
         for rank, (match, claim, concept, paper, experiment_id) in enumerate(rows, start=1):
             item = claim_dict(claim, concept, paper)
             item.update(
@@ -393,9 +401,45 @@ def recommendations(
                 topics=topics_by_paper.get(paper.paper_id, []),
                 experiment_id=experiment_id,
                 experiment_status=statuses.get(experiment_id),
+                related=related.get(claim.id),
             )
             items.append(item)
         return items
+
+
+def _steps_for(project_id: int, claim_ids: list[int], mode: str) -> list[dict[str, Any]]:
+    """Experiments to create: [{claim_id, bundle, depends_on_index}] (index into the list)."""
+    if mode == "single":
+        return [{"claim_id": cid, "bundle": [], "after": None} for cid in claim_ids]
+    with session_scope() as session:
+        testable = dict(
+            session.execute(
+                select(Match.claim_id, Match.testable_here).where(Match.project_id == project_id)
+            ).all()
+        )
+    if mode == "bundle":
+        primary, members = claim_ids[0], []
+        for cid in claim_ids:
+            members += [p["claim_id"] for p in prerequisite_chain(cid) if p["claim_id"]]
+            if cid != primary:
+                members.append(cid)
+        members = [cid for cid in dict.fromkeys(members) if cid != primary]
+        return [{"claim_id": primary, "bundle": members, "after": None}]
+    steps: list[dict[str, Any]] = []
+    for cid in claim_ids:
+        pending: list[int] = []
+        previous = len(steps) - 1 if steps else None
+        for prerequisite in prerequisite_chain(cid):
+            pid = prerequisite["claim_id"]
+            if not pid or any(step["claim_id"] == pid for step in steps):
+                continue
+            if testable.get(pid):
+                steps.append({"claim_id": pid, "bundle": pending, "after": previous})
+                pending, previous = [], len(steps) - 1
+            else:
+                pending.append(pid)
+        steps.append({"claim_id": cid, "bundle": pending, "after": previous})
+    return steps
 
 
 def create_experiments(
@@ -403,46 +447,91 @@ def create_experiments(
     claim_ids: list[int],
     triage_id: Optional[int] = None,
     force: bool = False,
+    mode: str = "single",
 ) -> list[dict[str, Any]]:
     if not claim_ids:
         raise ServiceError("pick at least one claim")
-    created = []
+    if mode not in ("single", "bundle", "chain"):
+        raise ServiceError("mode must be single, bundle or chain")
+    steps = _steps_for(project_id, claim_ids, mode)
+    picked = set(claim_ids)
+    created: list[int] = []
+    blocked: set[int] = set()
     with session_scope() as session:
         if session.get(Project, project_id) is None:
             raise ServiceError(f"project {project_id} not found", 404)
-        for claim_id in claim_ids:
+        step_experiment: list[tuple[int, bool]] = []
+        for step in steps:
+            claim_id = step["claim_id"]
             match = session.scalar(select(Match).where(Match.project_id == project_id, Match.claim_id == claim_id))
             if session.get(Claim, claim_id) is None:
                 raise ServiceError(f"claim {claim_id} not found", 404)
-            if match and match.blockers and not force:
+            if match and match.blockers and not force and claim_id in picked:
                 raise ServiceError(f"claim {claim_id} is blocked here: {', '.join(match.blockers)} (use force)", 409)
-            active = session.scalar(
-                select(Experiment.id).where(
+            existing = session.execute(
+                select(Experiment.id, Experiment.status).where(
                     Experiment.project_id == project_id,
                     Experiment.claim_id == claim_id,
-                    Experiment.status.in_(ACTIVE_STATUSES),
+                    Experiment.status.in_((*ACTIVE_STATUSES, "merged")),
                 )
-            )
-            if active:
-                raise ServiceError(f"claim {claim_id} already has active experiment {active}", 409)
+            ).first()
+            if existing and (claim_id in picked or mode != "chain"):
+                if existing.status != "merged":
+                    raise ServiceError(f"claim {claim_id} already has active experiment {existing.id} ({existing.status})", 409)
+            elif existing:
+                step_experiment.append((existing.id, existing.status == "merged"))
+                continue
+            after, after_merged = step_experiment[step["after"]] if step["after"] is not None else (None, True)
             experiment = Experiment(
                 project_id=project_id,
                 claim_id=claim_id,
                 triage_id=triage_id,
                 thread_id=f"exp-{uuid.uuid4()}",
-                status="queued",
+                status="queued" if after_merged else "blocked",
+                mode=mode,
+                bundle_claim_ids=step["bundle"],
+                depends_on_experiment_id=after,
             )
             session.add(experiment)
             session.flush()
             created.append(experiment.id)
+            step_experiment.append((experiment.id, False))
+            if not after_merged:
+                blocked.add(experiment.id)
         if triage_id:
             session.execute(
                 update(Triage).where(Triage.id == triage_id).values(status="picked", selected=claim_ids)
             )
     for experiment_id in created:
-        emit("plan", "Experiment created (Gate 1: claim picked)", experiment_id=experiment_id, triage_id=triage_id)
+        if experiment_id in blocked:
+            emit("plan", f"Experiment created ({mode}): waits for its prerequisite experiment to be merged",
+                 experiment_id=experiment_id, triage_id=triage_id)
+            continue
+        emit("plan", f"Experiment created (Gate 1: claim picked, {mode})", experiment_id=experiment_id, triage_id=triage_id)
         enqueue("experiment.run", {"experiment_id": experiment_id}, experiment_id=experiment_id)
     return [get_experiment(experiment_id) for experiment_id in created]
+
+
+def release_dependents(experiment_id: int, merged: bool) -> list[int]:
+    """After a prerequisite finishes: start dependents if it was merged, else explain why they wait."""
+    with session_scope() as session:
+        dependents = session.scalars(
+            select(Experiment.id).where(
+                Experiment.depends_on_experiment_id == experiment_id, Experiment.status == "blocked"
+            )
+        ).all()
+        for dependent in dependents:
+            values = {"status": "queued", "error": None} if merged else {
+                "error": f"plan: prerequisite experiment #{experiment_id} was not merged — retry to run without it"
+            }
+            session.execute(update(Experiment).where(Experiment.id == dependent).values(**values))
+    for dependent in dependents:
+        if merged:
+            emit("plan", f"Prerequisite #{experiment_id} merged — starting", experiment_id=dependent)
+            enqueue("experiment.run", {"experiment_id": dependent}, experiment_id=dependent)
+        else:
+            emit("plan", f"Prerequisite #{experiment_id} was not merged", experiment_id=dependent, level="warning")
+    return list(dependents)
 
 
 # ---- triage -----------------------------------------------------------------------
@@ -533,7 +622,28 @@ def experiment_context(experiment_id: int) -> dict[str, Any]:
         match = session.scalar(
             select(Match).where(Match.project_id == project.id, Match.claim_id == claim.id)
         )
+        bundle = []
+        if experiment.bundle_claim_ids:
+            members = session.execute(
+                select(Claim, Concept, Paper)
+                .join(Concept, Concept.id == Claim.concept_id)
+                .join(Paper, Paper.paper_id == Claim.paper_id)
+                .where(Claim.id.in_(experiment.bundle_claim_ids))
+            ).all()
+            by_id = {row[0].id: claim_dict(*row) for row in members}
+            bundle = [by_id[cid] for cid in experiment.bundle_claim_ids if cid in by_id]
+        prerequisite_flags: list[str] = []
+        cursor = experiment.depends_on_experiment_id
+        while cursor:
+            parent = session.get(Experiment, cursor)
+            if parent is None:
+                break
+            if parent.status == "merged" and parent.flag_name:
+                prerequisite_flags.insert(0, parent.flag_name)
+            cursor = parent.depends_on_experiment_id
         return {
+            "bundle": bundle,
+            "prerequisite_flags": prerequisite_flags,
             "experiment": {
                 "id": experiment.id,
                 "status": experiment.status,
@@ -541,6 +651,8 @@ def experiment_context(experiment_id: int) -> dict[str, Any]:
                 "worktree_path": experiment.worktree_path,
                 "build": experiment.build or {},
                 "flag_name": experiment.flag_name,
+                "mode": experiment.mode,
+                "depends_on_experiment_id": experiment.depends_on_experiment_id,
             },
             "project": {"id": project.id, "name": project.name, "repo_path": project.repo_path},
             "profile": project.profile or {},
@@ -573,7 +685,9 @@ def _stage_progress(status: str, error: Optional[str]) -> list[dict[str, str]]:
             state = status
             reached = False
         elif stage == current:
-            state = "done" if status in ("merged", "dropped") else ("waiting" if status in GATE_OF_STATUS else "active")
+            state = "done" if status in ("merged", "dropped") else (
+                "waiting" if status in GATE_OF_STATUS or status == "blocked" else "active"
+            )
             if status == "rejected":
                 state = "rejected"
             reached = False
@@ -595,6 +709,9 @@ def experiment_summary(experiment: Experiment, claim: Claim, concept: Concept, p
         "flag_name": experiment.flag_name,
         "branch": experiment.branch,
         "error": experiment.error,
+        "mode": experiment.mode,
+        "bundle_claim_ids": list(experiment.bundle_claim_ids or []),
+        "depends_on_experiment_id": experiment.depends_on_experiment_id,
         "title": concept.name,
         "technique": claim.technique,
         "category": claim.category,
@@ -658,6 +775,15 @@ def get_experiment(experiment_id: int) -> dict[str, Any]:
                 "models": list((profile.get("models") or {}).keys()),
             },
             build=experiment.build or {},
+            bundle=[
+                {"claim_id": c["id"], "name": c["name"], "technique": c["technique"]}
+                for c in experiment_context(experiment_id)["bundle"]
+            ] if experiment.bundle_claim_ids else [],
+            dependents=[
+                {"id": d.id, "status": d.status, "claim_id": d.claim_id}
+                for d in session.scalars(select(Experiment).where(Experiment.depends_on_experiment_id == experiment_id)).all()
+            ],
+            related=related_for_claims([claim.id]).get(claim.id),
             worktree_path=experiment.worktree_path,
             stages=_stage_progress(experiment.status, experiment.error),
             runs=[
@@ -794,7 +920,7 @@ def cancel_experiment(experiment_id: int) -> dict[str, Any]:
 
 
 def retry_experiment(experiment_id: int) -> dict[str, Any]:
-    _require_status(experiment_id, ("failed", "cancelled"))
+    _require_status(experiment_id, ("failed", "cancelled", "blocked"))
     with session_scope() as session:
         session.execute(update(Experiment).where(Experiment.id == experiment_id).values(status="queued"))
     emit("retry", "Retrying from the last completed step", experiment_id=experiment_id)

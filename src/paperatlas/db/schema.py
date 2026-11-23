@@ -109,6 +109,7 @@ class Paper(Base):
     raw_text: Mapped[Optional[str]] = mapped_column(Text)
     source_payload: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB)
     explainer: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB)
+    concept_map: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB)
     tsv = mapped_column(
         TSVECTOR,
         Computed(
@@ -157,6 +158,34 @@ class Concept(Base):
     summary: Mapped[Optional[str]] = mapped_column(Text)
     key_points: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default="{}")
     source: Mapped[str] = mapped_column(Text, server_default="llm")
+    paper_order: Mapped[Optional[int]] = mapped_column(Integer)
+    role: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = _now()
+
+
+class ConceptLink(Base):
+    """Typed relation between two concepts of the same paper (A <relation> B)."""
+
+    __tablename__ = "concept_links"
+    __table_args__ = (
+        UniqueConstraint("source_concept_id", "target_concept_id", "relation"),
+        Index("ix_concept_links_paper", "paper_id"),
+        {"schema": RESEARCH},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    paper_id: Mapped[str] = mapped_column(
+        Text, ForeignKey(f"{RESEARCH}.papers.paper_id", ondelete="CASCADE")
+    )
+    source_concept_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey(f"{RESEARCH}.concepts.id", ondelete="CASCADE")
+    )
+    target_concept_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey(f"{RESEARCH}.concepts.id", ondelete="CASCADE")
+    )
+    relation: Mapped[str] = mapped_column(Text)
+    why: Mapped[Optional[str]] = mapped_column(Text)
+    evidence: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[datetime] = _now()
 
 
@@ -289,6 +318,11 @@ class Experiment(Base):
     )
     triage_id: Mapped[Optional[int]] = mapped_column(
         Integer, ForeignKey(f"{LAB}.triage.id", ondelete="SET NULL")
+    )
+    mode: Mapped[str] = mapped_column(Text, server_default="single")
+    bundle_claim_ids: Mapped[list[int]] = mapped_column(ARRAY(Integer), server_default="{}")
+    depends_on_experiment_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey(f"{LAB}.experiments.id", ondelete="SET NULL")
     )
     thread_id: Mapped[str] = mapped_column(Text, unique=True)
     status: Mapped[str] = mapped_column(Text, server_default="planning")

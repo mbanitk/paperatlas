@@ -57,6 +57,7 @@ class ExplainRequest(BaseModel):
     claims_top: int = Field(25, ge=0, le=200)
     papers: bool = True
     topics: bool = True
+    maps: bool = True
     force: bool = False
 
 
@@ -122,6 +123,18 @@ def explain_paper_now(paper_id: str, force: bool = True) -> dict[str, Any]:
         return explain_paper(paper_id, force=force)
     except (ValueError, LLMError) as exc:
         raise service.ServiceError(str(exc), 404 if isinstance(exc, ValueError) else 400) from exc
+
+
+@app.post("/papers/{paper_id:path}/concept-map", tags=["papers"])
+def concept_map_now(paper_id: str, force: bool = True) -> dict[str, Any]:
+    from paperatlas.distill.concept_map import map_paper
+    from paperatlas.distill.relations import paper_concept_map
+
+    try:
+        map_paper(paper_id, force=force)
+    except (ValueError, LLMError) as exc:
+        raise service.ServiceError(str(exc), 404 if isinstance(exc, ValueError) else 400) from exc
+    return paper_concept_map(paper_id) or {}
 
 
 @app.get("/papers/{paper_id:path}", tags=["papers"])

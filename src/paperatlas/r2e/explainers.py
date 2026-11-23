@@ -453,16 +453,21 @@ def backfill(
     topics: bool = True,
     force: bool = False,
     workers: int = 4,
+    maps: bool = True,
     report=lambda stage, message, data=None: logger.info("[%s] %s", stage, message),
 ) -> dict[str, int]:
     llm = _require_llm(None)
-    result = {"topics": 0, "papers": 0, "claims": 0}
+    result = {"topics": 0, "papers": 0, "claims": 0, "maps": 0}
     with session_scope() as session:
         topic_ids = session.scalars(select(Topic.id).where(Topic.rank.is_not(None))).all() if topics else []
         paper_query = select(Paper.paper_id).where(Paper.distilled_at.is_not(None))
         if not force:
             paper_query = paper_query.where(Paper.explainer.is_(None))
         paper_ids = session.scalars(paper_query).all() if papers else []
+        map_query = select(Paper.paper_id).where(Paper.distilled_at.is_not(None))
+        if not force:
+            map_query = map_query.where(Paper.concept_map.is_(None))
+        map_ids = session.scalars(map_query).all() if maps else []
         claim_ids: list[int] = []
         if project_id and claims_top:
             claim_query = (
@@ -472,6 +477,9 @@ def backfill(
                 .limit(claims_top)
             )
             claim_ids = session.scalars(claim_query).all()
+    from paperatlas.distill.concept_map import map_paper
+
+    result["maps"] = _run_all(lambda pid: map_paper(pid, llm, force), map_ids, workers, "concept maps", report)
     result["topics"] = _run_all(lambda tid: explain_topic(tid, llm, force), topic_ids, workers, "topics", report)
     result["papers"] = _run_all(lambda pid: explain_paper(pid, llm, force), paper_ids, workers, "papers", report)
     result["claims"] = _run_all(

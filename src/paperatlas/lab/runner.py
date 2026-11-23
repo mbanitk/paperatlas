@@ -59,9 +59,13 @@ def run_benchmark(
     out = artifacts / f"{kind}-{stamp}.json"
     log_path = artifacts / f"{kind}-{stamp}.log"
     rounds = 2 if kind == "smoke" else spec["rounds"]
+    baseline_flags = spec.get("baseline_flags") or []
+    if baseline_flags and "{baseline_flags}" not in template:
+        report(kind, "bench command has no {baseline_flags} placeholder; prerequisites stay off in the baseline", None, level="warning")
     command = template.format(
         model="smoke" if kind == "smoke" else spec["model"],
-        flags=spec["flag_name"],
+        flags=",".join([*baseline_flags, spec["flag_name"]]),
+        baseline_flags=",".join(baseline_flags),
         workload=spec["workload"],
         rounds=rounds,
         out=out,
