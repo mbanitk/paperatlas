@@ -5,12 +5,13 @@ import { api } from '../api/client'
 import { keys, useCancelExperiment, useClaim, useExperiment, useProject, useRetryExperiment } from '../api/queries'
 import { mergeEvents, useEventStream } from '../api/sse'
 import type { Experiment, LabEvent, Project } from '../api/types'
-import { CategoryChip, LiveDot, StatusChip, VerdictBadge } from '../components/Badges'
+import { CategoryChip, LiveDot, MODE_INFO, ModeBadge, StatusChip, VerdictBadge } from '../components/Badges'
 import { ClaimCardDetails } from '../components/ClaimCard'
 import { ConfirmDialog } from '../components/Dialog'
 import { EventTimeline } from '../components/EventTimeline'
-import { AlertIcon, BranchIcon, ChevronDown, ChevronRight, GateIcon, RefreshIcon, SparkIcon, StopIcon } from '../components/Icons'
+import { AlertIcon, BranchIcon, ClockIcon, ChevronDown, ChevronRight, GateIcon, RefreshIcon, SparkIcon, StopIcon } from '../components/Icons'
 import { ClaimDiagram, ClaimExplainDetails, ClaimLead, GenerateClaimExplainer, GlanceStrip } from '../components/Explainers'
+import { RelatedStrip } from '../components/Related'
 import { Stepper } from '../components/Stepper'
 import { useToast } from '../components/Toast'
 import { Banner, Button, Card, ErrorState, ExternalLink, Loading, PageHeader, PaperLink, RelativeTime, errorMessage } from '../components/ui'
@@ -57,6 +58,7 @@ function ClaimUnderTest({ experiment, project }: { experiment: Experiment; proje
     <div className="space-y-3">
       <ClaimLead claim={subject} explainer={explainer} />
       <GlanceStrip claim={subject} explainer={explainer} project={project} />
+      <RelatedStrip related={experiment.related ?? claim.data?.related} claimId={experiment.claim_id} paperId={experiment.paper_id} />
       <ClaimDiagram diagram={explainer?.diagram} />
       <div className="flex flex-wrap items-center gap-1">
         {explainer ? (
@@ -84,6 +86,114 @@ function ClaimUnderTest({ experiment, project }: { experiment: Experiment; proje
   )
 }
 
+function ExperimentRef({ id, status }: { id: number; status?: string }) {
+  const other = useExperiment(id)
+  const current = status ?? other.data?.status
+  return (
+    <Link
+      to={`/experiments/${id}`}
+      className="group flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-line-muted px-2.5 py-1.5 text-sm hover:border-accent hover:no-underline"
+    >
+      <span className="text-xs text-muted tabular-nums">#{id}</span>
+      <span className="min-w-0 text-fg group-hover:text-accent">{other.data?.title ?? 'Experiment'}</span>
+      {current && <StatusChip status={current} />}
+    </Link>
+  )
+}
+
+/** Gate 1 mode, the prerequisite this experiment waits for, what it unlocks and the claims it bundles. */
+function PlanCard({ experiment }: { experiment: Experiment }) {
+  const mode = experiment.mode ?? 'single'
+  const bundle = experiment.bundle ?? []
+  const dependents = experiment.dependents ?? []
+  const dependsOn = experiment.depends_on_experiment_id
+  if (mode === 'single' && !bundle.length && !dependents.length && dependsOn == null) return null
+  return (
+    <Card
+      title={
+        <span className="flex items-center gap-2">
+          Experiment plan <ModeBadge mode={mode} bundleSize={bundle.length} />
+        </span>
+      }
+    >
+      <div className="space-y-4 text-sm">
+        <p className="text-muted">{MODE_INFO[mode]?.description ?? ''}</p>
+        {dependsOn != null && (
+          <section>
+            <h4 className="mb-1.5 text-xs font-semibold tracking-wide text-muted uppercase">Waits for</h4>
+            <ExperimentRef id={dependsOn} />
+            {experiment.error ? null : (experiment.spec?.baseline_flags as string[] | undefined)?.length ? (
+              <p className="mt-1.5 text-xs text-muted">
+                Baseline keeps{' '}
+                {(experiment.spec.baseline_flags as string[]).map((flag, index) => (
+                  <span key={flag}>
+                    {index > 0 && ', '}
+                    <code className="code-inline">{flag}</code>
+                  </span>
+                ))}{' '}
+                on, so only this claim’s change is measured.
+              </p>
+            ) : (
+              <p className="mt-1.5 text-xs text-muted">When it is merged its flag stays on in this experiment’s baseline, so only this claim’s change is measured.</p>
+            )}
+          </section>
+        )}
+        {dependents.length > 0 && (
+          <section>
+            <h4 className="mb-1.5 text-xs font-semibold tracking-wide text-muted uppercase">Unlocks</h4>
+            <ul className="space-y-1.5">
+              {dependents.map((dependent) => (
+                <li key={dependent.id}>
+                  <ExperimentRef id={dependent.id} status={dependent.status} />
+                </li>
+              ))}
+            </ul>
+            <p className="mt-1.5 text-xs text-muted">These start automatically once this experiment is merged.</p>
+          </section>
+        )}
+        {bundle.length > 0 && (
+          <section>
+            <h4 className="mb-1.5 text-xs font-semibold tracking-wide text-muted uppercase">Implemented together with</h4>
+            <ul className="space-y-2">
+              {bundle.map((member) => (
+                <li key={member.claim_id} className="rounded-md border border-line-muted px-2.5 py-1.5">
+                  <Link to={`/research/claims/${member.claim_id}`} className="font-medium">
+                    {member.name}
+                  </Link>
+                  <p className="mt-0.5 line-clamp-2 text-xs text-muted" title={member.technique}>
+                    {member.technique}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+      </div>
+    </Card>
+  )
+}
+
+function BlockedBanner({ experiment }: { experiment: Experiment }) {
+  if (experiment.status !== 'blocked') return null
+  const dependsOn = experiment.depends_on_experiment_id
+  const link = dependsOn != null ? <Link to={`/experiments/${dependsOn}`}>#{dependsOn}</Link> : 'its prerequisite'
+  if (experiment.error)
+    return (
+      <div role="alert" className="rounded-lg border border-attention-emphasis/40 bg-attention-subtle p-4">
+        <div className="flex items-center gap-2 font-semibold text-attention">
+          <AlertIcon /> Prerequisite experiment {link} was not merged
+        </div>
+        {!/was not merged/.test(experiment.error) && <p className="mt-1 text-sm text-fg">{experiment.error.replace(/^plan:\s*/, '')}</p>}
+        <p className="mt-1 text-xs text-muted">Use Retry to run this experiment on its own (without the prerequisite), or cancel it.</p>
+      </div>
+    )
+  return (
+    <Banner tone="muted" icon={<ClockIcon className="text-muted" />}>
+      <strong>Waiting for prerequisite {link}.</strong> This experiment starts automatically when {link} is merged.
+    </Banner>
+  )
+}
+
 function Actions({ experiment }: { experiment: Experiment }) {
   const [dialog, setDialog] = useState<'cancel' | 'retry' | null>(null)
   const cancel = useCancelExperiment(experiment.id)
@@ -91,7 +201,7 @@ function Actions({ experiment }: { experiment: Experiment }) {
   const toast = useToast()
   return (
     <>
-      {canRetry(experiment.status) && (
+      {canRetry(experiment.status, experiment.error) && (
         <Button icon={<RefreshIcon />} onClick={() => setDialog('retry')}>
           Retry
         </Button>
@@ -138,7 +248,11 @@ function Actions({ experiment }: { experiment: Experiment }) {
           })
         }
       >
-        <p className="text-muted">The experiment is re-queued and resumes from its last checkpoint (completed steps are not repeated).</p>
+        <p className="text-muted">
+          {experiment.status === 'blocked'
+            ? 'The experiment is queued now and runs without its prerequisite.'
+            : 'The experiment is re-queued and resumes from its last checkpoint (completed steps are not repeated).'}
+        </p>
       </ConfirmDialog>
     </>
   )
@@ -217,6 +331,7 @@ export default function ExperimentDetail() {
         description={
           <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
             <CategoryChip category={data.category} />
+            <ModeBadge mode={data.mode} bundleSize={data.bundle?.length ?? data.bundle_claim_ids?.length} />
             {data.flag_name && (
               <span>
                 flag <code className="code-inline">{data.flag_name}</code>
@@ -245,6 +360,7 @@ export default function ExperimentDetail() {
 
       <div className="space-y-4">
         <GateCallout experiment={data} />
+        <BlockedBanner experiment={data} />
         {data.status === 'failed' && (
           <div role="alert" className="rounded-lg border border-danger/40 bg-danger-subtle p-4">
             <div className="flex items-center gap-2 font-semibold text-danger">
@@ -257,7 +373,16 @@ export default function ExperimentDetail() {
         {data.status === 'cancelled' && data.error && <Banner tone="muted">{data.error}</Banner>}
 
         <Card bodyClassName="px-4 py-5">
-          <Stepper stages={stages} />
+          <Stepper
+            stages={stages}
+            waitingLabel={
+              data.status === 'blocked'
+                ? data.error
+                  ? 'prerequisite not merged'
+                  : `waiting for #${data.depends_on_experiment_id ?? 'prerequisite'}`
+                : undefined
+            }
+          />
         </Card>
 
         <div className="grid gap-6 xl:grid-cols-3">
@@ -282,6 +407,7 @@ export default function ExperimentDetail() {
           </div>
 
           <div className="min-w-0 space-y-6">
+            {data.status === 'blocked' && <PlanCard experiment={data} />}
             <Card
               title="Claim under test"
               actions={
@@ -292,6 +418,7 @@ export default function ExperimentDetail() {
             >
               <ClaimUnderTest experiment={data} project={project.data} />
             </Card>
+            {data.status !== 'blocked' && <PlanCard experiment={data} />}
             <BuildCard experiment={data} />
             <RunsCard experiment={data} />
             <Card title="Target project">

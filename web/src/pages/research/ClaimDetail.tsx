@@ -1,10 +1,12 @@
-import { Link, useParams } from 'react-router'
+import { Link, useNavigate, useParams } from 'react-router'
 import { encodePaperId } from '../../api/client'
-import { useClaim, useProjects } from '../../api/queries'
+import { useClaim, usePaper, useProjects } from '../../api/queries'
 import { StatusChip } from '../../components/Badges'
 import { ClaimCardDetails, ClaimChips } from '../../components/ClaimCard'
 import { ClaimExplainDetails, ClaimLead, ExplainerFootnote, GenerateClaimExplainer, GlanceStrip, ResultTiles } from '../../components/Explainers'
 import { BookIcon, SparkIcon } from '../../components/Icons'
+import { ConceptMapGraph } from '../../components/ConceptMap'
+import { RelatedCard } from '../../components/Related'
 import { Card, ErrorState, Loading, PaperLink } from '../../components/ui'
 
 export default function ClaimDetailPage() {
@@ -12,6 +14,8 @@ export default function ClaimDetailPage() {
   const projects = useProjects()
   const project = projects.data?.[0]
   const claim = useClaim(id, project?.id)
+  const navigate = useNavigate()
+  const paperDetail = usePaper(claim.data?.related?.has_map ? claim.data.paper_id : '')
 
   if (claim.isLoading || projects.isLoading) return <Loading label="Loading claim…" />
   if (claim.isError || !claim.data)
@@ -68,6 +72,17 @@ export default function ClaimDetailPage() {
               </div>
             )}
           </Card>
+          <RelatedCard related={data.related} claimId={data.id} paperId={data.paper_id} paperTitle={data.paper_title} />
+          {paperDetail.data?.concept_map?.generated && (
+            <Card title="Where it sits in the paper" actions={<span className="text-xs text-muted">dashed ring = this concept</span>}>
+              <ConceptMapGraph
+                map={paperDetail.data.concept_map}
+                currentConceptId={paperDetail.data.concept_map.nodes.find((node) => node.claim_id === data.id)?.concept_id}
+                showBundles={false}
+                onSelect={(node) => node.claim_id && node.claim_id !== data.id && navigate(`/research/claims/${node.claim_id}`)}
+              />
+            </Card>
+          )}
           <Card title="Claim card">
             <ClaimCardDetails claim={data} />
           </Card>

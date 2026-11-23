@@ -54,8 +54,11 @@ function StageIcon({ state }: { state: StageState }) {
   }
 }
 
-/** Horizontal stepper for the experiment pipeline (wraps to a vertical list on small screens). */
-export function Stepper({ stages }: { stages: Stage[] }) {
+/**
+ * Horizontal stepper for the experiment pipeline (wraps to a vertical list on small screens).
+ * `waitingLabel` replaces "waiting for you" when the wait is not on the user (e.g. a prerequisite experiment).
+ */
+export function Stepper({ stages, waitingLabel }: { stages: Stage[]; waitingLabel?: string }) {
   return (
     <ol className="flex flex-col gap-3 sm:flex-row sm:items-start sm:gap-0" aria-label="Experiment progress">
       {stages.map((stage, index) => {
@@ -78,10 +81,14 @@ export function Stepper({ stages }: { stages: Stage[] }) {
               <div
                 className={cx(
                   'text-[11px]',
-                  stage.state === 'waiting' ? 'font-semibold text-attention' : stage.state === 'failed' || stage.state === 'rejected' ? 'text-danger' : 'text-muted',
+                  stage.state === 'waiting' && !waitingLabel
+                    ? 'font-semibold text-attention'
+                    : stage.state === 'failed' || stage.state === 'rejected'
+                      ? 'text-danger'
+                      : 'text-muted',
                 )}
               >
-                {STATE_LABEL[stage.state]}
+                {stage.state === 'waiting' && waitingLabel ? waitingLabel : STATE_LABEL[stage.state]}
               </div>
             </div>
           </li>

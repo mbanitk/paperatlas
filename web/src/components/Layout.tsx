@@ -3,8 +3,8 @@ import { useServices, useStats } from '../api/queries'
 import { LiveDot } from './Badges'
 import { AlertIcon } from './Icons'
 import { useLiveEvents } from './LiveEvents'
-import { Counter, cx } from './ui'
-import { useEffect } from 'react'
+import { Counter, cx, Loading } from './ui'
+import { Suspense, useEffect } from 'react'
 
 const NAV = [
   { to: '/', label: 'Overview', end: true },
@@ -99,7 +99,9 @@ export default function Layout() {
       </header>
       <ServicesBanner />
       <main id="main" className="mx-auto max-w-7xl px-4 py-6 sm:px-6">
-        <Outlet />
+        <Suspense fallback={<Loading />}>
+          <Outlet />
+        </Suspense>
       </main>
       <footer className="mx-auto max-w-7xl px-4 pb-8 text-xs text-subtle sm:px-6">
         PaperAtlas web console · data from the research-api and lab-api via the gateway

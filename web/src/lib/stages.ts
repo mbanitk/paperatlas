@@ -14,6 +14,7 @@ export const STAGE_LABELS: Record<StageName, string> = {
 
 /** Same mapping as STAGE_OF_STATUS in paperatlas/lab/service.py. */
 export const STAGE_OF_STATUS: Partial<Record<ExperimentStatus, StageName>> = {
+  blocked: 'plan',
   queued: 'plan',
   planning: 'plan',
   awaiting_approval: 'approve',
@@ -36,6 +37,7 @@ export const GATE_OF_STATUS: Partial<Record<ExperimentStatus, Gate>> = {
 }
 
 export const ACTIVE_STATUSES: ExperimentStatus[] = [
+  'blocked',
   'queued',
   'planning',
   'awaiting_approval',
@@ -55,7 +57,9 @@ export const isActiveStatus = (status: ExperimentStatus) => ACTIVE_STATUSES.incl
 export const isTerminalStatus = (status: ExperimentStatus) => TERMINAL_STATUSES.includes(status)
 export const needsYou = (status: ExperimentStatus) => status in GATE_OF_STATUS
 export const canCancel = (status: ExperimentStatus) => !isTerminalStatus(status) && status !== 'cancelling'
-export const canRetry = (status: ExperimentStatus) => status === 'failed' || status === 'cancelled'
+/** Failed/cancelled experiments, and blocked ones whose prerequisite was not merged (they then run without it). */
+export const canRetry = (status: ExperimentStatus, error?: string | null) =>
+  status === 'failed' || status === 'cancelled' || (status === 'blocked' && !!error)
 
 export type Tone = 'neutral' | 'accent' | 'attention' | 'success' | 'danger' | 'done' | 'muted'
 
@@ -67,6 +71,7 @@ export interface StatusInfo {
 }
 
 const STATUS_INFO: Record<ExperimentStatus, StatusInfo> = {
+  blocked: { label: 'Waiting for prerequisite', tone: 'neutral', busy: false },
   queued: { label: 'Queued', tone: 'neutral', busy: false },
   planning: { label: 'Planning', tone: 'accent', busy: true },
   awaiting_approval: { label: 'Needs approval', tone: 'attention', busy: false },
@@ -112,7 +117,7 @@ export function stagesForStatus(status: ExperimentStatus, stoppedAt: StageName |
       if (terminalFailure) state = status as StageState
       else if (status === 'merged' || status === 'dropped') state = 'done'
       else if (status === 'rejected') state = 'rejected'
-      else state = status in GATE_OF_STATUS ? 'waiting' : 'active'
+      else state = status in GATE_OF_STATUS || status === 'blocked' ? 'waiting' : 'active'
       reached = false
     } else if (terminalFailure && current === null) {
       state = 'pending'

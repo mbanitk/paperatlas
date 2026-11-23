@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Stage } from '../api/types'
-import { normalizeStages, stagesForStatus, triageStepState } from './stages'
+import { canRetry, normalizeStages, stagesForStatus, triageStepState } from './stages'
 
 const states = (stages: Stage[]) => stages.map((stage) => stage.state).join(',')
 
@@ -40,5 +40,13 @@ describe('triageStepState', () => {
     expect(triageStepState('discover', 'match')).toBe('pending')
     expect(triageStepState('awaiting_pick', 'shortlist')).toBe('done')
     expect(triageStepState('failed', 'distill', 'distill')).toBe('failed')
+  })
+})
+
+describe('blocked (chain dependents)', () => {
+  it('waits in plan and can be retried only once its prerequisite was not merged', () => {
+    expect(stagesForStatus('blocked')[0]).toEqual({ stage: 'plan', state: 'waiting' })
+    expect(canRetry('blocked')).toBe(false)
+    expect(canRetry('blocked', 'plan: prerequisite experiment #2 was not merged — retry to run without it')).toBe(true)
   })
 })

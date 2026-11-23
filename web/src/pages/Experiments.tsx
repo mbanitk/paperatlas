@@ -1,7 +1,7 @@
 import { Link, useNavigate, useSearchParams } from 'react-router'
 import { useExperiments, useProjects } from '../api/queries'
 import type { ExperimentSummary } from '../api/types'
-import { CategoryChip, Delta, StatusChip, VerdictBadge } from '../components/Badges'
+import { CategoryChip, Delta, ModeBadge, StatusChip, VerdictBadge } from '../components/Badges'
 import { FlaskIcon, SparkIcon } from '../components/Icons'
 import { MiniStages } from '../components/Stepper'
 import { Banner, EmptyState, ErrorState, Loading, PageHeader, RelativeTime, Tabs, cx } from '../components/ui'
@@ -24,9 +24,19 @@ function ExperimentRow({ experiment, highlight }: { experiment: ExperimentSummar
           {experiment.title}
         </Link>
         <div className="mt-0.5 truncate text-xs text-muted">
+          <ModeBadge mode={experiment.mode} bundleSize={experiment.bundle_claim_ids?.length} className="mr-1.5 align-[1px]" />
           {experiment.flag_name && <code className="code-inline mr-1.5">{experiment.flag_name}</code>}
           {experiment.paper_title}
         </div>
+        {experiment.status === 'blocked' && experiment.depends_on_experiment_id != null && (
+          <div className={cx('mt-1 text-xs', experiment.error ? 'font-semibold text-attention' : 'text-muted')}>
+            {experiment.error ? 'Prerequisite ' : 'Waits for '}
+            <Link to={`/experiments/${experiment.depends_on_experiment_id}`} onClick={(event) => event.stopPropagation()}>
+              #{experiment.depends_on_experiment_id}
+            </Link>
+            {experiment.error ? ' was not merged — retry to run without it' : ' to be merged, then starts automatically'}
+          </div>
+        )}
         {needsYou(experiment.status) && (
           <div className="mt-1 text-xs font-semibold text-attention">
             {experiment.status === 'awaiting_approval' ? 'Gate 2 · approve the spec' : 'Gate 3 · merge or drop'}

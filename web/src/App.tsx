@@ -1,20 +1,23 @@
+import { lazy } from 'react'
 import { Navigate, Route, Routes } from 'react-router'
 import Layout from './components/Layout'
 import { LiveEventsProvider } from './components/LiveEvents'
-import ExperimentDetail from './pages/ExperimentDetail'
-import Experiments from './pages/Experiments'
 import NotFound from './pages/NotFound'
 import Overview from './pages/Overview'
-import Projects from './pages/Projects'
-import Recommendations from './pages/Recommendations'
-import System from './pages/System'
-import ClaimDetailPage from './pages/research/ClaimDetail'
-import Claims from './pages/research/Claims'
-import PaperDetailPage from './pages/research/PaperDetail'
-import Papers from './pages/research/Papers'
 import ResearchLayout from './pages/research/ResearchLayout'
-import TopicDetail from './pages/research/TopicDetail'
-import Topics from './pages/research/Topics'
+
+// Route-level code splitting keeps the first load small; Layout / ResearchLayout wrap <Outlet> in <Suspense>.
+const Recommendations = lazy(() => import('./pages/Recommendations'))
+const Experiments = lazy(() => import('./pages/Experiments'))
+const ExperimentDetail = lazy(() => import('./pages/ExperimentDetail'))
+const Topics = lazy(() => import('./pages/research/Topics'))
+const TopicDetail = lazy(() => import('./pages/research/TopicDetail'))
+const Papers = lazy(() => import('./pages/research/Papers'))
+const PaperDetailPage = lazy(() => import('./pages/research/PaperDetail'))
+const Claims = lazy(() => import('./pages/research/Claims'))
+const ClaimDetailPage = lazy(() => import('./pages/research/ClaimDetail'))
+const Projects = lazy(() => import('./pages/Projects'))
+const System = lazy(() => import('./pages/System'))
 
 export default function App() {
   return (

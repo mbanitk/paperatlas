@@ -224,6 +224,17 @@ export const useExplainTopic = () => {
   })
 }
 
+export const useGenerateConceptMap = () => {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: (paperId: string) => api.research.conceptMap(paperId),
+    onSuccess: (conceptMap, paperId) => {
+      client.setQueryData<PaperDetail>(keys.paper(paperId), (old) => (old ? { ...old, concept_map: conceptMap } : old))
+      for (const key of ['paper', 'recommendations', 'claims', 'claim', 'experiment']) client.invalidateQueries({ queryKey: [key] })
+    },
+  })
+}
+
 export const useExplainBackfill = () => {
   const client = useQueryClient()
   return useMutation({

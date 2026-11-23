@@ -4,6 +4,7 @@ import { useCategories, useClaims, useProjects, useTopics } from '../../api/quer
 import type { Claim, Project } from '../../api/types'
 import { ClaimChips } from '../../components/ClaimCard'
 import { ClaimDiagram, ClaimExplainDetails, ClaimLead, GenerateClaimExplainer, GlanceStrip } from '../../components/Explainers'
+import { RelatedStrip } from '../../components/Related'
 import { SearchIcon, SparkIcon } from '../../components/Icons'
 import { Button, EmptyState, ErrorState, Loading, Pagination, PaperLink, useDebounced } from '../../components/ui'
 import { formatScore, humanize, pluralize } from '../../lib/format'
@@ -30,6 +31,7 @@ function ClaimRow({ claim, project }: { claim: Claim; project?: Project }) {
       <div className="mt-3">
         <GlanceStrip claim={claim} explainer={explainer} project={project} />
       </div>
+      <RelatedStrip related={claim.related} claimId={claim.id} paperId={claim.paper_id} className="mt-3" />
       <ClaimDiagram diagram={explainer?.diagram} className="mt-3" />
       <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2">
         <ClaimChips claim={claim} />

@@ -1,18 +1,49 @@
-import { Link, useParams } from 'react-router'
+import { useEffect, useMemo, useState } from 'react'
+import { Link, useLocation, useParams } from 'react-router'
 import { usePaper, useProjects } from '../../api/queries'
-import type { Author } from '../../api/types'
+import type { Author, ConceptNode } from '../../api/types'
 import { CategoryChip, DocTypeChip } from '../../components/Badges'
 import { ClaimChips, ClaimedEffect } from '../../components/ClaimCard'
 import { ClaimLead, DiagramThumb, ExplainerFootnote, GeneratePaperExplainer, NumberedSteps, ResultTiles } from '../../components/Explainers'
+import { ConceptMapCard } from '../../components/ConceptMap'
 import { FlowDiagram } from '../../components/FlowDiagram'
+import { RelatedStrip } from '../../components/Related'
 import { AlertIcon, BookIcon, SparkIcon } from '../../components/Icons'
-import { Card, Chip, DefinitionList, EmptyState, ErrorState, ExternalLink, Loading, RelativeTime } from '../../components/ui'
+import { Card, Chip, cx, DefinitionList, EmptyState, ErrorState, ExternalLink, Loading, RelativeTime } from '../../components/ui'
 import { formatDate, pluralize } from '../../lib/format'
 
 export default function PaperDetailPage() {
   const paperId = useParams()['*'] ?? ''
   const paper = usePaper(paperId)
   const projects = useProjects()
+  const location = useLocation()
+  const [flash, setFlash] = useState<number | null>(null)
+  const loaded = !!paper.data
+
+  useEffect(() => {
+    if (!loaded || !location.hash) return
+    const target = document.getElementById(decodeURIComponent(location.hash.slice(1)))
+    target?.scrollIntoView({ block: 'start' })
+  }, [loaded, location.hash])
+
+  useEffect(() => {
+    if (flash == null) return
+    const timer = window.setTimeout(() => setFlash(null), 1800)
+    return () => window.clearTimeout(timer)
+  }, [flash])
+
+  const claims = useMemo(
+    () =>
+      [...(paper.data?.claims ?? [])].sort(
+        (a, b) => (a.related?.order ?? Number.MAX_SAFE_INTEGER) - (b.related?.order ?? Number.MAX_SAFE_INTEGER) || a.id - b.id,
+      ),
+    [paper.data],
+  )
+  const jumpToClaim = (node: ConceptNode) => {
+    if (!node.claim_id) return
+    document.getElementById(`claim-${node.claim_id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    setFlash(node.claim_id)
+  }
 
   if (paper.isLoading) return <Loading label="Loading paper…" />
   if (paper.isError || !paper.data)
@@ -59,6 +90,8 @@ export default function PaperDetailPage() {
           </p>
         )}
       </div>
+
+      <ConceptMapCard paperId={data.paper_id} map={data.concept_map} onSelect={jumpToClaim} />
 
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="min-w-0 space-y-6 lg:col-span-2">
@@ -130,19 +163,30 @@ export default function PaperDetailPage() {
             </Card>
           )}
 
-          <Card title={`Claim cards (${data.claims.length})`} bodyClassName="p-0">
+          <Card
+            title={`Claim cards (${data.claims.length})`}
+            actions={data.concept_map?.generated ? <span className="text-xs text-muted">in reading order</span> : undefined}
+            bodyClassName="p-0"
+          >
             {data.claims.length === 0 ? (
               <EmptyState title={data.distilled_at ? 'No claims extracted' : 'Not distilled yet'} icon={<BookIcon size={28} />}>
                 {data.distilled_at ? 'The distiller found no technical claims in this document.' : 'Run “Distill pending” on the Papers page or a research scan.'}
               </EmptyState>
             ) : (
               <ul className="divide-y divide-line-muted">
-                {data.claims.map((claim) => (
-                  <li key={claim.id} className="px-4 py-3">
+                {claims.map((claim) => (
+                  <li
+                    key={claim.id}
+                    id={`claim-${claim.id}`}
+                    className={cx('scroll-mt-20 px-4 py-3 transition-colors duration-700', flash === claim.id && 'bg-accent-subtle')}
+                  >
                     <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_200px]">
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-baseline justify-between gap-x-3">
                           <Link to={`/research/claims/${claim.id}`} className="font-semibold text-fg hover:text-accent">
+                            {claim.related?.has_map && claim.related.order != null && (
+                              <span className="mr-1.5 text-muted tabular-nums">{claim.related.order}.</span>
+                            )}
                             {claim.name}
                           </Link>
                           <span className="text-sm">
@@ -150,6 +194,7 @@ export default function PaperDetailPage() {
                           </span>
                         </div>
                         <ClaimLead claim={claim} explainer={claim.explainer} />
+                        <RelatedStrip related={claim.related} claimId={claim.id} paperId={data.paper_id} showPosition={false} className="mt-2" />
                         <div className="mt-2">
                           <ClaimChips claim={claim} />
                         </div>

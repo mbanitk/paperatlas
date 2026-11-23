@@ -26,6 +26,8 @@ import type {
   ClaimExplainer,
   PaperExplainer,
   TopicExplainer,
+  ConceptMap,
+  ConceptNode,
 } from './types'
 
 export const API_BASE = '/api'
@@ -148,6 +150,7 @@ export const api = {
     topic: (slug: string) => get<Topic>(`/research/topics/${encodeURIComponent(slug)}`),
     explainTopic: (slug: string) => post<TopicExplainer>(`/research/topics/${encodeURIComponent(slug)}/explain`),
     explainPaper: (paperId: string) => post<PaperExplainer>(`/research/papers/${encodePaperId(paperId)}/explain`),
+    conceptMap: (paperId: string) => post<ConceptMap>(`/research/papers/${encodePaperId(paperId)}/concept-map`),
     explainBackfill: (body: { project_id?: number | null; claims_top?: number; papers?: boolean; topics?: boolean; force?: boolean }) =>
       post<JobQueued>('/research/explain', body),
     refreshTopics: (useLlm = true) => post<JobQueued>('/research/topics/refresh', { use_llm: useLlm }),
@@ -170,6 +173,7 @@ export const api = {
     project: (id: number) => get<Project>(`/lab/projects/${id}`),
     registerProject: (body: { repo_path: string; name?: string | null }) => post<Project>('/lab/projects', body),
     reprofile: (id: number) => post<Project>(`/lab/projects/${id}/profile`),
+    prerequisites: (claimId: number) => get<ConceptNode[]>(`/lab/claims/${claimId}/prerequisites`),
     explainClaim: (projectId: number, claimId: number) => post<ClaimExplainer>(`/lab/projects/${projectId}/claims/${claimId}/explain`),
     rematch: (id: number, useLlm = true) => post<JobQueued>(`/lab/projects/${id}/match${buildQuery({ use_llm: useLlm })}`),
     recommendations: (projectId: number, params: RecommendationParams = {}, signal?: AbortSignal) =>

@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from seed_concept_maps import EXTRA_CONCEPTS, apply_concept_maps  # noqa: E402
 from seed_explainers import BACKGROUND_PAPERS, CLAIM_EXPLAINERS, PAPER_EXPLAINERS, TOPIC_EXPLAINERS  # noqa: E402
 
 MARKER = ".seed_demo"
@@ -755,7 +756,11 @@ PAPERS: list[dict[str, Any]] = [
     },
 ]
 
-ALREADY_TESTED = {"c_radix", "c_split_k", "c_prompt_lookup", "c_chunked_prefill", "c_kivi", "c_lookahead", "c_draft_len"}
+for _paper in PAPERS:
+    _paper["concepts"].extend(EXTRA_CONCEPTS.get(_paper["paper_id"], []))
+
+ALREADY_TESTED = {"c_radix", "c_split_k", "c_prompt_lookup", "c_chunked_prefill", "c_kivi", "c_lookahead", "c_draft_len",
+                  "c_tree_mask", "c_dyn_tree", "c_split_heuristic", "c_awq"}
 
 
 # ---- experiments ---------------------------------------------------------------------------
@@ -840,6 +845,7 @@ class Seeder:
         self.claim_rows: dict[str, dict[str, Any]] = {}
         self.skipped_artifacts: list[int] = []
         self.experiments = 0
+        self.links = 0
 
     # events / jobs are buffered and inserted in time order so ids follow time (SSE cursors rely on it)
     def event(self, at: datetime, stage: str, message: str, data: Optional[dict] = None, *, experiment_id: Optional[int] = None,
@@ -944,6 +950,7 @@ class Seeder:
                     self.claims[concept_data["key"]] = claim.id
                     self.claim_rows[concept_data["key"]] = {"concept": concept_data, "paper": paper_data, "card": card}
             self.seed_background_papers(session, topic_ids)
+            self.links = apply_concept_maps(session, self.claims, ago(hours=23))
             for slug, explainer in TOPIC_EXPLAINERS.items():
                 session.query(Topic).filter(Topic.slug == slug).update({"explainer": stamp(explainer, hours=20)})
             for paper_id, explainer in PAPER_EXPLAINERS.items():
@@ -1067,6 +1074,7 @@ class Seeder:
         self.exp_building(project_id)
         self.exp_awaiting_approval(project_id, triage_ids[1], "c_lookahead", ago(hours=5, minutes=4))
         self.exp_awaiting_approval(project_id, triage_ids[1], "c_draft_len", ago(hours=5, minutes=3))
+        self.exp_chain_and_bundle(project_id, triage_ids[2], failed_prerequisite=2)
 
     def triage_events(self, triage_id: int, start: datetime, opts: dict) -> None:
         t = start
@@ -1493,6 +1501,19 @@ class Seeder:
                 guardrails={"max_exact_match_drop": 0.02, "min_output_agreement": 0.95, "max_peak_memory_increase_pct": 15.0},
                 paper_vs_project="Paper: dense Llama-3-8B on MLX (M3 Max). Here: Qwen3-30B-A3B MoE on PyTorch MPS (M5 Pro). Extra lookahead tokens activate more experts per step, so the per-step cost grows faster than for a dense model; expect a smaller gain.",
             )
+        elif key == "c_tree_mask":
+            spec = spec_for(
+                hypothesis="Verifying a small draft tree with an ancestor-only attention mask improves decode_tokens_per_s on short_chat by at least 5%.",
+                flag_name="tree_verify_mask", technique_summary=self.claim_rows[key]["card"].technique,
+                implementation_notes="Extend speculative_draft's verify step to take a flattened 2-branch tree (top-2 at depth 1, chains below) with a boolean "
+                "ancestry mask and depth-based position ids passed to SDPA. Flag off: single-chain verification as today. Pitfall: MPS SDPA uses the math "
+                "kernel with arbitrary masks — keep the tree under 16 nodes.",
+                primary_metric="decode_tokens_per_s", direction="higher_is_better", secondary_metrics=["itl_ms", "peak_memory_gb"],
+                workload="short_chat", model="eval", rounds=10, warmup=1, success_threshold_pct=5.0, claimed_gain_pct=None, lossless=True,
+                guardrails={"max_exact_match_drop": 0.02, "min_output_agreement": 0.95, "max_peak_memory_increase_pct": 15.0},
+                paper_vs_project="Paper: Vicuna-13B on an H100 with 64-node trees. Here: Qwen3-30B-A3B on MPS, where a masked SDPA call is slower; "
+                "a small tree is the safe first step before the dynamic tree (chained experiment).",
+            )
         else:
             spec = spec_for(
                 hypothesis="An acceptance-rate–driven draft length controller improves decode_tokens_per_s on short_chat by at least 5% over the fixed draft length.",
@@ -1508,6 +1529,33 @@ class Seeder:
         self._artifacts(eid)
         self._plan_events(eid, created, spec, triage_id, None)
         return eid
+
+    def exp_chain_and_bundle(self, project_id: int, triage_id: int, failed_prerequisite: int) -> None:
+        """Gate 1 modes: a chain (prerequisite awaiting approval → dependent blocked), a blocked dependent whose
+        prerequisite was not merged, and a bundle experiment implementing a claim together with its partner."""
+        created = ago(minutes=40)
+        first = self.exp_awaiting_approval(project_id, triage_id, "c_tree_mask", created)
+        self._set(first, mode="chain")
+        dependent = self._experiment(project_id, "c_dyn_tree", "blocked", created, created, triage_id=triage_id)
+        self._set(dependent, mode="chain", depends_on_experiment_id=first)
+        self.event(created, "plan", "Experiment created (chain): waits for its prerequisite experiment to be merged",
+                   experiment_id=dependent, triage_id=triage_id)
+
+        created = ago(days=3, hours=21)
+        orphan = self._experiment(project_id, "c_split_heuristic", "blocked", created, ago(days=3, hours=20),
+                                  error=f"plan: prerequisite experiment #{failed_prerequisite} was not merged — retry to run without it")
+        self._set(orphan, mode="chain", depends_on_experiment_id=failed_prerequisite)
+        self.event(created, "plan", "Experiment created (chain): waits for its prerequisite experiment to be merged", experiment_id=orphan)
+        self.event(ago(days=3, hours=20), "plan", f"Prerequisite #{failed_prerequisite} was not merged", experiment_id=orphan, level="warning")
+
+        created = ago(minutes=6)
+        bundle = self._experiment(project_id, "c_awq", "planning", created, created + timedelta(seconds=20), triage_id=triage_id)
+        self._set(bundle, mode="bundle", bundle_claim_ids=[self.claims["c_awq_clip"]])
+        job = f"run-{bundle}"
+        self.job(job, "experiment.run", {"experiment_id": bundle}, created, status="running", experiment_id=bundle)
+        self.event(created, "plan", "Experiment created (Gate 1: claim picked, bundle)", experiment_id=bundle, triage_id=triage_id)
+        self.event(created + timedelta(seconds=15), "plan", "Writing the experiment spec (bundle: AWQ scaling + per-group clipping)",
+                   experiment_id=bundle, job=job)
 
     def flush_jobs_and_events(self) -> None:
         from paperatlas.db.engine import session_scope
@@ -1555,7 +1603,7 @@ def main() -> int:
     migrate.upgrade()
     seeder = Seeder()
     seeder.run()
-    print(f"Seeded {len(PAPERS)} papers, {len(seeder.claims)} claim cards, {seeder.experiments} experiments, 3 triage runs, "
+    print(f"Seeded {len(PAPERS)} papers, {len(seeder.claims)} claim cards, {seeder.experiments} experiments, 3 triage runs, {seeder.links} concept links, "
           f"{len(seeder.jobs)} jobs and {len(seeder.events)} events into {db_name}.")
     print(f"Artifacts (reports, logs): {data_dir().resolve() / 'r2e' / 'experiments'}")
     if seeder.skipped_artifacts:

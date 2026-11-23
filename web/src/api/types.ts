@@ -2,6 +2,7 @@
 // (src/paperatlas/lab/service.py, lab/events.py, lab/profiler.py, discovery/topics.py).
 
 export type ExperimentStatus =
+  | 'blocked'
   | 'queued'
   | 'planning'
   | 'awaiting_approval'
@@ -154,6 +155,72 @@ export interface TopicInsights {
   top_papers: { paper_id: string; title: string; score: number | null; rank: number | null }[]
 }
 
+// ---- concept maps (how a paper's concepts relate) ------------------------------------------
+
+export type ConceptRole = 'foundation' | 'core' | 'extension' | 'optimization' | 'evaluation' | 'limitation'
+export type ConceptRelation = 'requires' | 'builds_on' | 'complements' | 'alternative_to' | 'evaluated_by'
+
+export interface ConceptNode {
+  concept_id: number
+  claim_id: number | null
+  name: string
+  kind?: string | null
+  role?: ConceptRole | string | null
+  order?: number | null
+  category?: string | null
+  testable?: boolean
+  testable_here?: boolean | null
+  claimed_gain_pct?: number | null
+  headline?: string | null
+}
+
+export interface RelatedConcept extends ConceptNode {
+  why?: string | null
+}
+
+export interface ConceptLinkData {
+  source: number
+  target: number
+  relation: ConceptRelation | string
+  why?: string | null
+  evidence?: string | null
+}
+
+export interface ConceptBundle {
+  name: string
+  concept_ids?: number[]
+  effect?: string | null
+  is_headline_result?: boolean
+  members: ConceptNode[]
+}
+
+export interface ConceptMap {
+  nodes: ConceptNode[]
+  links: ConceptLinkData[]
+  bundles: ConceptBundle[]
+  reading_path?: string | null
+  generated: boolean
+}
+
+export interface ClaimRelated {
+  requires: RelatedConcept[]
+  required_by: RelatedConcept[]
+  builds_on: RelatedConcept[]
+  extended_by: RelatedConcept[]
+  complements: RelatedConcept[]
+  alternatives: RelatedConcept[]
+  evaluated_by: RelatedConcept[]
+  evaluates: RelatedConcept[]
+  bundles: ConceptBundle[]
+  prerequisites: ConceptNode[]
+  order?: number | null
+  role?: string | null
+  concepts_in_paper?: number
+  has_map?: boolean
+}
+
+export type ExperimentMode = 'single' | 'bundle' | 'chain'
+
 export interface Claim {
   id: number
   claim_id: number
@@ -185,6 +252,7 @@ export interface Claim {
   created_at: string | null
   search_score?: number | null
   explainer?: ClaimExplainer | null
+  related?: ClaimRelated | null
 }
 
 export interface ClaimDetail extends Claim {
@@ -269,6 +337,7 @@ export interface PaperDetail {
   topics: { slug: string; name: string; rank: number | null; score: number | null }[]
   claims: Claim[]
   explainer?: PaperExplainer | null
+  concept_map?: ConceptMap | null
 }
 
 export interface Topic {
@@ -427,6 +496,9 @@ export interface ExperimentSummary {
   median_delta_pct: number | null
   created_at: string | null
   updated_at: string | null
+  mode?: ExperimentMode | string | null
+  bundle_claim_ids?: number[]
+  depends_on_experiment_id?: number | null
 }
 
 export interface Guardrails {
@@ -568,6 +640,9 @@ export interface Experiment extends ExperimentSummary {
   stages: Stage[]
   runs: RunInfo[]
   verdict_detail: VerdictDetail | null
+  bundle?: { claim_id: number; name: string; technique: string }[]
+  dependents?: { id: number; status: ExperimentStatus; claim_id: number }[]
+  related?: ClaimRelated | null
 }
 
 export interface ExperimentLog {
@@ -594,4 +669,5 @@ export interface PickBody {
   claim_ids: number[]
   triage_id?: number | null
   force?: boolean
+  mode?: ExperimentMode
 }

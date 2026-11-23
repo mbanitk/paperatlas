@@ -4,12 +4,13 @@ import { Link, useNavigate, useSearchParams } from 'react-router'
 import { ApiError } from '../api/client'
 import { keys, useCategories, useCreateExperiments, useProjects, useRecommendations, useStartTriage, useTopics, useTriage, useTriageList } from '../api/queries'
 import { mergeEvents, useEventStream } from '../api/sse'
-import type { LabEvent, Project, Recommendation, TriageOptions, TriageStatus, TriageSummary } from '../api/types'
+import type { ExperimentMode, LabEvent, Project, Recommendation, TriageOptions, TriageStatus, TriageSummary } from '../api/types'
 import { api } from '../api/client'
 import { BlockerBadge, CategoryChip, DocTypeChip, LiveDot, StatusChip } from '../components/Badges'
 import { ClaimCardDetails, ClaimedEffect, Requirements } from '../components/ClaimCard'
 import { ClaimDiagram, ClaimExplainDetails, ClaimLead, GenerateClaimExplainer, GlanceStrip } from '../components/Explainers'
 import { ConfirmDialog, Modal } from '../components/Dialog'
+import { ConceptRef, RelatedStrip } from '../components/Related'
 import { EventTimeline } from '../components/EventTimeline'
 import { ChevronDown, ChevronRight, RefreshIcon, SearchIcon, SparkIcon } from '../components/Icons'
 import { Meter } from '../components/Charts'
@@ -281,6 +282,8 @@ function RecommendationCard({ item, selected, disabledReason, onToggle, shortlis
             <GlanceStrip claim={item} explainer={explainer} project={project} fit={item.fit} blockers={item.blockers} />
           </div>
 
+          <RelatedStrip related={item.related} claimId={item.claim_id} paperId={item.paper_id} className="mt-3" />
+
           <div className="mt-3 flex flex-wrap items-center gap-1.5">
             <CategoryChip category={item.category} />
             {item.topics.map((topic) => (
@@ -359,6 +362,123 @@ function RecommendationCard({ item, selected, disabledReason, onToggle, shortlis
   )
 }
 
+// ---- Gate 1: how to handle prerequisites ------------------------------------------------------
+
+const MODE_OPTIONS: { value: ExperimentMode; label: string; describe: (picks: Recommendation[]) => string }[] = [
+  {
+    value: 'single',
+    label: 'Test only this claim',
+    describe: (picks) =>
+      `${picks.length > 1 ? 'One experiment per selected claim' : 'One experiment'}; prerequisites are not added, so the result may understate the paper.`,
+  },
+  {
+    value: 'bundle',
+    label: 'Bundle with prerequisites',
+    describe: (picks) =>
+      `One experiment implements “${picks[0]?.name ?? ''}” together with its prerequisites${picks.length > 1 ? ' and the other selected claims' : ''} behind one flag.`,
+  },
+  {
+    value: 'chain',
+    label: 'Chain: prerequisites first',
+    describe: () =>
+      'One experiment per testable prerequisite, in order; each next one starts when the previous is merged and keeps its flag on in the baseline.',
+  },
+]
+
+/**
+ * Experiments a Gate 1 mode creates. A chain adds one per testable prerequisite that is not picked and has no
+ * merged or running experiment yet (those are reused); untestable prerequisites are folded into the dependent.
+ */
+function plannedCount(mode: ExperimentMode, picks: Recommendation[], lookup: Map<number, Recommendation>): number {
+  if (mode === 'bundle') return 1
+  if (mode === 'single') return picks.length
+  const picked = new Set(picks.map((item) => item.claim_id))
+  const prerequisites = new Set<number>()
+  for (const item of picks)
+    for (const node of item.related?.prerequisites ?? []) {
+      if (!node.claim_id || !node.testable_here || picked.has(node.claim_id)) continue
+      const status = lookup.get(node.claim_id)?.experiment_status
+      if (status && (status === 'merged' || isActiveStatus(status))) continue
+      prerequisites.add(node.claim_id)
+    }
+  return picks.length + prerequisites.size
+}
+
+function PrerequisitesChoice({ picks, mode, onChange, lookup }: {
+  picks: Recommendation[]
+  mode: ExperimentMode
+  onChange: (mode: ExperimentMode) => void
+  lookup: Map<number, Recommendation>
+}) {
+  const withPrerequisites = picks.filter((item) => (item.related?.prerequisites?.length ?? 0) > 0)
+  if (!withPrerequisites.length) return null
+  return (
+    <section className="mb-3 rounded-md border border-accent/30 bg-accent-subtle/30 p-3">
+      <h3 className="text-sm font-semibold">Builds on other concepts from the same paper</h3>
+      <ul className="mt-1.5 space-y-1.5">
+        {withPrerequisites.map((item) => (
+          <li key={item.claim_id} className="text-xs">
+            <span className="font-medium text-fg">{item.name}</span> <span className="text-muted">needs first:</span>
+            <ol className="mt-1 flex flex-wrap items-center gap-1.5">
+              {item.related!.prerequisites.map((node) => {
+                const existing = node.claim_id ? lookup.get(node.claim_id) : undefined
+                return (
+                  <li key={node.concept_id} className="flex min-w-0 flex-wrap items-center gap-1">
+                    <ConceptRef node={node} max={34} />
+                    <span className={node.testable_here ? 'text-success' : 'text-muted'}>{node.testable_here ? 'testable here' : 'not testable here'}</span>
+                    {existing?.experiment_id && existing.experiment_status && (
+                      <>
+                        <span className="text-subtle">·</span>
+                        <Link to={`/experiments/${existing.experiment_id}`} className="inline-flex items-center gap-1">
+                          experiment #{existing.experiment_id} <StatusChip status={existing.experiment_status} />
+                        </Link>
+                      </>
+                    )}
+                  </li>
+                )
+              })}
+            </ol>
+          </li>
+        ))}
+      </ul>
+      <fieldset className="mt-3">
+        <legend className="mb-1.5 text-xs font-semibold text-muted">How should the experiment handle them?</legend>
+        <div className="space-y-1.5">
+          {MODE_OPTIONS.map((option) => {
+            const count = plannedCount(option.value, picks, lookup)
+            return (
+              <label
+                key={option.value}
+                className={cx(
+                  'flex cursor-pointer gap-2.5 rounded-md border bg-canvas px-3 py-2',
+                  mode === option.value ? 'border-accent ring-1 ring-accent' : 'border-line hover:border-subtle',
+                )}
+              >
+                <input type="radio" name="gate1-mode" value={option.value} checked={mode === option.value} onChange={() => onChange(option.value)} className="mt-0.5 accent-accent" />
+                <span className="min-w-0">
+                  <span className="flex flex-wrap items-center gap-x-2 text-sm font-medium">
+                    {option.label}
+                    <span className="text-xs font-normal text-muted">
+                      {option.value === 'chain' ? '≈ ' : ''}
+                      {pluralize(count, 'experiment')}
+                    </span>
+                  </span>
+                  <span className="block text-xs text-muted">{option.describe(picks)}</span>
+                </span>
+              </label>
+            )
+          })}
+        </div>
+        {withPrerequisites.some((item) => item.related!.prerequisites.some((node) => !node.testable_here)) && (
+          <p className="mt-2 text-xs text-muted">
+            In bundle and chain modes, prerequisites that cannot be tested here on their own are implemented inside the experiment that needs them.
+          </p>
+        )}
+      </fieldset>
+    </section>
+  )
+}
+
 // ---- page -----------------------------------------------------------------------------------
 
 export default function Recommendations() {
@@ -411,7 +531,9 @@ export default function Recommendations() {
   const [selected, setSelected] = useState<Map<number, Recommendation>>(new Map())
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [force, setForce] = useState(false)
+  const [mode, setMode] = useState<ExperimentMode>('single')
   const create = useCreateExperiments()
+  const lookup = useMemo(() => new Map((recs.data ?? []).map((item) => [item.claim_id, item])), [recs.data])
 
   useEffect(() => {
     setSelected(new Map())
@@ -428,16 +550,30 @@ export default function Recommendations() {
 
   const picks = [...selected.values()]
   const blockedPicks = picks.filter((item) => !item.testable_here || item.blockers.length > 0)
+  const hasPrerequisites = picks.some((item) => (item.related?.prerequisites?.length ?? 0) > 0)
+  const effectiveMode: ExperimentMode = hasPrerequisites ? mode : 'single'
 
   const startExperiments = () => {
     if (!projectId) return
     create.mutate(
-      { project_id: projectId, claim_ids: picks.map((item) => item.claim_id), triage_id: pickTriage?.id ?? null, force: blockedPicks.length > 0 && force },
+      {
+        project_id: projectId,
+        claim_ids: picks.map((item) => item.claim_id),
+        triage_id: pickTriage?.id ?? null,
+        force: blockedPicks.length > 0 && force,
+        mode: effectiveMode,
+      },
       {
         onSuccess: (experiments) => {
           setConfirmOpen(false)
           setSelected(new Map())
-          toast.success(`Created ${pluralize(experiments.length, 'experiment')}: ${experiments.map((e) => `#${e.id}`).join(', ')}. The planner is writing the spec (Gate 2 next).`)
+          const waiting = experiments.filter((e) => e.status === 'blocked').length
+          toast.success(
+            `Created ${pluralize(experiments.length, 'experiment')}: ${experiments.map((e) => `#${e.id}`).join(', ')}. ` +
+              (waiting
+                ? `${pluralize(waiting, 'experiment')} ${waiting === 1 ? 'waits for its prerequisite' : 'wait for their prerequisites'} to be merged.`
+                : 'The planner is writing the spec (Gate 2 next).'),
+          )
           if (experiments.length === 1) navigate(`/experiments/${experiments[0].id}`)
           else navigate(`/experiments?tab=active&new=${experiments.map((e) => e.id).join(',')}`)
         },
@@ -598,7 +734,7 @@ export default function Recommendations() {
               {picks.length > 2 && <div className="text-xs text-attention">Tip: 1–2 at a time keeps the GPU queue short.</div>}
             </div>
             <Button onClick={() => setSelected(new Map())}>Clear</Button>
-            <Button variant="primary" icon={<SparkIcon />} onClick={() => { setForce(false); create.reset(); setConfirmOpen(true) }}>
+            <Button variant="primary" icon={<SparkIcon />} onClick={() => { setForce(false); setMode('single'); create.reset(); setConfirmOpen(true) }}>
               Start {pluralize(picks.length, 'experiment')}
             </Button>
           </div>
@@ -609,8 +745,8 @@ export default function Recommendations() {
         open={confirmOpen}
         onClose={() => setConfirmOpen(false)}
         onConfirm={startExperiments}
-        title={`Start ${pluralize(picks.length, 'experiment')}?`}
-        confirmLabel="Start experiments"
+        title={`Start ${pluralize(plannedCount(effectiveMode, picks, lookup), 'experiment')}?`}
+        confirmLabel={effectiveMode === 'single' ? 'Start experiments' : effectiveMode === 'bundle' ? 'Start bundled experiment' : 'Start chain'}
         loading={create.isPending}
         error={create.error ? errorMessage(create.error) : null}
         confirmDisabled={blockedPicks.length > 0 && !force}
@@ -636,6 +772,7 @@ export default function Recommendations() {
             </li>
           ))}
         </ul>
+        <PrerequisitesChoice picks={picks} mode={mode} onChange={setMode} lookup={lookup} />
         {pickTriage && <p className="mb-3 text-xs text-muted">Linked to research scan #{pickTriage.id}.</p>}
         {blockedPicks.length > 0 && (
           <div className="rounded-md border border-attention-emphasis/40 bg-attention-subtle p-3">

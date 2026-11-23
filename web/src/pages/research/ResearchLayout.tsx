@@ -1,5 +1,6 @@
+import { Suspense } from 'react'
 import { NavLink, Outlet } from 'react-router'
-import { PageHeader, cx } from '../../components/ui'
+import { Loading, PageHeader, cx } from '../../components/ui'
 
 const TABS = [
   { to: '/research/topics', label: 'Topics' },
@@ -30,7 +31,9 @@ export default function ResearchLayout() {
           </NavLink>
         ))}
       </nav>
-      <Outlet />
+      <Suspense fallback={<Loading />}>
+        <Outlet />
+      </Suspense>
     </>
   )
 }

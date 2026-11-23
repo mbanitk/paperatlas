@@ -101,3 +101,21 @@ export function LiveDot({ status }: { status: string }) {
     </span>
   )
 }
+
+export const MODE_INFO: Record<string, { label: string; description: string }> = {
+  single: { label: 'Single', description: 'Tests only this claim.' },
+  bundle: { label: 'Bundle', description: 'Implements the claim together with its prerequisites in one experiment.' },
+  chain: { label: 'Chain', description: 'Part of a chain: prerequisites are tested and merged first; dependents start when they are merged.' },
+}
+
+/** "Bundle +2" / "Chain" chip for experiments started in a Gate 1 mode other than single. */
+export function ModeBadge({ mode, bundleSize = 0, className }: { mode: string | null | undefined; bundleSize?: number; className?: string }) {
+  if (!mode || mode === 'single') return null
+  const info = MODE_INFO[mode] ?? { label: humanize(mode), description: '' }
+  return (
+    <Chip tone="done" className={className} title={info.description}>
+      {info.label}
+      {mode === 'bundle' && bundleSize > 0 && <span className="tabular-nums">+{bundleSize}</span>}
+    </Chip>
+  )
+}

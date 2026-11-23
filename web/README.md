@@ -9,10 +9,10 @@ Stack: Vite + React + TypeScript + Tailwind CSS v4 + React Router + TanStack Que
 | Screen | Route | Backend |
 | --- | --- | --- |
 | Overview — stats, *Needs you*, in-progress experiments, live activity, services | `/` | `research/stats`, `lab/experiments`, `lab/triage`, `lab/activity`, `lab/events/stream` |
-| Recommendations — Gate 1, research scan with live progress | `/recommendations` | `lab/projects/{id}/recommendations`, `POST lab/experiments`, `POST lab/projects/{id}/triage`, `lab/triage/{id}/stream` |
+| Recommendations — Gate 1 (single / bundle / chain when a claim has prerequisites), linked concepts on each card, research scan with live progress | `/recommendations` | `lab/projects/{id}/recommendations`, `POST lab/experiments` (`mode`), `POST lab/projects/{id}/triage`, `lab/triage/{id}/stream` |
 | Experiments — Needs you / Active / All | `/experiments` | `lab/experiments?status=` |
-| Experiment detail — stepper, Gate 2 form, Gate 3 verdict, timeline, log, build, runs | `/experiments/:id` | `lab/experiments/{id}` (+ `/spec`, `/spec/decision`, `/decision`, `/cancel`, `/retry`, `/stream`, `/log`, `/report`) |
-| Research — topics, papers & patents, claim cards | `/research/*` | `research/topics`, `research/papers`, `research/claims`, … |
+| Experiment detail — stepper, Gate 2 form, Gate 3 verdict, plan (bundle members, waits for / unlocks), timeline, log, build, runs | `/experiments/:id` | `lab/experiments/{id}` (+ `/spec`, `/spec/decision`, `/decision`, `/cancel`, `/retry`, `/stream`, `/log`, `/report`) |
+| Research — topics, papers & patents (concept map: reading order, prerequisites, combined results), claim cards (how each concept connects) | `/research/*` | `research/topics`, `research/papers` (+ `POST /{id}/concept-map`), `research/claims`, … |
 | Projects — profiles from `lab.yaml`, register, re-profile, re-match (with job progress) | `/projects` | `lab/projects` (+ `POST`, `/{id}/profile`, `/{id}/match`), `lab/jobs` |
 | System — service health, job queue | `/system` | `api/services`, `lab/jobs` |
 
@@ -34,9 +34,11 @@ Checks: `npm run typecheck`, `npm test` (vitest, pure helpers in `src/lib`), `np
 ## Demo data
 
 `web/dev/seed_demo.py` loads realistic fixtures (project `inference-lab`, 8 topics, 13 papers incl. a patent,
-25 claim cards, matches with blockers, a research scan waiting at Gate 1, and experiments in every interesting
-state — awaiting approval, building, running, awaiting decision with a judged verdict and HTML report, merged,
-failed — plus their events, jobs and logs). It **wipes the `research` and `lab` schemas**, so it only runs
+29 claim cards with explainers, concept maps with typed links and combined results, matches with blockers, a
+research scan waiting at Gate 1, and experiments in every interesting state — awaiting approval, building,
+running, awaiting decision with a judged verdict and HTML report, merged, failed, a chain (prerequisite awaiting
+approval → dependent blocked), a blocked dependent whose prerequisite was not merged, and a bundle — plus their
+events, jobs and logs). It **wipes the `research` and `lab` schemas**, so it only runs
 against a database whose name ends with `_ui` (or with `--force`):
 
 ```bash
@@ -55,7 +57,8 @@ Without a worker, gate buttons simply queue jobs (visible on the System page); n
 ```
 src/api/        typed client (client.ts), TS mirrors of the service dicts (types.ts),
                 TanStack Query hooks (queries.ts), SSE hook with reconnect/resume (sse.ts)
-src/lib/        pure helpers + tests: formatting, stage/status mapping, spec override diffing
+src/lib/        pure helpers + tests: formatting, stage/status mapping, spec override diffing,
+                flow-diagram and concept-map layout
 src/components/ layout, badges, stepper, timeline, dialogs, charts (hand-made SVG), claim card
 src/pages/      one file per screen; experiment/ holds the Gate 2 and Gate 3 panels
 ```

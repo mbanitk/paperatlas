@@ -178,3 +178,11 @@ export function Spinner({ size = 16, className = '' }: { size?: number; classNam
     </svg>
   )
 }
+export const GraphIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="3.5" cy="8" r="1.8" />
+    <circle cx="12.5" cy="3.8" r="1.8" />
+    <circle cx="12.5" cy="12.2" r="1.8" />
+    <path d="M5.2 7.2l5.6-2.6M5.2 8.8l5.6 2.6" />
+  </Svg>
+)
