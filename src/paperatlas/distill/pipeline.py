@@ -103,8 +103,10 @@ class DistillPipeline:
         paper_ids: Optional[Iterable[str]] = None,
         reprocess: bool = False,
         group: bool = True,
+        explain: bool = True,
     ) -> DistillStats:
         stats = DistillStats()
+        distilled: list[str] = []
         if paper_ids is not None:
             ids = list(paper_ids)
             if reprocess:
@@ -128,11 +130,22 @@ class DistillPipeline:
                 claim_ids = self._persist(row, concepts)
                 logger.info("[%d/%d] %s: %d claims — %s", index, len(rows), row["paper_id"], len(claim_ids), row["title"][:70])
                 stats.papers += 1
+                distilled.append(row["paper_id"])
                 stats.concepts += len(claim_ids)
                 stats.claims += len(claim_ids)
                 stats.claim_ids.extend(claim_ids)
         if group and stats.claim_ids:
             stats.grouped = assign_claim_groups(stats.claim_ids)
+        if explain and self.extractor.client and distilled:
+            from paperatlas.r2e.explainers import _run_all, explain_paper
+
+            _run_all(
+                lambda pid: explain_paper(pid, self.extractor.client, force=True),
+                distilled,
+                self.concurrency,
+                "papers",
+                lambda stage, message, data=None: logger.info("[%s] %s", stage, message),
+            )
         stats.testable_claims = self._count_testable(stats.claim_ids)
         stats.log_path = self._log_path
         return stats

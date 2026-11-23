@@ -167,6 +167,7 @@ def match_project(
     llm_review_top: int = 30,
     llm: Optional[LLMClient] = None,
     report: Optional[Reporter] = None,
+    explain_top: int = 0,
 ) -> list[dict[str, Any]]:
     with session_scope() as session:
         project = session.get(Project, project_id)
@@ -259,6 +260,17 @@ def match_project(
     testable = sum(1 for item in scored if not item["blockers"])
     if report:
         report("match", f"Matched {len(scored)} claims: {testable} testable on this project", {"testable": testable})
+    if llm and explain_top:
+        from paperatlas.r2e.explainers import _run_all, explain_claim
+
+        top_ids = [s["claim"].id for s in sorted(scored, key=lambda s: s["score"], reverse=True) if not s["blockers"]]
+        _run_all(
+            lambda cid: explain_claim(project_id, cid, llm),
+            top_ids[:explain_top],
+            4,
+            "claims",
+            report or (lambda stage, message, data=None: logger.info("[%s] %s", stage, message)),
+        )
     return sorted(
         [
             {"claim_id": s["claim"].id, "score": s["score"], "blockers": s["blockers"], "target_metric": s["target_metric"]}

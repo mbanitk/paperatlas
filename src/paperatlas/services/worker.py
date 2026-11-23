@@ -66,7 +66,22 @@ def _experiment(payload: dict, job: dict) -> dict:
     return {"status": run_experiment(payload["experiment_id"], payload.get("resume"))}
 
 
+def _explain(payload: dict, job: dict) -> dict:
+    from paperatlas.lab.events import reporter
+    from paperatlas.r2e.explainers import backfill
+
+    return backfill(
+        payload.get("project_id"),
+        claims_top=payload.get("claims_top", 25),
+        papers=payload.get("papers", True),
+        topics=payload.get("topics", True),
+        force=payload.get("force", False),
+        report=reporter(job_id=job["id"]),
+    )
+
+
 HANDLERS: dict[str, Callable[[dict, dict], dict]] = {
+    "explain": _explain,
     "topics.refresh": _topics_refresh,
     "discover": _discover,
     "distill": _distill,

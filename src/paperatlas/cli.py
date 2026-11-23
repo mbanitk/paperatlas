@@ -146,7 +146,7 @@ def cmd_project(args: argparse.Namespace) -> None:
 def cmd_match(args: argparse.Namespace) -> None:
     from paperatlas.lab.matcher import match_project
 
-    ranked = match_project(_project_id(args.project), use_llm=not args.no_llm)
+    ranked = match_project(_project_id(args.project), use_llm=not args.no_llm, explain_top=args.explain_top)
     print(f"matched {len(ranked)} claims; {sum(1 for r in ranked if not r['blockers'])} testable here")
 
 
@@ -241,6 +241,14 @@ def cmd_digest(args: argparse.Namespace) -> None:
     print(f"digest written to {path}")
 
 
+def cmd_explain(args: argparse.Namespace) -> None:
+    from paperatlas.r2e.explainers import backfill
+
+    project_id = _project_id(args.project) if args.project else None
+    result = backfill(project_id, args.claims, not args.no_papers, not args.no_topics, args.force, args.workers)
+    print(f"explained {result['topics']} topics, {result['papers']} papers, {result['claims']} claims")
+
+
 def cmd_schedule(args: argparse.Namespace) -> None:
     from paperatlas.r2e.schedule import schedule, unschedule
 
@@ -313,6 +321,7 @@ def build_parser() -> argparse.ArgumentParser:
     match = r2e_sub.add_parser("match", help="score claims against a project")
     match.add_argument("--project", required=True)
     match.add_argument("--no-llm", action="store_true")
+    match.add_argument("--explain-top", type=int, default=15, help="generate explainers for the top N")
     match.set_defaults(func=cmd_match)
 
     recommend = r2e_sub.add_parser("recommend", help="show recommendations for a project")
@@ -376,6 +385,15 @@ def build_parser() -> argparse.ArgumentParser:
     digest.add_argument("--project", required=True)
     digest.add_argument("--days", type=int, default=7)
     digest.set_defaults(func=cmd_digest)
+
+    explain = r2e_sub.add_parser("explain", help="generate plain-language explainers + diagrams")
+    explain.add_argument("--project", help="also explain the top claims for this project")
+    explain.add_argument("--claims", type=int, default=25, help="top N recommendations to explain")
+    explain.add_argument("--no-papers", action="store_true")
+    explain.add_argument("--no-topics", action="store_true")
+    explain.add_argument("--force", action="store_true", help="regenerate existing explainers")
+    explain.add_argument("--workers", type=int, default=4)
+    explain.set_defaults(func=cmd_explain)
 
     weekly = r2e_sub.add_parser("schedule", help="weekly scan + digest via launchd (prints the plist unless --install)")
     weekly.add_argument("--project", default="inference-lab")

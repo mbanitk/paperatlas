@@ -121,7 +121,16 @@ def claim_dict(claim: Claim, concept: Optional[Concept] = None, paper: Optional[
     }
 
 
-def get_claim(claim_id: int) -> dict[str, Any]:
+def _explainers_for(session, claim_ids: list[int], project_id: Optional[int] = None) -> dict[int, dict]:
+    if not claim_ids:
+        return {}
+    query = select(Match.claim_id, Match.explainer).where(Match.claim_id.in_(claim_ids), Match.explainer.is_not(None))
+    if project_id:
+        query = query.where(Match.project_id == project_id)
+    return {claim_id: explainer for claim_id, explainer in session.execute(query.order_by(Match.explained_at)).all()}
+
+
+def get_claim(claim_id: int, project_id: Optional[int] = None) -> dict[str, Any]:
     with session_scope() as session:
         row = session.execute(
             select(Claim, Concept, Paper)
@@ -132,6 +141,8 @@ def get_claim(claim_id: int) -> dict[str, Any]:
         if not row:
             raise ServiceError(f"claim {claim_id} not found", 404)
         data = claim_dict(*row)
+        data["explainer"] = _explainers_for(session, [claim_id], project_id).get(claim_id)
+        data["paper_explainer"] = row[2].explainer
         if row[0].group_id:
             group = session.get(ClaimGroup, row[0].group_id)
             siblings = session.execute(
@@ -188,6 +199,9 @@ def list_claims(
         total = session.scalar(select(func.count()).select_from(query.subquery()))
         rows = session.execute(query.order_by(Claim.id.desc()).limit(limit if not q else None).offset(offset if not q else 0)).all()
         items = [claim_dict(*row) for row in rows]
+        explainers = _explainers_for(session, [item["id"] for item in items])
+        for item in items:
+            item["explainer"] = explainers.get(item["id"])
     if q:
         items.sort(key=lambda item: scores.get(item["id"], 0), reverse=True)
         for item in items:
@@ -244,6 +258,7 @@ def list_papers(
                     "distilled": paper.distilled_at is not None,
                     "claims": n_claims or 0,
                     "testable_claims": n_testable or 0,
+                    "explainer": paper.explainer,
                 }
                 for paper, n_claims, n_testable in rows
             ],
@@ -276,6 +291,7 @@ def get_paper(paper_id: str) -> dict[str, Any]:
             "hf_upvotes": paper.hf_upvotes,
             "has_full_text": bool(paper.raw_text),
             "distilled_at": _iso(paper.distilled_at),
+            "explainer": paper.explainer,
             "topics": [{"slug": t.slug, "name": t.name, "rank": t.rank, "score": t.score} for t in topics],
         }
     data["claims"] = list_claims(paper_id=paper_id, limit=50)["items"]
@@ -373,6 +389,7 @@ def recommendations(
                 blockers=list(match.blockers or []),
                 target_metric=match.target_metric,
                 rationale=match.rationale,
+                explainer=match.explainer,
                 topics=topics_by_paper.get(paper.paper_id, []),
                 experiment_id=experiment_id,
                 experiment_status=statuses.get(experiment_id),

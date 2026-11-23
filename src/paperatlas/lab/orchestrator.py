@@ -530,7 +530,12 @@ def node_match(state: TriageState, report) -> dict:
     from paperatlas.lab.matcher import match_project
 
     options = state.get("options") or {}
-    match_project(state["project_id"], use_llm=options.get("use_llm", True), report=report)
+    match_project(
+        state["project_id"],
+        use_llm=options.get("use_llm", True),
+        report=report,
+        explain_top=options.get("explain_top", 15),
+    )
     return {}
 
 

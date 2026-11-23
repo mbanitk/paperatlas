@@ -28,6 +28,7 @@ class ProjectCreate(BaseModel):
 
 class TriageOptions(BaseModel):
     refresh_topics: bool = False
+    explain_top: int = Field(15, ge=0, le=100)
     topics: Optional[list[str]] = None
     per_topic: Optional[int] = Field(None, ge=1, le=50)
     distill_limit: int = Field(60, ge=1, le=500)
@@ -120,6 +121,18 @@ def recommendations(
 ) -> list[dict[str, Any]]:
     _project_or_404(project_id)
     return service.recommendations(project_id, limit, include_blocked, category, topic, q)
+
+
+@app.post("/projects/{project_id}/claims/{claim_id}/explain", tags=["recommendations"])
+def explain_claim_now(project_id: int, claim_id: int, force: bool = True) -> dict[str, Any]:
+    from paperatlas.llm.client import LLMError
+    from paperatlas.r2e.explainers import explain_claim
+
+    _project_or_404(project_id)
+    try:
+        return explain_claim(project_id, claim_id, force=force)
+    except (ValueError, LLMError) as exc:
+        raise service.ServiceError(str(exc), 404 if isinstance(exc, ValueError) else 400) from exc
 
 
 @app.post("/projects/{project_id}/triage", tags=["triage"])

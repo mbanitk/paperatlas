@@ -12,6 +12,8 @@ from paperatlas.discovery.topics import list_topics
 from paperatlas.distill.claims import CATEGORIES
 from paperatlas.lab import service
 from paperatlas.lab.events import enqueue, list_jobs
+from paperatlas.llm.client import LLMError
+from paperatlas.r2e.explainers import explain_paper, explain_topic, topic_insights
 from paperatlas.services.common import create_app
 
 app = create_app("research-api", "Discovered research: topics, papers, patents and claim cards.")
@@ -50,9 +52,43 @@ def get_seeds() -> dict[str, Any]:
     return {"seeds": [seed.model_dump() for seed in config.seeds], "sources": config.sources, "topics": config.topics.model_dump()}
 
 
+class ExplainRequest(BaseModel):
+    project_id: Optional[int] = None
+    claims_top: int = Field(25, ge=0, le=200)
+    papers: bool = True
+    topics: bool = True
+    force: bool = False
+
+
 @app.get("/topics", tags=["topics"])
-def get_topics(include_archived: bool = False) -> list[dict[str, Any]]:
-    return list_topics(include_archived)
+def get_topics(include_archived: bool = False, insights: bool = True) -> list[dict[str, Any]]:
+    topics = list_topics(include_archived)
+    if insights:
+        for topic in topics:
+            topic["insights"] = topic_insights(topic["id"])
+    return topics
+
+
+@app.get("/topics/{slug}", tags=["topics"])
+def get_topic(slug: str) -> dict[str, Any]:
+    topic = next((t for t in list_topics(include_archived=True) if t["slug"] == slug), None)
+    if topic is None:
+        raise service.ServiceError(f"topic {slug} not found", 404)
+    return {**topic, "insights": topic_insights(topic["id"])}
+
+
+@app.post("/topics/{slug}/explain", tags=["topics"])
+def explain_topic_now(slug: str, force: bool = True) -> dict[str, Any]:
+    topic = get_topic(slug)
+    try:
+        return explain_topic(topic["id"], force=force)
+    except (ValueError, LLMError) as exc:
+        raise service.ServiceError(str(exc)) from exc
+
+
+@app.post("/explain", tags=["system"], response_model=JobQueued)
+def explain_backfill(body: ExplainRequest = ExplainRequest()) -> JobQueued:
+    return JobQueued(job_id=enqueue("explain", body.model_dump()), kind="explain")
 
 
 @app.post("/topics/refresh", tags=["topics"], response_model=JobQueued)
@@ -80,6 +116,14 @@ def get_papers(
     return service.list_papers(q=q, topic=topic, limit=limit, offset=offset)
 
 
+@app.post("/papers/{paper_id:path}/explain", tags=["papers"])
+def explain_paper_now(paper_id: str, force: bool = True) -> dict[str, Any]:
+    try:
+        return explain_paper(paper_id, force=force)
+    except (ValueError, LLMError) as exc:
+        raise service.ServiceError(str(exc), 404 if isinstance(exc, ValueError) else 400) from exc
+
+
 @app.get("/papers/{paper_id:path}", tags=["papers"])
 def get_paper(paper_id: str) -> dict[str, Any]:
     return service.get_paper(paper_id)
@@ -104,8 +148,8 @@ def get_claims(
 
 
 @app.get("/claims/{claim_id}", tags=["claims"])
-def get_claim(claim_id: int) -> dict[str, Any]:
-    return service.get_claim(claim_id)
+def get_claim(claim_id: int, project_id: Optional[int] = None) -> dict[str, Any]:
+    return service.get_claim(claim_id, project_id)
 
 
 @app.get("/jobs", tags=["system"])

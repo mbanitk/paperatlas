@@ -318,8 +318,12 @@ def refresh_topics(
     top = select_top(clusters, config.topics.count, config.topics.max_per_seed)
     llm = llm if llm is not None else (build_default_llm_client() if use_llm else None)
     label_clusters(top, papers, llm)
-    persist_topics(top, config)
+    topic_ids = persist_topics(top, config)
     report("discover", f"Selected {len(top)} trending topics", {"topics": [c.name for c in top]})
+    if llm:
+        from paperatlas.r2e.explainers import _run_all, explain_topic
+
+        _run_all(lambda tid: explain_topic(tid, llm, force=True), topic_ids, 4, "topics", report)
     return list_topics()
 
 
@@ -344,6 +348,7 @@ def list_topics(include_archived: bool = False) -> list[dict[str, Any]]:
                 "stats": t.stats,
                 "status": t.status,
                 "refreshed_at": t.refreshed_at,
+                "explainer": t.explainer,
             }
             for t in topics
         ]
