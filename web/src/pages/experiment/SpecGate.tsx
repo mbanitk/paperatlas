@@ -179,7 +179,7 @@ export function SpecGate({ experiment, project }: { experiment: Experiment; proj
               ? 'Spec approved — the build job is queued.'
               : decision === 'revise'
                 ? 'Revision requested — the planner will rewrite the spec.'
-                : 'Rejection recorded — the worker closes the experiment.',
+                : 'Experiment rejected.',
           )
         },
         onError: (error) => toast.error(errorMessage(error)),

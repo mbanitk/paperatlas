@@ -18,24 +18,19 @@ const LiveEventsContext = createContext<LiveEventsValue>({ events: [], status: '
 const FEED_SIZE = 80
 
 /**
- * One app-wide subscription to /api/lab/events/stream: feeds the activity list and invalidates
+ * One app-wide subscription to /api/lab/events/stream?after=-1: feeds the activity list and invalidates
  * cached queries touched by new events (experiments, triage, stats, jobs, recommendations).
  */
 export function LiveEventsProvider({ children }: { children: ReactNode }) {
   const client = useQueryClient()
   const activity = useActivity(50)
   const [streamed, setStreamed] = useState<LabEvent[]>([])
-  const [after, setAfter] = useState<number | null>(null)
   const pending = useRef<{ keys: Set<string>; experiments: Set<number>; triage: Set<number> }>({
     keys: new Set(),
     experiments: new Set(),
     triage: new Set(),
   })
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
-
-  useEffect(() => {
-    if (after === null && activity.data) setAfter(activity.data.reduce((max, event) => Math.max(max, event.id), 0))
-  }, [activity.data, after])
 
   useEffect(() => () => clearTimeout(timer.current), [])
 
@@ -78,7 +73,15 @@ export function LiveEventsProvider({ children }: { children: ReactNode }) {
     [flushInvalidations],
   )
 
-  const status = useEventStream(after === null ? null : api.streams.all, { after: after ?? 0, onEvents })
+  // after=-1: the stream only sends new events; history comes from /activity.
+  const status = useEventStream(api.streams.all, { after: -1, onEvents })
+  const refetchActivity = activity.refetch
+  const previousStatus = useRef(status)
+  useEffect(() => {
+    // (Re)connected: reload recent history so nothing is lost between the snapshot and the stream.
+    if (status === 'open' && previousStatus.current !== 'open') refetchActivity()
+    previousStatus.current = status
+  }, [status, refetchActivity])
 
   const events = useMemo(() => {
     const initial = activity.data ? [...activity.data].sort((a, b) => a.id - b.id) : []

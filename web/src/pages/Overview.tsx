@@ -179,7 +179,7 @@ function ActiveExperiments() {
                     claimed {formatPct(experiment.claimed_gain_pct, 0)}
                   </div>
                 </div>
-                <MiniStages stages={stagesForStatus(experiment.status)} />
+                <MiniStages stages={stagesForStatus(experiment.status, experiment.stage)} />
                 <div className="flex items-center gap-3">
                   <StatusChip status={experiment.status} />
                   <span className="w-16 text-right text-xs text-muted">

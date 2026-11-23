@@ -160,6 +160,8 @@ export const api = {
   lab: {
     projects: () => get<Project[]>('/lab/projects'),
     project: (id: number) => get<Project>(`/lab/projects/${id}`),
+    registerProject: (body: { repo_path: string; name?: string | null }) => post<Project>('/lab/projects', body),
+    reprofile: (id: number) => post<Project>(`/lab/projects/${id}/profile`),
     rematch: (id: number, useLlm = true) => post<JobQueued>(`/lab/projects/${id}/match${buildQuery({ use_llm: useLlm })}`),
     recommendations: (projectId: number, params: RecommendationParams = {}, signal?: AbortSignal) =>
       get<Recommendation[]>(`/lab/projects/${projectId}/recommendations${buildQuery({ ...params })}`, signal),

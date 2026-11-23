@@ -13,6 +13,7 @@ Stack: Vite + React + TypeScript + Tailwind CSS v4 + React Router + TanStack Que
 | Experiments — Needs you / Active / All | `/experiments` | `lab/experiments?status=` |
 | Experiment detail — stepper, Gate 2 form, Gate 3 verdict, timeline, log, build, runs | `/experiments/:id` | `lab/experiments/{id}` (+ `/spec`, `/spec/decision`, `/decision`, `/cancel`, `/retry`, `/stream`, `/log`, `/report`) |
 | Research — topics, papers & patents, claim cards | `/research/*` | `research/topics`, `research/papers`, `research/claims`, … |
+| Projects — profiles from `lab.yaml`, register, re-profile, re-match (with job progress) | `/projects` | `lab/projects` (+ `POST`, `/{id}/profile`, `/{id}/match`), `lab/jobs` |
 | System — service health, job queue | `/system` | `api/services`, `lab/jobs` |
 
 ## Run

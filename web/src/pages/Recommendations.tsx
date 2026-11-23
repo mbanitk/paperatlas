@@ -445,9 +445,8 @@ export default function Recommendations() {
     return (
       <>
         <PageHeader title="Recommendations" />
-        <EmptyState title="No target project registered" icon={<SparkIcon size={28} />}>
-          Register the project you want to improve with <code className="code-inline">paperatlas r2e project add &lt;repo&gt;</code> (it needs a{' '}
-          <code className="code-inline">lab.yaml</code>), then come back here.
+        <EmptyState title="No target project registered" icon={<SparkIcon size={28} />} action={<Link to="/projects">Register a project</Link>}>
+          Register the repository you want to improve (it needs a <code className="code-inline">lab.yaml</code>), then come back here.
         </EmptyState>
       </>
     )

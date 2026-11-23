@@ -6,7 +6,7 @@ import { FlaskIcon, SparkIcon } from '../components/Icons'
 import { MiniStages } from '../components/Stepper'
 import { Banner, EmptyState, ErrorState, Loading, PageHeader, RelativeTime, Tabs, cx } from '../components/ui'
 import { formatPct } from '../lib/format'
-import { failedStageOf, needsYou, stagesForStatus } from '../lib/stages'
+import { needsYou, stagesForStatus } from '../lib/stages'
 
 type Tab = 'needs_you' | 'active' | 'all'
 
@@ -41,7 +41,7 @@ function ExperimentRow({ experiment, highlight }: { experiment: ExperimentSummar
         <StatusChip status={experiment.status} />
       </td>
       <td className="hidden py-3 pr-3 align-top md:table-cell">
-        <MiniStages stages={stagesForStatus(experiment.status, failedStageOf(experiment.error))} />
+        <MiniStages stages={stagesForStatus(experiment.status, experiment.stage)} />
       </td>
       <td className="py-3 pr-3 align-top">
         <VerdictBadge verdict={experiment.verdict} />

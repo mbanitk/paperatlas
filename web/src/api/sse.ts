@@ -4,7 +4,7 @@ import type { LabEvent } from './types'
 export type StreamStatus = 'idle' | 'connecting' | 'open' | 'reconnecting'
 
 export interface EventStreamOptions {
-  /** Start after this event id (ignored after the first connection: the last seen id is used). */
+  /** Start after this event id; -1 = only new events (later reconnects resume from the last seen id). */
   after?: number
   /** Called with batches of new events (bursts are coalesced to keep renders cheap). */
   onEvents: (events: LabEvent[]) => void
@@ -51,7 +51,7 @@ export function useEventStream(url: string | null, { after = 0, onEvents, enable
     const connect = () => {
       if (disposed) return
       const target = new URL(url, window.location.origin)
-      if (lastId > 0) target.searchParams.set('after', String(lastId))
+      if (lastId !== 0) target.searchParams.set('after', String(lastId))
       source = new EventSource(target.toString())
       setStatus(attempt === 0 ? 'connecting' : 'reconnecting')
       source.onopen = () => {

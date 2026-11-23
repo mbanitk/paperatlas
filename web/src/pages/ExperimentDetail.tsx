@@ -146,7 +146,7 @@ export default function ExperimentDetail() {
     )
 
   const data = experiment.data
-  const stages = normalizeStages(data.stages, data.status, data.error, events)
+  const stages = normalizeStages(data.stages, data.status, data.stage)
   const busy = isActiveStatus(data.status) && !['awaiting_approval', 'awaiting_decision'].includes(data.status)
 
   return (

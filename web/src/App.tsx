@@ -5,6 +5,7 @@ import ExperimentDetail from './pages/ExperimentDetail'
 import Experiments from './pages/Experiments'
 import NotFound from './pages/NotFound'
 import Overview from './pages/Overview'
+import Projects from './pages/Projects'
 import Recommendations from './pages/Recommendations'
 import System from './pages/System'
 import ClaimDetailPage from './pages/research/ClaimDetail'
@@ -31,6 +32,7 @@ export default function App() {
             <Route path="claims" element={<Claims />} />
             <Route path="claims/:id" element={<ClaimDetailPage />} />
           </Route>
+          <Route path="projects" element={<Projects />} />
           <Route path="system" element={<System />} />
           <Route path="*" element={<NotFound />} />
         </Route>

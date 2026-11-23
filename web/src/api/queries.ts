@@ -36,6 +36,48 @@ export const useProjects = () => useQuery({ queryKey: keys.projects, queryFn: ap
 export const useProject = (id: number | undefined) =>
   useQuery({ queryKey: keys.project(id ?? 0), queryFn: () => api.lab.project(id!), enabled: !!id, staleTime: 60_000 })
 
+export const useRegisterProject = () => {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { repo_path: string; name?: string | null }) => api.lab.registerProject(body),
+    onSuccess: (project) => {
+      client.setQueryData(keys.project(project.id), project)
+      client.invalidateQueries({ queryKey: keys.projects })
+      client.invalidateQueries({ queryKey: keys.stats })
+    },
+  })
+}
+
+export const useReprofile = (id: number) => {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.lab.reprofile(id),
+    onSuccess: (project) => {
+      client.setQueryData(keys.project(project.id), project)
+      client.invalidateQueries({ queryKey: keys.projects })
+    },
+  })
+}
+
+export const useRematch = (id: number) => {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: (useLlm: boolean) => api.lab.rematch(id, useLlm),
+    onSuccess: () => client.invalidateQueries({ queryKey: ['jobs'] }),
+  })
+}
+
+const ACTIVE_JOB = new Set(['queued', 'running'])
+
+/** Re-match jobs of one project (newest first); polls quickly while one is queued or running. */
+export const useMatchJobs = (projectId: number) =>
+  useQuery({
+    queryKey: ['jobs', 'match', projectId] as const,
+    queryFn: async () =>
+      (await api.lab.jobs(200)).filter((job) => job.kind === 'match' && Number((job.payload ?? {}).project_id) === projectId),
+    refetchInterval: (query) => (query.state.data?.some((job) => ACTIVE_JOB.has(job.status)) ? 3_000 : 15_000),
+  })
+
 export const useRecommendations = (projectId: number | undefined, params: RecommendationParams) =>
   useQuery({
     queryKey: keys.recommendations(projectId ?? 0, params),

@@ -1,4 +1,4 @@
-import type { ExperimentStatus, Gate, LabEvent, Stage, StageName, StageState, TriageStatus, VerdictName } from '../api/types'
+import type { ExperimentStatus, Gate, Stage, StageName, StageState, TriageStatus, VerdictName } from '../api/types'
 
 export const STAGES: StageName[] = ['plan', 'approve', 'build', 'smoke', 'run', 'judge', 'decide']
 
@@ -101,24 +101,10 @@ export function verdictInfo(verdict: string) {
   return VERDICT_INFO[verdict as VerdictName] ?? { label: verdict.replace(/_/g, ' '), tone: 'neutral' as Tone, description: '' }
 }
 
-/** Experiment stage for an event stage name (`eval` → run, `waiting_gpu` → run, …). */
-export function eventStageToExperimentStage(stage: string): StageName | null {
-  if ((STAGES as string[]).includes(stage)) return stage as StageName
-  switch (stage) {
-    case 'eval':
-    case 'waiting_gpu':
-      return 'run'
-    case 'smoke_testing':
-      return 'smoke'
-    default:
-      return null
-  }
-}
-
-/** Client-side equivalent of service._stage_progress for list rows (which carry no `stages`). */
-export function stagesForStatus(status: ExperimentStatus, failedStage: StageName | null = null): Stage[] {
+/** Client-side equivalent of service._stage_progress for list rows (which carry `stage` but no `stages`). */
+export function stagesForStatus(status: ExperimentStatus, stoppedAt: StageName | null = null): Stage[] {
   const terminalFailure = status === 'failed' || status === 'cancelled' || status === 'cancelling'
-  const current = terminalFailure ? failedStage : STAGE_OF_STATUS[status] ?? null
+  const current = terminalFailure ? stoppedAt : STAGE_OF_STATUS[status] ?? null
   let reached = true
   return STAGES.map((stage) => {
     let state: StageState
@@ -137,35 +123,20 @@ export function stagesForStatus(status: ExperimentStatus, failedStage: StageName
   })
 }
 
-/** Stage a failed/cancelled experiment stopped in: from the `"<stage>: message"` error prefix, else the last event. */
-export function failedStageOf(error: string | null | undefined, events: LabEvent[] = []): StageName | null {
-  const prefix = error?.match(/^([a-z_]+):/)?.[1]
-  const fromError = prefix ? eventStageToExperimentStage(prefix) : null
-  if (fromError) return fromError
-  for (let index = events.length - 1; index >= 0; index -= 1) {
-    const stage = eventStageToExperimentStage(events[index].stage)
-    if (stage) return stage
-  }
-  return null
-}
+const STOPPED: StageState[] = ['failed', 'cancelled', 'cancelling', 'rejected']
 
 /**
- * The backend reports every stage as `done` for failed/cancelled experiments (its status→stage map has no
- * entry for them). Repair that so the stepper shows where it stopped.
+ * Stages from the API (which reports the stage a failed/cancelled experiment stopped in). Nothing after
+ * the stage where it stopped can have run, so later stages are shown as pending.
  */
-export function normalizeStages(
-  stages: Stage[] | undefined,
-  status: ExperimentStatus,
-  error?: string | null,
-  events: LabEvent[] = [],
-): Stage[] {
-  const terminalFailure = status === 'failed' || status === 'cancelled' || status === 'cancelling'
-  if (terminalFailure) {
-    const reported = stages?.find((stage) => stage.state === status)
-    if (reported) return stages!
-    return stagesForStatus(status, failedStageOf(error, events))
-  }
-  return stages && stages.length ? stages : stagesForStatus(status)
+export function normalizeStages(stages: Stage[] | undefined, status: ExperimentStatus, stage: StageName | null = null): Stage[] {
+  if (!stages?.length) return stagesForStatus(status, stage)
+  let stopped = false
+  return stages.map((item) => {
+    if (stopped) return item.state === 'pending' ? item : { ...item, state: 'pending' as StageState }
+    if (STOPPED.includes(item.state)) stopped = true
+    return item
+  })
 }
 
 export function stageProgress(stages: Stage[]): { done: number; total: number } {

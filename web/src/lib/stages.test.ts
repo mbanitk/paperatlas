@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { LabEvent, Stage } from '../api/types'
-import { failedStageOf, normalizeStages, stagesForStatus, triageStepState } from './stages'
+import type { Stage } from '../api/types'
+import { normalizeStages, stagesForStatus, triageStepState } from './stages'
 
 const states = (stages: Stage[]) => stages.map((stage) => stage.state).join(',')
 
@@ -12,36 +12,24 @@ describe('stagesForStatus', () => {
     expect(states(stagesForStatus('approving'))).toBe('done,done,active,pending,pending,pending,pending')
   })
 
-  it('marks terminal outcomes', () => {
+  it('uses the stage a failed or cancelled experiment stopped in', () => {
     expect(states(stagesForStatus('merged'))).toBe('done,done,done,done,done,done,done')
     expect(states(stagesForStatus('rejected'))).toBe('done,rejected,pending,pending,pending,pending,pending')
     expect(states(stagesForStatus('failed', 'build'))).toBe('done,done,failed,pending,pending,pending,pending')
-  })
-})
-
-describe('failedStageOf', () => {
-  it('reads the stage from the error prefix', () => {
-    expect(failedStageOf('build: Build failed after 3 attempts')).toBe('build')
-    expect(failedStageOf('eval: benchmark exited 1')).toBe('run')
-  })
-
-  it('falls back to the last event stage', () => {
-    const events = [{ stage: 'plan' }, { stage: 'smoke' }, { stage: 'cancel' }] as LabEvent[]
-    expect(failedStageOf(null, events)).toBe('smoke')
-    expect(failedStageOf(null, [])).toBeNull()
+    expect(states(stagesForStatus('cancelled', 'run'))).toBe('done,done,done,done,cancelled,pending,pending')
   })
 })
 
 describe('normalizeStages', () => {
-  const allDone = stagesForStatus('merged')
-
-  it('repairs the all-done stages the API returns for failed experiments', () => {
-    expect(states(normalizeStages(allDone, 'failed', 'build: tests failed'))).toBe('done,done,failed,pending,pending,pending,pending')
+  it('shows stages after the one that failed as pending', () => {
+    const api: Stage[] = stagesForStatus('merged').map((stage) => (stage.stage === 'build' ? { ...stage, state: 'failed' } : stage))
+    expect(states(normalizeStages(api, 'failed', 'build'))).toBe('done,done,failed,pending,pending,pending,pending')
   })
 
-  it('keeps correct backend stages untouched', () => {
+  it('keeps regular progress untouched and falls back to the status when stages are missing', () => {
     const running = stagesForStatus('running')
-    expect(normalizeStages(running, 'running')).toBe(running)
+    expect(normalizeStages(running, 'running')).toEqual(running)
+    expect(states(normalizeStages(undefined, 'failed', 'smoke'))).toBe('done,done,done,failed,pending,pending,pending')
   })
 })
 
