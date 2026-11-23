@@ -1,290 +1,64 @@
+"""Phase 2 — Distill papers stored in PostgreSQL into concepts and claim cards.
+
+Kept at this path for backwards compatibility; same as `paperatlas r2e distill`.
+"""
+
 from __future__ import annotations
 
 import argparse
-import csv
-import json
 import logging
-from datetime import UTC, datetime
-from pathlib import Path
-from paperatlas.concepts.extraction.llm_extractor import (
-    LLMCache,
-    LLMConceptExtractor,
-    build_default_llm_client,
-)
 
-from paperatlas.concepts.extraction.pipeline import ConceptExtractionPipeline
-from paperatlas.concepts.summarization.concept_summarizer import ConceptSummarizer
+from paperatlas.distill.extractor import ClaimExtractor
+from paperatlas.distill.pipeline import DistillPipeline
+from paperatlas.llm.client import build_default_llm_client
 
 logger = logging.getLogger(__name__)
 
 
-def _load_checkpoint(path: Path) -> dict | None:
-    try:
-        with path.open("r", encoding="utf-8") as handle:
-            return json.load(handle)
-    except Exception:
-        return None
+def add_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--limit", type=int, default=50, help="Max papers to distill")
+    parser.add_argument("--paper-id", action="append", help="Distill specific paper ids")
+    parser.add_argument("--min-concepts", type=int, default=5)
+    parser.add_argument("--max-concepts", type=int, default=10)
+    parser.add_argument("--max-chars", type=int, default=60000, help="Paper text sent to the LLM")
+    parser.add_argument("--dedup-threshold", type=float, default=0.85)
+    parser.add_argument("--reprocess", action="store_true", help="Re-distill already distilled papers")
+    parser.add_argument("--no-llm", "--offline", dest="no_llm", action="store_true", help="Heuristics only")
+    parser.add_argument("--no-cache", action="store_true", help="Bypass the LLM response cache")
+    parser.add_argument("--no-group", action="store_true", help="Skip cross-paper claim grouping")
 
 
-def _save_checkpoint(path: Path, payload: dict) -> None:
-    with path.open("w", encoding="utf-8") as handle:
-        json.dump(payload, handle, ensure_ascii=True, indent=2)
+def run(args: argparse.Namespace) -> None:
+    client = None if args.no_llm else build_default_llm_client(use_cache=not args.no_cache)
+    extractor = ClaimExtractor(
+        client,
+        min_concepts=args.min_concepts,
+        max_concepts=args.max_concepts,
+        max_chars=args.max_chars,
+        dedup_threshold=args.dedup_threshold,
+    )
+    stats = DistillPipeline(extractor=extractor).run(
+        limit=args.limit,
+        paper_ids=args.paper_id,
+        reprocess=args.reprocess,
+        group=not args.no_group,
+    )
+    logger.info(
+        "Distilled %d papers → %d concepts, %d testable claims, %d grouped. Log: %s",
+        stats.papers,
+        stats.concepts,
+        stats.testable_claims,
+        stats.grouped,
+        stats.log_path,
+    )
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Run Phase 2 concept extraction."
-    )
-    parser.add_argument("--limit", type=int, default=500)
-    parser.add_argument("--offset", type=int, default=0)
-    parser.add_argument("--batch-size", type=int, default=50)
-    parser.add_argument("--min-concepts", type=int, default=5)
-    parser.add_argument("--max-concepts", type=int, default=15)
-    parser.add_argument("--dedup-threshold", type=float, default=0.85)
-    parser.add_argument("--cache-dir", default="data/llm_cache")
-    parser.add_argument("--log-dir", default="data/concepts/phase2")
-    parser.add_argument(
-        "--paper-id",
-        help="Process a single paper_id from MySQL",
-    )
-    parser.add_argument(
-        "--resume",
-        action="store_true",
-        help="Resume from last successful paper checkpoint",
-    )
-    parser.add_argument(
-        "--skip-processed",
-        action="store_true",
-        default=True,
-        help="Skip papers that already have concepts in paper_concepts table (default: True)",
-    )
-    parser.add_argument(
-        "--reprocess-all",
-        action="store_true",
-        help="Reprocess all papers, even those already processed (overrides --skip-processed)",
-    )
-    parser.add_argument("--offline", action="store_true")
-    parser.add_argument("--no-llm", action="store_true")
-    parser.add_argument("--no-neo4j", action="store_true")
-    parser.add_argument("--mysql-host", help="MySQL host override")
-    parser.add_argument("--mysql-port", type=int, help="MySQL port override")
-    parser.add_argument("--mysql-user", help="MySQL user override")
-    parser.add_argument("--mysql-password", help="MySQL password override")
-    parser.add_argument("--mysql-database", help="MySQL database override")
-    args = parser.parse_args()
-
-    mysql_config = {
-        "host": args.mysql_host,
-        "port": args.mysql_port,
-        "user": args.mysql_user,
-        "password": args.mysql_password,
-        "database": args.mysql_database,
-    }
-    mysql_config = {
-        key: value for key, value in mysql_config.items() if value is not None
-    }
-
-    llm_client = None if args.no_llm else build_default_llm_client()
-    llm_extractor = LLMConceptExtractor(
-        client=llm_client,
-        cache=LLMCache(args.cache_dir),
-        offline=args.offline or args.no_llm or llm_client is None,
-    )
-    summarizer = ConceptSummarizer(llm_client=llm_client)
-
-    pipeline = ConceptExtractionPipeline(
-        mysql_config=mysql_config or None,
-        llm_extractor=llm_extractor,
-        summarizer=summarizer,
-        use_neo4j=not args.no_neo4j,
-        dedup_threshold=args.dedup_threshold,
-    )
-
-    log_dir = Path(args.log_dir)
-    log_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
-    json_path = log_dir / f"concepts_{timestamp}.jsonl"
-    csv_path = log_dir / f"concepts_{timestamp}.csv"
-    checkpoint_path = Path("data/concepts/checkpoint.json")
-
-    total_processed = 0
-    total_concepts = 0
-    with json_path.open(
-        "w", encoding="utf-8"
-    ) as json_handle, csv_path.open(
-        "w",
-        encoding="utf-8",
-        newline="",
-    ) as csv_handle:
-        writer = csv.DictWriter(
-            csv_handle,
-            fieldnames=[
-                "paper_id",
-                "concept_id",
-                "concept_name",
-                "summary",
-                "bullets",
-                "source",
-            ],
-        )
-        writer.writeheader()
-
-        if args.paper_id:
-            row = pipeline.mysql_store.fetch_paper_by_id(args.paper_id)
-            if not row:
-                raise SystemExit(f"No paper found for paper_id={args.paper_id}")
-            records = pipeline.process_paper(row)
-            total_processed = 1
-            total_concepts = len(records)
-            if len(records) < args.min_concepts or len(records) > args.max_concepts:
-                logger.warning(
-                    "Paper %s yielded %d concepts (expected %d-%d).",
-                    row["paper_id"],
-                    len(records),
-                    args.min_concepts,
-                    args.max_concepts,
-                )
-            for record in records:
-                payload = {
-                    "paper_id": record.paper_id,
-                    "concept_id": record.concept_id,
-                    "concept_name": record.name,
-                    "summary": record.summary,
-                    "bullets": record.bullets,
-                    "source": record.source,
-                }
-                json_handle.write(json.dumps(payload, ensure_ascii=True) + "\n")
-                writer.writerow(
-                    {
-                        **payload,
-                        "bullets": " | ".join(record.bullets),
-                    }
-                )
-        else:
-            start_offset = args.offset
-            if args.resume and checkpoint_path.exists():
-                checkpoint = _load_checkpoint(checkpoint_path)
-                if checkpoint:
-                    start_offset = int(
-                        checkpoint.get("next_offset", start_offset)
-                    )
-                    logger.info(
-                        "Resuming from checkpoint offset %d (paper_id=%s).",
-                        start_offset,
-                        checkpoint.get("last_paper_id"),
-                    )
-
-            # Determine whether to skip already-processed papers
-            skip_processed = args.skip_processed and not args.reprocess_all
-
-            if skip_processed:
-                unprocessed_count = pipeline.mysql_store.count_unprocessed_papers()
-                logger.info(
-                    "Processing only unprocessed papers (not in paper_concepts table). "
-                    "Found %d unprocessed papers.",
-                    unprocessed_count,
-                )
-            else:
-                logger.info("Processing all papers (including already-processed)")
-
-            for batch_offset in range(
-                start_offset,
-                args.offset + args.limit,
-                args.batch_size,
-            ):
-                # Use fetch_unprocessed_papers or fetch_papers based on flag
-                if skip_processed:
-                    rows = pipeline.mysql_store.fetch_unprocessed_papers(
-                        limit=min(
-                            args.batch_size,
-                            args.offset + args.limit - batch_offset,
-                        ),
-                        offset=batch_offset,
-                    )
-                else:
-                    rows = pipeline.mysql_store.fetch_papers(
-                        limit=min(
-                            args.batch_size,
-                            args.offset + args.limit - batch_offset,
-                        ),
-                        offset=batch_offset,
-                    )
-                if not rows:
-                    logger.info(
-                        "No more papers to process at offset %d. "
-                        "Total processed: %d papers, %d concepts.",
-                        batch_offset,
-                        total_processed,
-                        total_concepts,
-                    )
-                    break
-                logger.info(
-                    "Processing batch at offset %d (%d papers)",
-                    batch_offset,
-                    len(rows),
-                )
-                for index, row in enumerate(rows):
-                    paper_id = row["paper_id"]
-                    logger.info(
-                        "Processing paper %d/%d: %s",
-                        total_processed + 1,
-                        args.offset + args.limit,
-                        paper_id,
-                    )
-                    records = pipeline.process_paper(row)
-                    total_processed += 1
-                    total_concepts += len(records)
-                    logger.info(
-                        "Paper %s: extracted %d concepts",
-                        paper_id,
-                        len(records),
-                    )
-                    if (
-                        len(records) < args.min_concepts
-                        or len(records) > args.max_concepts
-                    ):
-                        logger.warning(
-                            "Paper %s yielded %d concepts (expected %d-%d).",
-                            paper_id,
-                            len(records),
-                            args.min_concepts,
-                            args.max_concepts,
-                        )
-                    for record in records:
-                        payload = {
-                            "paper_id": record.paper_id,
-                            "concept_id": record.concept_id,
-                            "concept_name": record.name,
-                            "summary": record.summary,
-                            "bullets": record.bullets,
-                            "source": record.source,
-                        }
-                        json_handle.write(
-                            json.dumps(payload, ensure_ascii=True) + "\n"
-                        )
-                        writer.writerow(
-                            {
-                                **payload,
-                                "bullets": " | ".join(record.bullets),
-                            }
-                        )
-                    next_offset = batch_offset + index + 1
-                    _save_checkpoint(
-                        checkpoint_path,
-                        {
-                            "next_offset": next_offset,
-                            "last_paper_id": row["paper_id"],
-                        },
-                    )
-
-    logger.info(
-        "Processed %d papers, extracted %d concepts. Logs: %s",
-        total_processed,
-        total_concepts,
-        json_path,
-    )
+    parser = argparse.ArgumentParser(description="Distill papers into concepts and claim cards.")
+    add_arguments(parser)
+    run(parser.parse_args())
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     main()

@@ -42,46 +42,18 @@ def main() -> None:
         type=int,
         help="Filter results from the last N days",
     )
-    parser.add_argument("--mysql-host", help="MySQL host override")
-    parser.add_argument("--mysql-port", type=int, help="MySQL port override")
-    parser.add_argument("--mysql-user", help="MySQL user override")
-    parser.add_argument("--mysql-password", help="MySQL password override")
-    parser.add_argument("--mysql-database", help="MySQL database override")
     parser.add_argument(
-        "--no-mysql",
-        action="store_true",
-        help="Disable MySQL storage",
+        "--database-url",
+        help="PostgreSQL URL (default: PAPERATLAS_DATABASE_URL or postgresql+psycopg://localhost/paperatlas)",
     )
     parser.add_argument(
-        "--neo4j-bolt-url",
-        help="Neo4j Bolt URL override",
-    )
-    parser.add_argument(
-        "--no-neo4j",
+        "--no-db",
         action="store_true",
-        help="Disable Neo4j storage",
+        help="Only write JSON files under data/papers (skip PostgreSQL)",
     )
     args = parser.parse_args()
 
-    mysql_config = {
-        "host": args.mysql_host,
-        "port": args.mysql_port,
-        "user": args.mysql_user,
-        "password": args.mysql_password,
-        "database": args.mysql_database,
-    }
-    mysql_config = {
-        key: value
-        for key, value in mysql_config.items()
-        if value is not None
-    }
-
-    pipeline = IngestionPipeline(
-        mysql_config=mysql_config or None,
-        use_mysql=not args.no_mysql,
-        neo4j_bolt_url=args.neo4j_bolt_url,
-        use_neo4j=not args.no_neo4j,
-    )
+    pipeline = IngestionPipeline(use_db=not args.no_db, database_url=args.database_url)
     if args.query:
         from_date = args.from_date
         if args.last_days:

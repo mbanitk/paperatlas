@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Experiment {{ e.id }} · {{ spec.flag_name }} · {{ v.verdict|replace('_', ' ') }}</title>
+<style>
+  :root{--ink:#1f2328;--muted:#59636e;--line:#d1d9e0;--bg:#f6f8fa;--ok:#1a7f37;--part:#9a6700;--no:#57606a;--bad:#cf222e;--blue:#0969da}
+  body{margin:0;font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;color:var(--ink);background:var(--bg)}
+  main{max-width:1000px;margin:0 auto;padding:28px 22px 60px}
+  h1{font-size:24px;margin:0 0 4px} h2{font-size:17px;margin:28px 0 10px;padding-bottom:4px;border-bottom:1px solid var(--line)}
+  .muted{color:var(--muted)} code{font:12.5px ui-monospace,Menlo,monospace;background:#eef1f4;padding:1px 5px;border-radius:4px}
+  .badge{display:inline-block;padding:3px 12px;border-radius:999px;font-weight:700;color:#fff;font-size:13px;text-transform:uppercase;letter-spacing:.04em}
+  .reproduced{background:var(--ok)}.partial{background:var(--part)}.not_reproduced{background:var(--no)}.regression{background:var(--bad)}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .card{background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px 16px}
+  .big{font-size:28px;font-weight:700} blockquote{margin:8px 0;padding:6px 12px;border-left:3px solid var(--blue);background:#fff;color:var(--muted)}
+  table{width:100%;border-collapse:collapse;background:#fff;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);font-size:13px}
+  th{background:#eef1f4;color:var(--muted);font-size:11.5px;text-transform:uppercase;letter-spacing:.04em}
+  td.pos{color:var(--ok);font-weight:600} td.neg{color:var(--bad);font-weight:600}
+  pre{background:#fff;border:1px solid var(--line);border-radius:8px;padding:10px;overflow:auto;font-size:12px}
+  dl{display:grid;grid-template-columns:180px 1fr;gap:4px 12px;margin:0} dt{color:var(--muted)} dd{margin:0}
+</style>
+</head>
+<body>
+<main>
+  <div class="muted">PaperAtlas · Research → Experiment · experiment #{{ e.id }} on {{ project.name }}</div>
+  <h1>{{ claim.name or claim.technique }}</h1>
+  <p><span class="badge {{ v.verdict }}">{{ v.verdict|replace('_', ' ') }}</span>
+     <span class="muted">&nbsp;{{ v.reason }}</span></p>
+
+  <div class="grid">
+    <div class="card">
+      <div class="muted">Measured on {{ spec.primary_metric }}</div>
+      <div class="big">{% if v.median_delta_pct is not none %}{{ '%+.1f'|format(v.median_delta_pct) }}%{% else %}—{% endif %}</div>
+      <div class="muted">{% if v.ci_low_pct is not none %}95% CI {{ '%+.1f'|format(v.ci_low_pct) }}% to {{ '%+.1f'|format(v.ci_high_pct) }}% · {{ v.per_metric[spec.primary_metric].pairs if spec.primary_metric in v.per_metric else 0 }} paired rounds{% endif %}</div>
+    </div>
+    <div class="card">
+      <div class="muted">Paper claims</div>
+      <div class="big">{% if v.claimed_gain_pct is not none %}{{ '%+.1f'|format(v.claimed_gain_pct) }}%{% else %}not quantified{% endif %}</div>
+      <div class="muted">success bar {{ '%.1f'|format(v.success_threshold_pct) }}% · quality {{ 'OK' if v.quality_ok else 'FAILED' }}</div>
+    </div>
+  </div>
+
+  <h2>Claim</h2>
+  <dl>
+    <dt>Paper</dt><dd>{% if paper.url %}<a href="{{ paper.url }}">{{ paper.title }}</a>{% else %}{{ paper.title }}{% endif %} <span class="muted">({{ paper.paper_id }})</span></dd>
+    <dt>Technique</dt><dd>{{ claim.technique }}</dd>
+    <dt>Change required</dt><dd>{{ claim.change_required }}</dd>
+    <dt>Claimed effects</dt><dd>{% for eff in claim.card.effects %}{{ eff.metric }}: {{ eff.value }}{{ eff.unit or '' }} ({{ eff.direction }}){% if eff.conditions %} — {{ eff.conditions }}{% endif %}<br>{% endfor %}</dd>
+    <dt>Paper setup</dt><dd>{% for k, val in claim.card.paper_setup.items() if val %}{{ k }}: {{ val }}; {% endfor %}</dd>
+  </dl>
+  <blockquote>“{{ claim.card.evidence.quote }}”{% if claim.card.evidence.location %} — {{ claim.card.evidence.location }}{% endif %}</blockquote>
+
+  <h2>Experiment spec</h2>
+  <dl>
+    <dt>Hypothesis</dt><dd>{{ spec.hypothesis }}</dd>
+    <dt>Flag</dt><dd><code>{{ spec.flag_name }}</code> on branch <code>{{ e.branch }}</code></dd>
+    <dt>Model · workload</dt><dd>{{ v.model.id if v.model else spec.model }} · {{ spec.workload }} · {{ spec.rounds }} rounds/arm (ABBA, {{ spec.warmup }} warm-up)</dd>
+    <dt>Paper vs project</dt><dd>{{ spec.paper_vs_project or '—' }}</dd>
+  </dl>
+
+  <h2>Results</h2>
+  <table>
+    <tr><th>Metric</th><th>Baseline (median)</th><th>Variant (median)</th><th>Improvement</th><th>95% CI</th></tr>
+    {% for name, m in v.per_metric.items() %}
+    <tr><td>{{ name }}{% if name == spec.primary_metric %} ★{% endif %}</td>
+      <td>{{ '%.3f'|format(m.baseline_median) }}</td><td>{{ '%.3f'|format(m.variant_median) }}</td>
+      <td class="{{ 'pos' if m.ci_low_pct > 0 else ('neg' if m.ci_high_pct < 0 else '') }}">{{ '%+.1f'|format(m.median_improvement_pct) }}%</td>
+      <td>{{ '%+.1f'|format(m.ci_low_pct) }}% … {{ '%+.1f'|format(m.ci_high_pct) }}%</td></tr>
+    {% endfor %}
+  </table>
+  {% if chart %}<p>{{ chart|safe }}</p>{% endif %}
+
+  <h2>Quality guardrails</h2>
+  <dl>
+    <dt>Exact match</dt><dd>baseline {{ v.quality.baseline.exact_match if v.quality.baseline else '—' }} → variant {{ v.quality.variant.exact_match if v.quality.variant else '—' }}</dd>
+    <dt>Output agreement</dt><dd>{{ v.quality.output_agreement }}</dd>
+    <dt>Problems</dt><dd>{{ v.quality_problems|join('; ') or 'none' }}</dd>
+  </dl>
+
+  <h2>Build</h2>
+  <dl>
+    <dt>Coding agent</dt><dd>{{ build.builder }} · {{ build.attempts|length }} attempt(s)</dd>
+    <dt>Files</dt><dd>{{ build.files|join(', ') }}</dd>
+  </dl>
+  <pre>{{ build.diff_stat }}</pre>
+
+  <h2>Environment</h2>
+  <pre>{{ env_json }}</pre>
+</main>
+</body>
+</html>

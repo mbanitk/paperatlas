@@ -1,0 +1,49 @@
+# Research → Experiment configuration.
+# Seed areas bound topic discovery; the top topics inside them are picked automatically
+# from what is trending (recent volume, citations, Hugging Face upvotes, code availability).
+
+seeds:
+  - name: LLM inference engineering
+    queries: ["LLM inference serving", "efficient LLM inference", "LLM decoding latency"]
+  - name: LLM observability
+    queries: ["LLM observability", "LLM serving monitoring", "LLM inference telemetry tracing"]
+  - name: KV-cache management & compression
+    queries: ["KV cache compression", "KV cache eviction", "KV cache quantization"]
+  - name: Speculative decoding
+    queries: ["speculative decoding", "draft model decoding acceleration"]
+  - name: Quantization
+    queries: ["LLM weight quantization", "low-bit LLM inference", "activation quantization LLM"]
+  - name: Batching & scheduling
+    queries: ["continuous batching LLM", "chunked prefill", "LLM request scheduling"]
+  - name: Request routing & load balancing
+    queries: ["LLM request routing", "load balancing LLM serving"]
+  - name: Inference cost & energy efficiency
+    queries: ["LLM inference energy efficiency", "LLM inference cost reduction"]
+  - name: Quality-regression detection & evals
+    queries: ["LLM evaluation regression", "LLM output quality monitoring"]
+  - name: Disaggregated prefill/decode & KV transfer
+    queries: ["disaggregated prefill decode", "KV cache transfer network"]
+    needs_gpu_cluster: true
+  - name: Collective communication for inference
+    queries: ["NCCL RDMA LLM inference", "collective communication LLM serving"]
+    needs_gpu_cluster: true
+
+sources: [arxiv, semantic_scholar, openalex, hf_papers, patents]
+
+topics:
+  count: 10
+  lookback_days: 180
+  per_query: 20          # results per (query, source)
+  min_cluster_size: 3
+  max_per_seed: 2        # diversity: at most N of the top topics from one seed area
+
+ranking:
+  per_topic: 5           # papers per topic to fetch full text for and distill
+  half_life_days: 90     # recency decay
+  weights:
+    relevance: 0.35
+    recency: 0.25
+    citations: 0.15
+    upvotes: 0.10
+    code: 0.10
+    patent: 0.05

@@ -1,0 +1,796 @@
+"""Service layer shared by the HTTP APIs, the CLI and the orchestrator nodes."""
+
+from __future__ import annotations
+
+import json
+import uuid
+from pathlib import Path
+from typing import Any, Optional
+
+from sqlalchemy import func, select, update
+
+from paperatlas.db.engine import session_scope
+from paperatlas.db.schema import (
+    Claim,
+    ClaimGroup,
+    Concept,
+    Event,
+    Experiment,
+    Job,
+    Match,
+    Paper,
+    PaperTopic,
+    Project,
+    Run,
+    Topic,
+    Triage,
+    Verdict,
+)
+from paperatlas.lab.events import emit, enqueue, event_dict, events_since
+from paperatlas.lab.planner import EDITABLE_FIELDS, apply_overrides
+
+ACTIVE_STATUSES = (
+    "queued",
+    "planning",
+    "awaiting_approval",
+    "approving",
+    "building",
+    "smoke_testing",
+    "waiting_gpu",
+    "running",
+    "judging",
+    "awaiting_decision",
+    "finalizing",
+    "cancelling",
+)
+TERMINAL_STATUSES = ("merged", "dropped", "rejected", "failed", "cancelled")
+STAGES = ["plan", "approve", "build", "smoke", "run", "judge", "decide"]
+STAGE_OF_STATUS = {
+    "queued": "plan",
+    "planning": "plan",
+    "awaiting_approval": "approve",
+    "approving": "build",
+    "building": "build",
+    "smoke_testing": "smoke",
+    "waiting_gpu": "run",
+    "running": "run",
+    "judging": "judge",
+    "awaiting_decision": "decide",
+    "finalizing": "decide",
+    "merged": "decide",
+    "dropped": "decide",
+    "rejected": "approve",
+}
+GATE_OF_STATUS = {"awaiting_approval": "approve_spec", "awaiting_decision": "merge"}
+
+
+class ServiceError(ValueError):
+    """Invalid request (maps to HTTP 400/404/409)."""
+
+    def __init__(self, message: str, status_code: int = 400) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
+def _iso(value: Any) -> Optional[str]:
+    return value.isoformat() if value is not None else None
+
+
+# ---- research views ----------------------------------------------------------------
+
+
+def claim_dict(claim: Claim, concept: Optional[Concept] = None, paper: Optional[Paper] = None) -> dict[str, Any]:
+    return {
+        "id": claim.id,
+        "claim_id": claim.id,
+        "paper_id": claim.paper_id,
+        "name": concept.name if concept else claim.technique[:80],
+        "kind": concept.kind if concept else None,
+        "summary": concept.summary if concept else None,
+        "key_points": list(concept.key_points or []) if concept else [],
+        "category": claim.category,
+        "technique": claim.technique,
+        "change_required": claim.change_required,
+        "primary_metric": claim.primary_metric,
+        "claimed_value": claim.claimed_value,
+        "claimed_unit": claim.claimed_unit,
+        "direction": claim.direction,
+        "claimed_gain_pct": claim.claimed_gain_pct,
+        "testable": claim.testable,
+        "requires_cuda": claim.requires_cuda,
+        "requires_multi_gpu": claim.requires_multi_gpu,
+        "requires_training": claim.requires_training,
+        "effort": claim.effort,
+        "evidence_quote": claim.evidence_quote,
+        "card": claim.card,
+        "group_id": claim.group_id,
+        "paper_title": paper.title if paper else None,
+        "paper_url": paper.url if paper else None,
+        "paper_doc_type": paper.doc_type if paper else None,
+        "paper_date": _iso(paper.publication_date) if paper else None,
+        "created_at": _iso(claim.created_at),
+    }
+
+
+def get_claim(claim_id: int) -> dict[str, Any]:
+    with session_scope() as session:
+        row = session.execute(
+            select(Claim, Concept, Paper)
+            .join(Concept, Concept.id == Claim.concept_id)
+            .join(Paper, Paper.paper_id == Claim.paper_id)
+            .where(Claim.id == claim_id)
+        ).first()
+        if not row:
+            raise ServiceError(f"claim {claim_id} not found", 404)
+        data = claim_dict(*row)
+        if row[0].group_id:
+            group = session.get(ClaimGroup, row[0].group_id)
+            siblings = session.execute(
+                select(Claim.id, Claim.paper_id, Paper.title)
+                .join(Paper, Paper.paper_id == Claim.paper_id)
+                .where(Claim.group_id == row[0].group_id, Claim.id != claim_id)
+            ).all()
+            data["group"] = {
+                "id": group.id,
+                "label": group.label,
+                "size": group.size,
+                "other_claims": [{"claim_id": s.id, "paper_id": s.paper_id, "paper_title": s.title} for s in siblings],
+            }
+        data["experiments"] = [
+            {"id": e.id, "status": e.status, "project_id": e.project_id}
+            for e in session.scalars(select(Experiment).where(Experiment.claim_id == claim_id)).all()
+        ]
+        return data
+
+
+def list_claims(
+    q: Optional[str] = None,
+    category: Optional[str] = None,
+    topic: Optional[str] = None,
+    testable: Optional[bool] = None,
+    paper_id: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> dict[str, Any]:
+    if q:
+        from paperatlas.db.search import hybrid_search
+
+        hits = hybrid_search(q, "claims", limit=limit)
+        ids = [hit.id for hit in hits]
+        scores = {hit.id: hit.score for hit in hits}
+    with session_scope() as session:
+        query = (
+            select(Claim, Concept, Paper)
+            .join(Concept, Concept.id == Claim.concept_id)
+            .join(Paper, Paper.paper_id == Claim.paper_id)
+        )
+        if q:
+            query = query.where(Claim.id.in_(ids))
+        if category:
+            query = query.where(Claim.category == category)
+        if testable is not None:
+            query = query.where(Claim.testable.is_(testable))
+        if paper_id:
+            query = query.where(Claim.paper_id == paper_id)
+        if topic:
+            query = query.join(PaperTopic, PaperTopic.paper_id == Claim.paper_id).join(
+                Topic, Topic.id == PaperTopic.topic_id
+            ).where(Topic.slug == topic)
+        total = session.scalar(select(func.count()).select_from(query.subquery()))
+        rows = session.execute(query.order_by(Claim.id.desc()).limit(limit if not q else None).offset(offset if not q else 0)).all()
+        items = [claim_dict(*row) for row in rows]
+    if q:
+        items.sort(key=lambda item: scores.get(item["id"], 0), reverse=True)
+        for item in items:
+            item["search_score"] = scores.get(item["id"])
+    return {"total": total, "items": items}
+
+
+def list_papers(
+    q: Optional[str] = None, topic: Optional[str] = None, limit: int = 50, offset: int = 0
+) -> dict[str, Any]:
+    if q:
+        from paperatlas.db.search import hybrid_search
+
+        hits = hybrid_search(q, "papers", limit=limit)
+        ids = [hit.id for hit in hits]
+    with session_scope() as session:
+        claims = (
+            select(Claim.paper_id, func.count().label("claims"), func.count().filter(Claim.testable).label("testable"))
+            .group_by(Claim.paper_id)
+            .subquery()
+        )
+        query = select(Paper, claims.c.claims, claims.c.testable).outerjoin(claims, claims.c.paper_id == Paper.paper_id)
+        if q:
+            query = query.where(Paper.paper_id.in_(ids))
+        if topic:
+            query = (
+                query.join(PaperTopic, PaperTopic.paper_id == Paper.paper_id)
+                .join(Topic, Topic.id == PaperTopic.topic_id)
+                .where(Topic.slug == topic)
+                .order_by(PaperTopic.rank.is_(None), PaperTopic.rank)
+            )
+        else:
+            query = query.order_by(Paper.distilled_at.is_(None), Paper.publication_date.desc().nulls_last())
+        total = session.scalar(select(func.count()).select_from(query.subquery()))
+        rows = session.execute(query.limit(limit).offset(offset)).all()
+        return {
+            "total": total,
+            "items": [
+                {
+                    "paper_id": paper.paper_id,
+                    "doc_type": paper.doc_type,
+                    "title": paper.title,
+                    "abstract": paper.abstract,
+                    "venue": paper.venue,
+                    "sources": paper.sources,
+                    "url": paper.url,
+                    "pdf_url": paper.pdf_url,
+                    "code_url": paper.code_url,
+                    "publication_date": _iso(paper.publication_date),
+                    "citation_count": paper.citation_count,
+                    "hf_upvotes": paper.hf_upvotes,
+                    "has_full_text": bool(paper.raw_text),
+                    "distilled": paper.distilled_at is not None,
+                    "claims": n_claims or 0,
+                    "testable_claims": n_testable or 0,
+                }
+                for paper, n_claims, n_testable in rows
+            ],
+        }
+
+
+def get_paper(paper_id: str) -> dict[str, Any]:
+    with session_scope() as session:
+        paper = session.get(Paper, paper_id)
+        if paper is None:
+            raise ServiceError(f"paper {paper_id} not found", 404)
+        topics = session.execute(
+            select(Topic.slug, Topic.name, PaperTopic.rank, PaperTopic.score)
+            .join(PaperTopic, PaperTopic.topic_id == Topic.id)
+            .where(PaperTopic.paper_id == paper_id)
+        ).all()
+        data = {
+            "paper_id": paper.paper_id,
+            "doc_type": paper.doc_type,
+            "title": paper.title,
+            "abstract": paper.abstract,
+            "authors": paper.authors,
+            "venue": paper.venue,
+            "sources": paper.sources,
+            "url": paper.url,
+            "pdf_url": paper.pdf_url,
+            "code_url": paper.code_url,
+            "publication_date": _iso(paper.publication_date),
+            "citation_count": paper.citation_count,
+            "hf_upvotes": paper.hf_upvotes,
+            "has_full_text": bool(paper.raw_text),
+            "distilled_at": _iso(paper.distilled_at),
+            "topics": [{"slug": t.slug, "name": t.name, "rank": t.rank, "score": t.score} for t in topics],
+        }
+    data["claims"] = list_claims(paper_id=paper_id, limit=50)["items"]
+    return data
+
+
+def stats() -> dict[str, Any]:
+    with session_scope() as session:
+        experiments = dict(
+            session.execute(select(Experiment.status, func.count()).group_by(Experiment.status)).all()
+        )
+        verdicts = dict(session.execute(select(Verdict.verdict, func.count()).group_by(Verdict.verdict)).all())
+        return {
+            "topics": session.scalar(select(func.count()).where(Topic.rank.is_not(None))),
+            "papers": session.scalar(select(func.count()).select_from(Paper)),
+            "papers_distilled": session.scalar(select(func.count()).where(Paper.distilled_at.is_not(None))),
+            "patents": session.scalar(select(func.count()).where(Paper.doc_type == "patent")),
+            "claims": session.scalar(select(func.count()).select_from(Claim)),
+            "testable_claims": session.scalar(select(func.count()).where(Claim.testable.is_(True))),
+            "projects": session.scalar(select(func.count()).select_from(Project)),
+            "experiments": experiments,
+            "verdicts": verdicts,
+            "awaiting_you": sum(experiments.get(s, 0) for s in GATE_OF_STATUS)
+            + session.scalar(select(func.count()).where(Triage.status == "awaiting_pick")),
+            "jobs": dict(session.execute(select(Job.status, func.count()).group_by(Job.status)).all()),
+        }
+
+
+# ---- recommendations + Gate 1 -------------------------------------------------------
+
+
+def recommendations(
+    project_id: int,
+    limit: int = 30,
+    include_blocked: bool = False,
+    category: Optional[str] = None,
+    topic: Optional[str] = None,
+    q: Optional[str] = None,
+) -> list[dict[str, Any]]:
+    search_ids = None
+    if q:
+        from paperatlas.db.search import hybrid_search
+
+        search_ids = [hit.id for hit in hybrid_search(q, "claims", limit=200)]
+    with session_scope() as session:
+        latest_experiment = (
+            select(Experiment.claim_id, func.max(Experiment.id).label("experiment_id"))
+            .where(Experiment.project_id == project_id)
+            .group_by(Experiment.claim_id)
+            .subquery()
+        )
+        query = (
+            select(Match, Claim, Concept, Paper, latest_experiment.c.experiment_id)
+            .join(Claim, Claim.id == Match.claim_id)
+            .join(Concept, Concept.id == Claim.concept_id)
+            .join(Paper, Paper.paper_id == Claim.paper_id)
+            .outerjoin(latest_experiment, latest_experiment.c.claim_id == Claim.id)
+            .where(Match.project_id == project_id)
+        )
+        if not include_blocked:
+            query = query.where(Match.testable_here.is_(True))
+        if category:
+            query = query.where(Claim.category == category)
+        if search_ids is not None:
+            query = query.where(Claim.id.in_(search_ids))
+        if topic:
+            query = query.where(
+                Claim.paper_id.in_(
+                    select(PaperTopic.paper_id).join(Topic, Topic.id == PaperTopic.topic_id).where(Topic.slug == topic)
+                )
+            )
+        rows = session.execute(query.order_by(Match.score.desc()).limit(limit)).all()
+        experiment_ids = [row[4] for row in rows if row[4]]
+        statuses = dict(
+            session.execute(select(Experiment.id, Experiment.status).where(Experiment.id.in_(experiment_ids))).all()
+        )
+        topics_by_paper: dict[str, list[dict]] = {}
+        for paper_id, slug, name in session.execute(
+            select(PaperTopic.paper_id, Topic.slug, Topic.name)
+            .join(Topic, Topic.id == PaperTopic.topic_id)
+            .where(PaperTopic.paper_id.in_([row[3].paper_id for row in rows]), Topic.rank.is_not(None))
+        ).all():
+            topics_by_paper.setdefault(paper_id, []).append({"slug": slug, "name": name})
+        items = []
+        for rank, (match, claim, concept, paper, experiment_id) in enumerate(rows, start=1):
+            item = claim_dict(claim, concept, paper)
+            item.update(
+                rank=rank,
+                project_id=project_id,
+                score=match.score,
+                fit=match.fit,
+                gain=match.gain,
+                effort_cost=match.effort_cost,
+                testable_here=match.testable_here,
+                blockers=list(match.blockers or []),
+                target_metric=match.target_metric,
+                rationale=match.rationale,
+                topics=topics_by_paper.get(paper.paper_id, []),
+                experiment_id=experiment_id,
+                experiment_status=statuses.get(experiment_id),
+            )
+            items.append(item)
+        return items
+
+
+def create_experiments(
+    project_id: int,
+    claim_ids: list[int],
+    triage_id: Optional[int] = None,
+    force: bool = False,
+) -> list[dict[str, Any]]:
+    if not claim_ids:
+        raise ServiceError("pick at least one claim")
+    created = []
+    with session_scope() as session:
+        if session.get(Project, project_id) is None:
+            raise ServiceError(f"project {project_id} not found", 404)
+        for claim_id in claim_ids:
+            match = session.scalar(select(Match).where(Match.project_id == project_id, Match.claim_id == claim_id))
+            if session.get(Claim, claim_id) is None:
+                raise ServiceError(f"claim {claim_id} not found", 404)
+            if match and match.blockers and not force:
+                raise ServiceError(f"claim {claim_id} is blocked here: {', '.join(match.blockers)} (use force)", 409)
+            active = session.scalar(
+                select(Experiment.id).where(
+                    Experiment.project_id == project_id,
+                    Experiment.claim_id == claim_id,
+                    Experiment.status.in_(ACTIVE_STATUSES),
+                )
+            )
+            if active:
+                raise ServiceError(f"claim {claim_id} already has active experiment {active}", 409)
+            experiment = Experiment(
+                project_id=project_id,
+                claim_id=claim_id,
+                triage_id=triage_id,
+                thread_id=f"exp-{uuid.uuid4()}",
+                status="queued",
+            )
+            session.add(experiment)
+            session.flush()
+            created.append(experiment.id)
+        if triage_id:
+            session.execute(
+                update(Triage).where(Triage.id == triage_id).values(status="picked", selected=claim_ids)
+            )
+    for experiment_id in created:
+        emit("plan", "Experiment created (Gate 1: claim picked)", experiment_id=experiment_id, triage_id=triage_id)
+        enqueue("experiment.run", {"experiment_id": experiment_id}, experiment_id=experiment_id)
+    return [get_experiment(experiment_id) for experiment_id in created]
+
+
+# ---- triage -----------------------------------------------------------------------
+
+
+def start_triage(project_id: int, options: Optional[dict] = None) -> dict[str, Any]:
+    with session_scope() as session:
+        if session.get(Project, project_id) is None:
+            raise ServiceError(f"project {project_id} not found", 404)
+        running = session.scalar(
+            select(Triage.id).where(
+                Triage.project_id == project_id,
+                Triage.status.notin_(("awaiting_pick", "picked", "failed", "done")),
+            )
+        )
+        if running:
+            raise ServiceError(f"triage {running} is already running for this project", 409)
+        triage = Triage(project_id=project_id, thread_id=f"triage-{uuid.uuid4()}", status="queued", options=options or {})
+        session.add(triage)
+        session.flush()
+        triage_id = triage.id
+    emit("topics", "Research scan queued", triage_id=triage_id)
+    enqueue("triage.run", {"triage_id": triage_id}, triage_id=triage_id)
+    return get_triage(triage_id)
+
+
+def get_triage(triage_id: int) -> dict[str, Any]:
+    with session_scope() as session:
+        triage = session.get(Triage, triage_id)
+        if triage is None:
+            raise ServiceError(f"triage {triage_id} not found", 404)
+        return {
+            "id": triage.id,
+            "project_id": triage.project_id,
+            "status": triage.status,
+            "options": triage.options,
+            "shortlist": triage.shortlist,
+            "selected": triage.selected,
+            "created_at": _iso(triage.created_at),
+            "updated_at": _iso(triage.updated_at),
+            "events": events_since(0, triage_id=triage_id)[-200:],
+        }
+
+
+def list_triage(project_id: Optional[int] = None, limit: int = 20) -> list[dict[str, Any]]:
+    with session_scope() as session:
+        query = select(Triage).order_by(Triage.id.desc()).limit(limit)
+        if project_id:
+            query = query.where(Triage.project_id == project_id)
+        return [
+            {
+                "id": t.id,
+                "project_id": t.project_id,
+                "status": t.status,
+                "options": t.options,
+                "shortlist_size": len(t.shortlist or []),
+                "created_at": _iso(t.created_at),
+                "updated_at": _iso(t.updated_at),
+            }
+            for t in session.scalars(query).all()
+        ]
+
+
+# ---- experiments + Gates 2 and 3 ---------------------------------------------------------
+
+
+def experiment_status(experiment_id: int) -> str:
+    with session_scope() as session:
+        status = session.scalar(select(Experiment.status).where(Experiment.id == experiment_id))
+    if status is None:
+        raise ServiceError(f"experiment {experiment_id} not found", 404)
+    return status
+
+
+def experiment_context(experiment_id: int) -> dict[str, Any]:
+    """Everything the orchestrator nodes need about one experiment."""
+    with session_scope() as session:
+        experiment = session.get(Experiment, experiment_id)
+        if experiment is None:
+            raise ServiceError(f"experiment {experiment_id} not found", 404)
+        project = session.get(Project, experiment.project_id)
+        claim, concept, paper = session.execute(
+            select(Claim, Concept, Paper)
+            .join(Concept, Concept.id == Claim.concept_id)
+            .join(Paper, Paper.paper_id == Claim.paper_id)
+            .where(Claim.id == experiment.claim_id)
+        ).one()
+        match = session.scalar(
+            select(Match).where(Match.project_id == project.id, Match.claim_id == claim.id)
+        )
+        return {
+            "experiment": {
+                "id": experiment.id,
+                "status": experiment.status,
+                "branch": experiment.branch,
+                "worktree_path": experiment.worktree_path,
+                "build": experiment.build or {},
+                "flag_name": experiment.flag_name,
+            },
+            "project": {"id": project.id, "name": project.name, "repo_path": project.repo_path},
+            "profile": project.profile or {},
+            "claim": claim_dict(claim, concept, paper),
+            "paper": {"paper_id": paper.paper_id, "title": paper.title, "url": paper.url},
+            "match": {"target_metric": match.target_metric, "score": match.score} if match else None,
+            "spec": experiment.spec or {},
+            "worktree": Path(experiment.worktree_path) if experiment.worktree_path else None,
+        }
+
+
+def latest_results(experiment_id: int, kind: str) -> dict[str, Any]:
+    with session_scope() as session:
+        run = session.scalar(
+            select(Run)
+            .where(Run.experiment_id == experiment_id, Run.kind == kind, Run.status == "done")
+            .order_by(Run.id.desc())
+        )
+        if run is None:
+            raise ServiceError(f"no completed {kind} run for experiment {experiment_id}", 409)
+        return run.results
+
+
+def _stage_progress(status: str, verdict: Optional[str]) -> list[dict[str, str]]:
+    current = STAGE_OF_STATUS.get(status)
+    stages = []
+    reached = True
+    for stage in STAGES:
+        if status in ("failed", "cancelled", "cancelling") and stage == current:
+            state = status
+        elif stage == current:
+            state = "done" if status in ("merged", "dropped") else ("waiting" if status in GATE_OF_STATUS else "active")
+            if status == "rejected":
+                state = "rejected"
+            reached = False
+        else:
+            state = "done" if reached else "pending"
+        stages.append({"stage": stage, "state": state})
+    return stages
+
+
+def experiment_summary(experiment: Experiment, claim: Claim, concept: Concept, paper: Paper, verdict: Optional[Verdict]) -> dict[str, Any]:
+    return {
+        "id": experiment.id,
+        "project_id": experiment.project_id,
+        "claim_id": experiment.claim_id,
+        "triage_id": experiment.triage_id,
+        "status": experiment.status,
+        "gate": GATE_OF_STATUS.get(experiment.status),
+        "stage": STAGE_OF_STATUS.get(experiment.status),
+        "flag_name": experiment.flag_name,
+        "branch": experiment.branch,
+        "error": experiment.error,
+        "title": concept.name,
+        "technique": claim.technique,
+        "category": claim.category,
+        "claimed_gain_pct": claim.claimed_gain_pct,
+        "paper_id": paper.paper_id,
+        "paper_title": paper.title,
+        "verdict": verdict.verdict if verdict else None,
+        "median_delta_pct": verdict.median_delta_pct if verdict else None,
+        "created_at": _iso(experiment.created_at),
+        "updated_at": _iso(experiment.updated_at),
+    }
+
+
+def list_experiments(project_id: Optional[int] = None, status: Optional[str] = None, limit: int = 100) -> list[dict[str, Any]]:
+    with session_scope() as session:
+        query = (
+            select(Experiment, Claim, Concept, Paper, Verdict)
+            .join(Claim, Claim.id == Experiment.claim_id)
+            .join(Concept, Concept.id == Claim.concept_id)
+            .join(Paper, Paper.paper_id == Claim.paper_id)
+            .outerjoin(Verdict, Verdict.experiment_id == Experiment.id)
+            .order_by(Experiment.id.desc())
+            .limit(limit)
+        )
+        if project_id:
+            query = query.where(Experiment.project_id == project_id)
+        if status == "active":
+            query = query.where(Experiment.status.in_(ACTIVE_STATUSES))
+        elif status == "needs_you":
+            query = query.where(Experiment.status.in_(tuple(GATE_OF_STATUS)))
+        elif status:
+            query = query.where(Experiment.status == status)
+        return [experiment_summary(*row) for row in session.execute(query).all()]
+
+
+def get_experiment(experiment_id: int) -> dict[str, Any]:
+    with session_scope() as session:
+        row = session.execute(
+            select(Experiment, Claim, Concept, Paper, Verdict)
+            .join(Claim, Claim.id == Experiment.claim_id)
+            .join(Concept, Concept.id == Claim.concept_id)
+            .join(Paper, Paper.paper_id == Claim.paper_id)
+            .outerjoin(Verdict, Verdict.experiment_id == Experiment.id)
+            .where(Experiment.id == experiment_id)
+        ).first()
+        if row is None:
+            raise ServiceError(f"experiment {experiment_id} not found", 404)
+        experiment, claim, concept, paper, verdict = row
+        project = session.get(Project, experiment.project_id)
+        runs = session.scalars(select(Run).where(Run.experiment_id == experiment_id).order_by(Run.id)).all()
+        data = experiment_summary(*row)
+        profile = project.profile or {}
+        data.update(
+            project={"id": project.id, "name": project.name, "repo_path": project.repo_path},
+            claim=claim_dict(claim, concept, paper),
+            spec=experiment.spec or {},
+            editable_fields=list(EDITABLE_FIELDS),
+            spec_options={
+                "metrics": [m.get("name") for m in profile.get("metrics") or []],
+                "workloads": _workloads(profile),
+                "models": list((profile.get("models") or {}).keys()),
+            },
+            build=experiment.build or {},
+            worktree_path=experiment.worktree_path,
+            stages=_stage_progress(experiment.status, verdict.verdict if verdict else None),
+            runs=[
+                {
+                    "id": run.id,
+                    "kind": run.kind,
+                    "status": run.status,
+                    "command": run.command,
+                    "started_at": _iso(run.started_at),
+                    "finished_at": _iso(run.finished_at),
+                    "summary": (run.results or {}).get("summary"),
+                    "quality": (run.results or {}).get("quality"),
+                    "model": (run.results or {}).get("model"),
+                }
+                for run in runs
+            ],
+            verdict_detail=(
+                {
+                    "verdict": verdict.verdict,
+                    "primary_metric": verdict.primary_metric,
+                    "median_delta_pct": verdict.median_delta_pct,
+                    "ci_low_pct": verdict.ci_low_pct,
+                    "ci_high_pct": verdict.ci_high_pct,
+                    "claimed_gain_pct": verdict.claimed_gain_pct,
+                    "quality_ok": verdict.quality_ok,
+                    "details": verdict.details,
+                    "has_report": bool(verdict.report_path and Path(verdict.report_path).exists()),
+                }
+                if verdict
+                else None
+            ),
+        )
+        return data
+
+
+def _workloads(profile: dict[str, Any]) -> list[str]:
+    workloads = profile.get("workloads") or []
+    if isinstance(workloads, dict):
+        return list(workloads)
+    return [w["name"] if isinstance(w, dict) else str(w) for w in workloads]
+
+
+def report_path(experiment_id: int) -> Path:
+    with session_scope() as session:
+        path = session.scalar(select(Verdict.report_path).where(Verdict.experiment_id == experiment_id))
+    if not path or not Path(path).exists():
+        raise ServiceError("report not available yet", 404)
+    return Path(path)
+
+
+def _require_status(experiment_id: int, expected: tuple[str, ...]) -> None:
+    status = experiment_status(experiment_id)
+    if status not in expected:
+        raise ServiceError(f"experiment {experiment_id} is '{status}', expected one of {expected}", 409)
+
+
+def update_spec(experiment_id: int, overrides: dict[str, Any]) -> dict[str, Any]:
+    _require_status(experiment_id, ("awaiting_approval",))
+    context = experiment_context(experiment_id)
+    try:
+        spec = apply_overrides(context["spec"], overrides, context["profile"])
+    except ValueError as exc:
+        raise ServiceError(str(exc)) from exc
+    with session_scope() as session:
+        session.execute(
+            update(Experiment).where(Experiment.id == experiment_id).values(spec=spec, flag_name=spec["flag_name"])
+        )
+    emit("approve", f"Spec edited: {', '.join(sorted(overrides))}", {"overrides": overrides}, experiment_id=experiment_id)
+    return spec
+
+
+def decide_spec(
+    experiment_id: int,
+    decision: str,
+    overrides: Optional[dict[str, Any]] = None,
+    comment: Optional[str] = None,
+) -> dict[str, Any]:
+    if decision not in ("approve", "reject", "revise"):
+        raise ServiceError("decision must be approve, reject or revise")
+    _require_status(experiment_id, ("awaiting_approval",))
+    spec = update_spec(experiment_id, overrides) if overrides else experiment_context(experiment_id)["spec"]
+    if decision == "revise" and not comment:
+        raise ServiceError("a comment is required to request a revision")
+    _mark_gate_pending(experiment_id, "approving" if decision == "approve" else "planning")
+    enqueue(
+        "experiment.resume",
+        {"experiment_id": experiment_id, "resume": {"decision": decision, "comment": comment, "spec": spec}},
+        experiment_id=experiment_id,
+    )
+    return get_experiment(experiment_id)
+
+
+def decide_merge(experiment_id: int, decision: str, comment: Optional[str] = None) -> dict[str, Any]:
+    if decision not in ("merge", "drop"):
+        raise ServiceError("decision must be merge or drop")
+    _require_status(experiment_id, ("awaiting_decision",))
+    _mark_gate_pending(experiment_id, "finalizing")
+    enqueue(
+        "experiment.resume",
+        {"experiment_id": experiment_id, "resume": {"decision": decision, "comment": comment}},
+        experiment_id=experiment_id,
+    )
+    return get_experiment(experiment_id)
+
+
+def _mark_gate_pending(experiment_id: int, status: str) -> None:
+    with session_scope() as session:
+        session.execute(update(Experiment).where(Experiment.id == experiment_id).values(status=status))
+
+
+def cancel_experiment(experiment_id: int) -> dict[str, Any]:
+    status = experiment_status(experiment_id)
+    if status in TERMINAL_STATUSES:
+        raise ServiceError(f"experiment is already {status}", 409)
+    with session_scope() as session:
+        queued = session.execute(
+            update(Job)
+            .where(Job.experiment_id == experiment_id, Job.status == "queued")
+            .values(status="cancelled")
+        ).rowcount
+        running = session.scalar(
+            select(func.count()).where(Job.experiment_id == experiment_id, Job.status == "running")
+        )
+        new_status = "cancelling" if running else "cancelled"
+        session.execute(update(Experiment).where(Experiment.id == experiment_id).values(status=new_status))
+    emit("cancel", f"Cancel requested ({queued} queued job(s) cancelled)", experiment_id=experiment_id, level="warning")
+    return get_experiment(experiment_id)
+
+
+def retry_experiment(experiment_id: int) -> dict[str, Any]:
+    _require_status(experiment_id, ("failed", "cancelled"))
+    with session_scope() as session:
+        session.execute(
+            update(Experiment).where(Experiment.id == experiment_id).values(status="queued", error=None)
+        )
+    emit("retry", "Retrying from the last completed step", experiment_id=experiment_id)
+    enqueue("experiment.run", {"experiment_id": experiment_id}, experiment_id=experiment_id)
+    return get_experiment(experiment_id)
+
+
+def experiment_events(experiment_id: int, after_id: int = 0) -> list[dict[str, Any]]:
+    return events_since(after_id, experiment_id=experiment_id)
+
+
+def experiment_log(experiment_id: int, max_bytes: int = 200_000) -> dict[str, Any]:
+    from paperatlas.lab.workspace import artifacts_dir
+
+    folder = artifacts_dir(experiment_id)
+    logs = sorted(folder.glob("*.log"), key=lambda p: p.stat().st_mtime)
+    if not logs:
+        return {"file": None, "text": ""}
+    latest = logs[-1]
+    data = latest.read_bytes()[-max_bytes:]
+    return {"file": latest.name, "files": [p.name for p in logs], "text": data.decode("utf-8", errors="replace")}
+
+
+def recent_activity(limit: int = 50) -> list[dict[str, Any]]:
+    with session_scope() as session:
+        events = session.scalars(select(Event).order_by(Event.id.desc()).limit(limit)).all()
+        return [event_dict(event) for event in events]
+
+
+def dump(value: Any) -> str:
+    return json.dumps(value, default=str)
