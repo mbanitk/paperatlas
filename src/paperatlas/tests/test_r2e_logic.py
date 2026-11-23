@@ -135,3 +135,17 @@ def test_lower_is_better_metrics_count_reductions_as_improvements():
     verdict = judge(results, spec, PROFILE)
     assert verdict["median_delta_pct"] == pytest.approx(15.0, abs=0.5)
     assert verdict["verdict"] == "reproduced"
+
+
+def test_report_charts_cover_data_and_explain_direction():
+    from paperatlas.lab.report import effect_chart, nice_ticks, pairs_chart
+
+    ticks = nice_ticks(0, 24.6)
+    assert ticks[0] <= 0 and ticks[-1] >= 24.6
+    results = bench_results([200, 202, 198, 201], [170, 172, 168, 171], metric="ttft_ms")
+    svg = pairs_chart(results, "ttft_ms", "lower_is_better")
+    assert "Time to first token in every A/B pair" in svg and "lower is better" in svg
+    assert svg.count('stroke="#1a7f37" stroke-width="2" stroke-opacity') == 4  # every pair improved
+    verdict = judge(results, {**SPEC, "primary_metric": "ttft_ms", "direction": "lower_is_better"}, PROFILE)
+    chart = effect_chart(verdict)
+    assert "Did the claim hold?" in chart and "Paper claims +20.0%" in chart and "Measured +15" in chart

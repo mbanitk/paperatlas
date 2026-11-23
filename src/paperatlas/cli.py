@@ -241,6 +241,12 @@ def cmd_digest(args: argparse.Namespace) -> None:
     print(f"digest written to {path}")
 
 
+def cmd_report(args: argparse.Namespace) -> None:
+    from paperatlas.lab.report import rerender_report
+
+    print(f"report written to {rerender_report(args.experiment)}")
+
+
 def cmd_explain(args: argparse.Namespace) -> None:
     from paperatlas.r2e.explainers import backfill
 
@@ -385,6 +391,10 @@ def build_parser() -> argparse.ArgumentParser:
     digest.add_argument("--project", required=True)
     digest.add_argument("--days", type=int, default=7)
     digest.set_defaults(func=cmd_digest)
+
+    report = r2e_sub.add_parser("report", help="re-render an experiment's HTML report from stored results")
+    report.add_argument("experiment", type=int)
+    report.set_defaults(func=cmd_report)
 
     explain = r2e_sub.add_parser("explain", help="generate plain-language explainers + diagrams")
     explain.add_argument("--project", help="also explain the top claims for this project")

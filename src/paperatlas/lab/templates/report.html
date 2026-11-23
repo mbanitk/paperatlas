@@ -20,6 +20,8 @@
   td.pos{color:var(--ok);font-weight:600} td.neg{color:var(--bad);font-weight:600}
   pre{background:#fff;border:1px solid var(--line);border-radius:8px;padding:10px;overflow:auto;font-size:12px}
   dl{display:grid;grid-template-columns:180px 1fr;gap:4px 12px;margin:0} dt{color:var(--muted)} dd{margin:0}
+  figure{margin:14px 0 0} figure svg{display:block;max-width:100%;height:auto}
+  figcaption{font-size:12px;color:var(--muted);margin-top:6px}
 </style>
 </head>
 <body>
@@ -42,6 +44,11 @@
     </div>
   </div>
 
+  {% if effect_chart %}<figure>{{ effect_chart|safe }}
+    <figcaption>The dot is the median change across paired rounds; the shaded band is the 95% confidence interval.
+    Right of 0% is better. The claim counts as reproduced when the band is above zero and the dot reaches the target.</figcaption>
+  </figure>{% endif %}
+
   <h2>Claim</h2>
   <dl>
     <dt>Paper</dt><dd>{% if paper.url %}<a href="{{ paper.url }}">{{ paper.title }}</a>{% else %}{{ paper.title }}{% endif %} <span class="muted">({{ paper.paper_id }})</span></dd>
@@ -60,7 +67,7 @@
     <dt>Paper vs project</dt><dd>{{ spec.paper_vs_project or '—' }}</dd>
   </dl>
 
-  <h2>Results</h2>
+  <h2>Results · {{ metric_name }}</h2>
   <table>
     <tr><th>Metric</th><th>Baseline (median)</th><th>Variant (median)</th><th>Improvement</th><th>95% CI</th></tr>
     {% for name, m in v.per_metric.items() %}
@@ -70,7 +77,10 @@
       <td>{{ '%+.1f'|format(m.ci_low_pct) }}% … {{ '%+.1f'|format(m.ci_high_pct) }}%</td></tr>
     {% endfor %}
   </table>
-  {% if chart %}<p>{{ chart|safe }}</p>{% endif %}
+  {% if pairs_chart %}<figure>{{ pairs_chart|safe }}
+    <figcaption>Baseline and variant ran back to back in alternating order (ABBA) on the same machine, so each
+    column is a fair comparison. A consistent gap across all columns means the effect is real, not noise.</figcaption>
+  </figure>{% endif %}
 
   <h2>Quality guardrails</h2>
   <dl>
