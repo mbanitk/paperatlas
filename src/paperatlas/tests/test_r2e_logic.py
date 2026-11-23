@@ -24,6 +24,10 @@ def test_claimed_gain_normalization(value, unit, direction, expected):
     assert gain == pytest.approx(expected) if expected is not None else gain is None
 
 
+def test_absolute_levels_are_not_gains():
+    assert ClaimEffect(metric="accuracy", value=87.3, unit="%", direction="increase", relative=False).gain_pct() is None
+
+
 def test_distillation_schema_is_valid_for_strict_structured_outputs():
     def walk(node):
         if node.get("type") == "object":

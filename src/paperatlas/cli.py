@@ -241,6 +241,16 @@ def cmd_digest(args: argparse.Namespace) -> None:
     print(f"digest written to {path}")
 
 
+def cmd_schedule(args: argparse.Namespace) -> None:
+    from paperatlas.r2e.schedule import schedule, unschedule
+
+    if args.remove:
+        print("weekly scan removed" if unschedule() else "no weekly scan installed")
+        return
+    result = schedule(args.project, args.weekday, args.hour, install=args.install)
+    print(f"installed {result}" if args.install else result)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="paperatlas", description=__doc__.split("\n")[0])
     parser.add_argument("-v", "--verbose", action="store_true")
@@ -366,6 +376,14 @@ def build_parser() -> argparse.ArgumentParser:
     digest.add_argument("--project", required=True)
     digest.add_argument("--days", type=int, default=7)
     digest.set_defaults(func=cmd_digest)
+
+    weekly = r2e_sub.add_parser("schedule", help="weekly scan + digest via launchd (prints the plist unless --install)")
+    weekly.add_argument("--project", default="inference-lab")
+    weekly.add_argument("--weekday", type=int, default=1, help="0=Sunday … 6=Saturday")
+    weekly.add_argument("--hour", type=int, default=8)
+    weekly.add_argument("--install", action="store_true")
+    weekly.add_argument("--remove", action="store_true")
+    weekly.set_defaults(func=cmd_schedule)
     return parser
 
 

@@ -98,7 +98,7 @@ def concept(technique, category="speculative_decoding", metric="decode throughpu
             "technique": technique,
             "change_required": "Add it to the decode loop.",
             "effects": [
-                {"metric": metric, "value": value, "unit": unit, "direction": direction, "baseline": "vanilla", "conditions": None}
+                {"metric": metric, "value": value, "unit": unit, "direction": direction, "relative": True, "baseline": "vanilla", "conditions": None}
             ],
             "paper_setup": {k: None for k in ("hardware", "model", "framework", "batch_size", "sequence_length", "dataset")},
             "prerequisites": [],

@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import logging
+import math
 from typing import Any, Optional
 
 import numpy as np
 from sqlalchemy import func, select
 
 from paperatlas.db.engine import session_scope
-from paperatlas.db.schema import Claim, Experiment, Match, Paper, PaperTopic, Project, Topic, Verdict
+from paperatlas.db.schema import Claim, Concept, Experiment, Match, PaperTopic, Project, Topic, Verdict
 from paperatlas.lab.events import Reporter
 from paperatlas.llm.client import LLMClient, LLMError, build_default_llm_client
 
@@ -37,6 +38,17 @@ CATEGORY_PRIOR = {
 }
 CLUSTER_CATEGORIES = {"disaggregated_serving", "parallelism_communication"}
 EFFORT_COST = {"low": 1.0, "medium": 1.6, "high": 2.6}
+KIND_PRIOR = {
+    "method": 1.0,
+    "algorithm": 1.0,
+    "system": 0.9,
+    "other": 0.5,
+    "finding": 0.35,
+    "evaluation": 0.3,
+    "theory": 0.3,
+    "dataset": 0.2,
+    "limitation": 0.2,
+}
 METRIC_KEYWORDS = [
     (("time to first token", "ttft", "prefill latency", "first-token"), "ttft_ms"),
     (("inter-token", "itl", "tpot", "time per output token", "per-token latency"), "itl_ms"),
@@ -98,10 +110,11 @@ REVIEW_SCHEMA = {
             "items": {
                 "type": "object",
                 "additionalProperties": False,
-                "required": ["claim_id", "target_metric", "feasible", "blocker", "rationale"],
+                "required": ["claim_id", "target_metric", "adoptable", "feasible", "blocker", "rationale"],
                 "properties": {
                     "claim_id": {"type": "integer"},
                     "target_metric": {"type": "string"},
+                    "adoptable": {"type": "boolean"},
                     "feasible": {"type": "boolean"},
                     "blocker": {"type": ["string", "null"]},
                     "rationale": {"type": "string"},
@@ -113,7 +126,9 @@ REVIEW_SCHEMA = {
 
 REVIEW_SYSTEM = (
     "You are the tech lead of the target project described below. For each research claim, decide "
-    "whether it can be implemented as an opt-in technique in this project and measured with its "
+    "(1) adoptable: whether it describes a concrete technique an engineer could implement (not just "
+    "an observation, benchmark, characterization or metric), and (2) feasible: whether it can be "
+    "implemented as an opt-in technique in this project and measured with its "
     "benchmark on its hardware. If not, give the concrete blocker (e.g. needs CUDA kernels, needs "
     "multiple GPUs, needs retraining). Pick the project metric that best measures the claim. "
     "Write one precise sentence of rationale. Be strict about hardware constraints."
@@ -149,7 +164,7 @@ def _llm_review(
 def match_project(
     project_id: int,
     use_llm: bool = True,
-    llm_review_top: int = 20,
+    llm_review_top: int = 30,
     llm: Optional[LLMClient] = None,
     report: Optional[Reporter] = None,
 ) -> list[dict[str, Any]]:
@@ -167,7 +182,11 @@ def match_project(
                 .where(Topic.needs_gpu_cluster.is_(True))
             ).all()
         )
-        claims = session.scalars(select(Claim).join(Paper, Paper.paper_id == Claim.paper_id)).all()
+        rows = session.execute(
+            select(Claim, Concept.kind).join(Concept, Concept.id == Claim.concept_id)
+        ).all()
+        claims = [claim for claim, _ in rows]
+        kinds = {claim.id: kind for claim, kind in rows}
         tested = set(
             session.scalars(select(Experiment.claim_id).where(Experiment.project_id == project_id)).all()
         )
@@ -181,10 +200,11 @@ def match_project(
         similarity = float(np.asarray(claim.embedding, dtype=np.float32) @ project_vector) if claim.embedding is not None else 0.0
         fit = 0.5 * priors.get(claim.category or "other", 0.3) + 0.5 * max(similarity, 0.0)
         gain_pct = claim.claimed_gain_pct
-        gain = min(gain_pct, 100.0) / 100.0 if gain_pct is not None else 0.15
+        gain = min(1.0, math.log1p(max(gain_pct, 0.0) / 100.0) / math.log(3.0)) if gain_pct is not None else 0.15
         blockers = blockers_for(claim, hardware, claim.paper_id in cluster_papers)
         score = fit * (0.4 + gain) / EFFORT_COST.get(claim.effort or "medium", 1.6)
         score *= verdict_prior.get(claim.category or "other", 1.0)
+        score *= KIND_PRIOR.get(kinds.get(claim.id) or "other", 0.5)
         if claim.id in tested:
             score *= 0.3
         scored.append(
@@ -211,7 +231,9 @@ def match_project(
             item["rationale"] = verdict["rationale"]
             if verdict["target_metric"] in metrics:
                 item["target_metric"] = verdict["target_metric"]
-            if not verdict["feasible"]:
+            if not verdict["adoptable"]:
+                item["blockers"].append("not an implementable technique")
+            elif not verdict["feasible"]:
                 item["blockers"].append(verdict["blocker"] or "not feasible in this project")
     for item in scored:
         if not item["target_metric"] and not item["blockers"]:

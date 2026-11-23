@@ -124,7 +124,7 @@ def build_prompt(
         else "- Approximate technique: keep quality loss minimal; the quality set is a guardrail.",
         f"- Add focused tests under tests/. `{commands.get('test', 'pytest -q')}` must pass.",
         f"- Run a smoke A/B and fix any error: `{smoke}`",
-        f"- Do not modify the measurement setup ({', '.join(PROTECTED_PATHS)}) or the benchmark harness.",
+        f"- Do not modify the measurement setup: {', '.join(profile.get('protected_paths') or PROTECTED_PATHS)}.",
         "- Do not add heavy dependencies. No network access is needed beyond the existing model cache.",
         "- Commit your work on the current branch with a clear message.",
         "When finished, reply with a short summary of what you changed and the smoke A/B result.",
@@ -158,7 +158,8 @@ def verify_build(workdir: Path, spec: dict[str, Any], profile: dict[str, Any], l
     files = changed_files(workdir)
     if not files:
         problems.append("No changes were made.")
-    touched_protected = [path for path in files if path in PROTECTED_PATHS]
+    protected = tuple(profile.get("protected_paths") or PROTECTED_PATHS)
+    touched_protected = [path for path in files if path.startswith(protected)]
     if touched_protected:
         problems.append(f"Measurement files must not change: {touched_protected}")
     if commands.get("list_flags"):

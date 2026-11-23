@@ -40,9 +40,12 @@ memory, accuracy, cost, energy, ...) that could be reproduced by changing a syst
   - category: the closest category.
   - technique: 1-2 sentences describing the idea concretely.
   - change_required: the concrete change needed in an existing inference stack to adopt it.
-  - effects: each measurable effect the document claims, with value and unit exactly as reported \
-(prefer "%" or "x"), the metric's direction, the baseline compared against and the conditions. \
-Use null when a value is not stated. Never invent or estimate numbers.
+  - effects: each measurable effect the document claims. `value` + `unit` describe the CHANGE \
+versus the baseline exactly as reported (e.g. 30 and "%" for "30% lower latency", 2.1 and "x" for \
+"2.1x higher throughput"); `direction` says whether the metric goes up or down; `relative` is true \
+for such changes. If the document only reports an absolute level (e.g. "87% accuracy", "11 GB"), \
+set `relative` to false and keep the number as reported. Name the baseline compared against and \
+the conditions. Use null when a value is not stated. Never invent or estimate numbers.
   - paper_setup: the setup behind the claim (null where not stated).
   - prerequisites: hard requirements (e.g. "CUDA kernels", "multiple GPUs", "draft model", \
 "fine-tuning", "specialized hardware").

@@ -48,12 +48,16 @@ class ClaimEffect(BaseModel):
     value: Optional[float] = None
     unit: Optional[str] = None
     direction: Literal["increase", "decrease", "none"] = "none"
+    relative: bool = True
     baseline: Optional[str] = None
     conditions: Optional[str] = None
 
     def gain_pct(self) -> Optional[float]:
-        """Claimed improvement in %, positive in the claim's own direction."""
-        if self.value is None or self.direction == "none":
+        """Claimed improvement in %, positive in the claim's own direction.
+
+        Only relative changes versus a baseline count; absolute levels (e.g. "87% accuracy")
+        are not gains."""
+        if self.value is None or self.direction == "none" or not self.relative:
             return None
         unit = (self.unit or "").strip().lower()
         value = abs(self.value)
@@ -153,6 +157,7 @@ CLAIM_SCHEMA = _obj(
                     "value": _nullable("number"),
                     "unit": _nullable("string"),
                     "direction": {"type": "string", "enum": ["increase", "decrease", "none"]},
+                    "relative": {"type": "boolean"},
                     "baseline": _nullable("string"),
                     "conditions": _nullable("string"),
                 }
