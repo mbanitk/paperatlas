@@ -95,8 +95,9 @@ def run_command(
                 tail.append(f"[timeout after {timeout_s:.0f}s]")
                 log.write(tail[-1] + "\n")
                 return CommandResult(124, "\n".join(tail), now - started, log_path)
-            if on_progress and tail and now - last_progress > progress_every_s:
-                on_progress(tail[-1])
+            if on_progress and now - last_progress > progress_every_s:
+                latest = next((entry for entry in reversed(tail) if entry.strip()), "")
+                on_progress(latest or f"still running ({now - started:.0f}s elapsed)")
                 last_progress = now
         process.wait()
         log.write(f"[exit {process.returncode}]\n")

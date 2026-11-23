@@ -104,7 +104,7 @@ def experiment_step(stage: str) -> Callable:
             try:
                 return func(state, report)
             except Cancelled as exc:
-                set_experiment(experiment_id, status="cancelled", error=str(exc))
+                set_experiment(experiment_id, status="cancelled", error=f"{stage}: {exc}")
                 report(stage, f"Cancelled during {stage}", None, level="warning")
                 raise
             except Exception as exc:  # noqa: BLE001 - surfaced to the UI and re-raised

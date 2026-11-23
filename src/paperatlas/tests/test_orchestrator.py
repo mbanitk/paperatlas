@@ -93,7 +93,8 @@ def test_revision_replans_and_reject_ends_experiment(lab):
     experiment_id = service.create_experiments(lab["project"]["id"], [claim_id])[0]["id"]
     drain()
     with pytest.raises(service.ServiceError):
-        service.decide_spec(experiment_id, "revise")
+        service.decide_spec(experiment_id, "revise", overrides={"rounds": 30})
+    assert service.get_experiment(experiment_id)["spec"]["rounds"] != 30
     service.decide_spec(experiment_id, "revise", comment="use the long_prompt workload")
     drain()
     assert service.experiment_status(experiment_id) == "awaiting_approval"
@@ -133,3 +134,19 @@ def test_lab_api_gate_endpoints(lab):
     assert approved.json()["status"] == "approving"
     assert client.get(f"/experiments/{experiment_id}/events").json()
     assert client.get("/experiments", params={"status": "active"}).json()[0]["id"] == experiment_id
+
+
+def test_failed_experiment_reports_the_stage_it_stopped_in(lab, monkeypatch):
+    def broken_build(*args, **kwargs):
+        raise RuntimeError("compiler exploded")
+
+    monkeypatch.setattr(orchestrator, "build_experiment", broken_build)
+    claim_id = service.recommendations(lab["project"]["id"])[0]["claim_id"]
+    experiment_id = service.create_experiments(lab["project"]["id"], [claim_id])[0]["id"]
+    drain()
+    service.decide_spec(experiment_id, "approve")
+    drain()
+    detail = service.get_experiment(experiment_id)
+    assert detail["status"] == "failed" and detail["stage"] == "build"
+    assert [s["state"] for s in detail["stages"]][:3] == ["done", "done", "failed"]
+    assert "compiler exploded" in detail["error"]

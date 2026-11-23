@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from paperatlas.lab import service
-from paperatlas.lab.events import enqueue, events_since, list_jobs
+from paperatlas.lab.events import enqueue, events_since, latest_event_id, list_jobs
 from paperatlas.lab.profiler import ProfileError, get_project, project_dict, register_project
 from paperatlas.services.common import create_app, sse_response
 
@@ -209,7 +209,9 @@ def activity(limit: int = Query(50, ge=1, le=500)) -> list[dict[str, Any]]:
 
 
 @app.get("/events/stream", tags=["system"])
-def stream_all(request: Request, after: int = 0):
+def stream_all(request: Request, after: int = Query(0, description="event id to start after; -1 = only new events")):
+    if after < 0:
+        after = latest_event_id()
     return sse_response(lambda cursor: events_since(cursor), request, after)
 
 

@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import logging
-import socket
 import os
+import socket
 from datetime import UTC, datetime
 from typing import Any, Callable, Optional
 
-from sqlalchemy import select, text, update
+from sqlalchemy import func, select, text, update
 
 from paperatlas.db.engine import session_scope
 from paperatlas.db.schema import Event, Job
@@ -83,6 +83,11 @@ def events_since(
             query = query.where(Event.triage_id == triage_id)
         events = session.scalars(query.order_by(Event.id).limit(limit)).all()
         return [event_dict(event) for event in events]
+
+
+def latest_event_id() -> int:
+    with session_scope() as session:
+        return session.scalar(select(func.max(Event.id))) or 0
 
 
 def event_dict(event: Event) -> dict[str, Any]:

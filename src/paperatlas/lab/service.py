@@ -62,6 +62,15 @@ STAGE_OF_STATUS = {
     "rejected": "approve",
 }
 GATE_OF_STATUS = {"awaiting_approval": "approve_spec", "awaiting_decision": "merge"}
+STEP_TO_STAGE = {"plan": "plan", "approve": "approve", "build": "build", "smoke": "smoke", "run": "run",
+                 "judge": "judge", "finalize": "decide", "decide": "decide"}
+
+
+def stage_of(status: str, error: Optional[str]) -> Optional[str]:
+    """Current stage; for failed/cancelled experiments, the stage they stopped in."""
+    if status in ("failed", "cancelled", "cancelling") and error:
+        return STEP_TO_STAGE.get(error.split(":", 1)[0].strip())
+    return STAGE_OF_STATUS.get(status)
 
 
 class ServiceError(ValueError):
@@ -155,7 +164,7 @@ def list_claims(
     if q:
         from paperatlas.db.search import hybrid_search
 
-        hits = hybrid_search(q, "claims", limit=limit)
+        hits = hybrid_search(q, "claims", limit=limit + offset)[offset:]
         ids = [hit.id for hit in hits]
         scores = {hit.id: hit.score for hit in hits}
     with session_scope() as session:
@@ -192,7 +201,7 @@ def list_papers(
     if q:
         from paperatlas.db.search import hybrid_search
 
-        hits = hybrid_search(q, "papers", limit=limit)
+        hits = hybrid_search(q, "papers", limit=limit + offset)[offset:]
         ids = [hit.id for hit in hits]
     with session_scope() as session:
         claims = (
@@ -203,6 +212,7 @@ def list_papers(
         query = select(Paper, claims.c.claims, claims.c.testable).outerjoin(claims, claims.c.paper_id == Paper.paper_id)
         if q:
             query = query.where(Paper.paper_id.in_(ids))
+            offset = 0
         if topic:
             query = (
                 query.join(PaperTopic, PaperTopic.paper_id == Paper.paper_id)
@@ -537,8 +547,8 @@ def latest_results(experiment_id: int, kind: str) -> dict[str, Any]:
         return run.results
 
 
-def _stage_progress(status: str, verdict: Optional[str]) -> list[dict[str, str]]:
-    current = STAGE_OF_STATUS.get(status)
+def _stage_progress(status: str, error: Optional[str]) -> list[dict[str, str]]:
+    current = stage_of(status, error)
     stages = []
     reached = True
     for stage in STAGES:
@@ -563,7 +573,7 @@ def experiment_summary(experiment: Experiment, claim: Claim, concept: Concept, p
         "triage_id": experiment.triage_id,
         "status": experiment.status,
         "gate": GATE_OF_STATUS.get(experiment.status),
-        "stage": STAGE_OF_STATUS.get(experiment.status),
+        "stage": stage_of(experiment.status, experiment.error),
         "flag_name": experiment.flag_name,
         "branch": experiment.branch,
         "error": experiment.error,
@@ -631,7 +641,7 @@ def get_experiment(experiment_id: int) -> dict[str, Any]:
             },
             build=experiment.build or {},
             worktree_path=experiment.worktree_path,
-            stages=_stage_progress(experiment.status, verdict.verdict if verdict else None),
+            stages=_stage_progress(experiment.status, experiment.error),
             runs=[
                 {
                     "id": run.id,
@@ -710,10 +720,11 @@ def decide_spec(
     if decision not in ("approve", "reject", "revise"):
         raise ServiceError("decision must be approve, reject or revise")
     _require_status(experiment_id, ("awaiting_approval",))
-    spec = update_spec(experiment_id, overrides) if overrides else experiment_context(experiment_id)["spec"]
     if decision == "revise" and not comment:
         raise ServiceError("a comment is required to request a revision")
-    _mark_gate_pending(experiment_id, "approving" if decision == "approve" else "planning")
+    spec = update_spec(experiment_id, overrides) if overrides else experiment_context(experiment_id)["spec"]
+    _mark_gate_pending(experiment_id, {"approve": "approving", "revise": "planning", "reject": "rejected"}[decision])
+    emit("approve", f"Gate 2: {decision} requested", {"comment": comment}, experiment_id=experiment_id)
     enqueue(
         "experiment.resume",
         {"experiment_id": experiment_id, "resume": {"decision": decision, "comment": comment, "spec": spec}},
@@ -727,6 +738,7 @@ def decide_merge(experiment_id: int, decision: str, comment: Optional[str] = Non
         raise ServiceError("decision must be merge or drop")
     _require_status(experiment_id, ("awaiting_decision",))
     _mark_gate_pending(experiment_id, "finalizing")
+    emit("decide", f"Gate 3: {decision} requested", {"comment": comment}, experiment_id=experiment_id)
     enqueue(
         "experiment.resume",
         {"experiment_id": experiment_id, "resume": {"decision": decision, "comment": comment}},
@@ -754,7 +766,11 @@ def cancel_experiment(experiment_id: int) -> dict[str, Any]:
             select(func.count()).where(Job.experiment_id == experiment_id, Job.status == "running")
         )
         new_status = "cancelling" if running else "cancelled"
-        session.execute(update(Experiment).where(Experiment.id == experiment_id).values(status=new_status))
+        session.execute(
+            update(Experiment)
+            .where(Experiment.id == experiment_id)
+            .values(status=new_status, error=f"{STAGE_OF_STATUS.get(status, 'plan')}: cancelled by user")
+        )
     emit("cancel", f"Cancel requested ({queued} queued job(s) cancelled)", experiment_id=experiment_id, level="warning")
     return get_experiment(experiment_id)
 
@@ -775,10 +791,11 @@ def experiment_events(experiment_id: int, after_id: int = 0) -> list[dict[str, A
 
 
 def experiment_log(experiment_id: int, max_bytes: int = 200_000) -> dict[str, Any]:
-    from paperatlas.lab.workspace import artifacts_dir
+    from paperatlas import settings
 
-    folder = artifacts_dir(experiment_id)
-    logs = sorted(folder.glob("*.log"), key=lambda p: p.stat().st_mtime)
+    experiment_status(experiment_id)
+    folder = settings.data_dir().resolve() / "r2e" / "experiments" / str(experiment_id)
+    logs = sorted(folder.glob("*.log"), key=lambda p: p.stat().st_mtime) if folder.exists() else []
     if not logs:
         return {"file": None, "text": ""}
     latest = logs[-1]

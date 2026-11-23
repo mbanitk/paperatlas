@@ -95,6 +95,8 @@ def test_spec_overrides_are_validated():
         apply_overrides(spec, {"primary_metric": "bleu"}, PROFILE)
     with pytest.raises(ValueError):
         apply_overrides(spec, {"rounds": 1}, PROFILE)
+    with pytest.raises(ValueError):
+        apply_overrides(spec, {"flag_name": "Bad Flag!"}, PROFILE)
 
 
 SPEC = {

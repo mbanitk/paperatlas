@@ -64,6 +64,8 @@ def apply_overrides(spec: dict[str, Any], overrides: dict[str, Any], profile: di
     unknown = set(overrides) - set(EDITABLE_FIELDS)
     if unknown:
         raise ValueError(f"Not editable: {sorted(unknown)}; editable fields are {list(EDITABLE_FIELDS)}")
+    if "flag_name" in overrides and not re.fullmatch(r"[a-z][a-z0-9_]{2,40}", str(overrides["flag_name"])):
+        raise ValueError("flag_name must be snake_case: 3-41 chars of a-z, 0-9 and _, starting with a letter")
     merged = ExperimentSpec.model_validate({**spec, **overrides})
     metrics = {m["name"]: m for m in profile.get("metrics") or []}
     workloads = _workload_names(profile)
