@@ -1,7 +1,7 @@
 /** Pure helpers for the engine roofline and the cost-model predictions (unit-tested in roofline.test.ts). */
 
 import type { Bottleneck, Likelihood, Prediction, Roofline } from '../api/types'
-import type { Tone } from './stages'
+import { BOTTLENECK, legacyTone, LIKELIHOOD, likelihoodSemantics, type LegacyTone, type LikelihoodSemantics, type SemanticInfo } from './semantics'
 
 const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value)
 
@@ -29,22 +29,18 @@ export function bottleneckOf(utilization: number | null | undefined): Bottleneck
   return 'mixed'
 }
 
-export const BOTTLENECK_INFO: Record<Bottleneck, { label: string; tone: Tone; description: string }> = {
-  bandwidth: {
-    label: 'bandwidth-bound',
-    tone: 'success',
-    description: 'Decode streams the weights near the memory-bandwidth limit: techniques that cut bytes per token or verify several tokens per weight read pay off.',
-  },
-  overhead: {
-    label: 'overhead-bound',
-    tone: 'attention',
-    description: 'Decode is far below the bandwidth limit: time goes to framework and kernel-launch overhead, so byte savings barely help and extra work per step (drafting, masks) costs a lot.',
-  },
-  mixed: { label: 'mixed', tone: 'neutral', description: 'Decode is partly bandwidth-bound and partly overhead-bound.' },
-  unknown: { label: 'not measured', tone: 'muted', description: 'No roofline measured yet.' },
-}
+export type BottleneckInfo = Omit<SemanticInfo, 'tone'> & { tone: LegacyTone }
 
-export function bottleneckInfo(value: string | null | undefined) {
+/**
+ * Labels and descriptions from lib/semantics.ts ("Bandwidth-bound", "Overhead-bound", "Mixed", "Not measured").
+ * `tone` keeps the legacy names (success/attention/neutral) because existing callers compare against them;
+ * use `BOTTLENECK` from lib/semantics.ts for the semantic tone.
+ */
+export const BOTTLENECK_INFO: Record<Bottleneck, BottleneckInfo> = Object.fromEntries(
+  Object.entries(BOTTLENECK).map(([key, info]) => [key, { ...info, tone: legacyTone(info.tone) }]),
+) as Record<Bottleneck, BottleneckInfo>
+
+export function bottleneckInfo(value: string | null | undefined): BottleneckInfo {
   return BOTTLENECK_INFO[(value ?? 'unknown') as Bottleneck] ?? BOTTLENECK_INFO.unknown
 }
 
@@ -73,15 +69,11 @@ export function singleStepMs(roofline: Roofline | null | undefined): number | nu
 
 // ---- predictions ------------------------------------------------------------------------------
 
-export const LIKELIHOOD_INFO: Record<Likelihood, { label: string; tone: Tone; rank: number; description: string }> = {
-  likely: { label: 'likely', tone: 'success', rank: 0, description: 'The cost model expects a worthwhile gain (≥ 5% at the low end) on this engine.' },
-  marginal: { label: 'marginal', tone: 'attention', rank: 1, description: 'Could gain a little or nothing on this engine.' },
-  unknown: { label: 'unknown', tone: 'muted', rank: 2, description: 'No estimate: the roofline is not measured, or there is no cost model for this kind of claim.' },
-  unlikely: { label: 'unlikely', tone: 'danger', rank: 3, description: 'The cost model expects under 2% on this engine; the claim is blocked unless you force it.' },
-}
+/** Re-exported from lib/semantics.ts ("Likely gain", "Small or no gain", "Unlikely to help", "Not estimated"). */
+export const LIKELIHOOD_INFO: Record<Likelihood, LikelihoodSemantics> = LIKELIHOOD
 
-export function likelihoodInfo(value: string | null | undefined) {
-  return LIKELIHOOD_INFO[(value ?? 'unknown') as Likelihood] ?? LIKELIHOOD_INFO.unknown
+export function likelihoodInfo(value: string | null | undefined): LikelihoodSemantics {
+  return likelihoodSemantics(value)
 }
 
 export const LIKELIHOODS: Likelihood[] = ['likely', 'marginal', 'unlikely', 'unknown']
@@ -108,20 +100,20 @@ function signedPct(value: number): string {
   return `${rounded > 0 ? '+' : '−'}${Math.abs(rounded).toFixed(digits)}`
 }
 
-/** `+8…+35%` (or `+5%` when both ends match); null without a range. */
+/** `+8 to +35%` (or `+5%` when both ends match); null without a range. */
 export function formatGainRange(range: Prediction['predicted_gain_pct'] | undefined): string | null {
   if (!range || !finite(range.low) || !finite(range.high)) return null
   const [low, high] = range.low <= range.high ? [range.low, range.high] : [range.high, range.low]
   const a = signedPct(low)
   const b = signedPct(high)
-  return a === b ? `${a}%` : `${a}…${b}%`
+  return a === b ? `${a}%` : `${a} to ${b}%`
 }
 
-/** `+8…+35% decode`, or the likelihood's fallback text when there is no range. */
+/** `+8 to +35% decode`, or the likelihood's fallback text when there is no range. */
 export function predictionHeadline(prediction: Prediction | null | undefined): string {
-  if (!prediction) return 'not predicted'
+  if (!prediction) return 'not estimated'
   const range = formatGainRange(prediction.predicted_gain_pct)
-  if (!range) return 'no estimate'
+  if (!range) return 'not estimated'
   const metric = metricShort(prediction.metric)
   return metric ? `${range} ${metric}` : range
 }

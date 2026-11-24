@@ -68,18 +68,18 @@ const prediction = (likelihood: string, low?: number, high?: number, metric = 'd
 
 describe('prediction formatting', () => {
   it('formats gain ranges', () => {
-    expect(formatGainRange({ low: 8.2, high: 35.4 })).toBe('+8.2…+35%')
-    expect(formatGainRange({ low: 35, high: 8 })).toBe('+8…+35%')
-    expect(formatGainRange({ low: -2, high: 1.5 })).toBe('−2…+1.5%')
+    expect(formatGainRange({ low: 8.2, high: 35.4 })).toBe('+8.2 to +35%')
+    expect(formatGainRange({ low: 35, high: 8 })).toBe('+8 to +35%')
+    expect(formatGainRange({ low: -2, high: 1.5 })).toBe('−2 to +1.5%')
     expect(formatGainRange({ low: 0, high: 0.04 })).toBe('0%')
     expect(formatGainRange(null)).toBeNull()
   })
 
   it('names the metric briefly', () => {
-    expect(predictionHeadline(prediction('likely', 8, 35))).toBe('+8…+35% decode')
-    expect(predictionHeadline(prediction('marginal', 0, 4, 'peak_memory_gb'))).toBe('0…+4% peak memory')
-    expect(predictionHeadline(prediction('unknown'))).toBe('no estimate')
-    expect(predictionHeadline(null)).toBe('not predicted')
+    expect(predictionHeadline(prediction('likely', 8, 35))).toBe('+8 to +35% decode')
+    expect(predictionHeadline(prediction('marginal', 0, 4, 'peak_memory_gb'))).toBe('0 to +4% peak memory')
+    expect(predictionHeadline(prediction('unknown'))).toBe('not estimated')
+    expect(predictionHeadline(null)).toBe('not estimated')
   })
 })
 

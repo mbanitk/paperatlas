@@ -10,6 +10,7 @@ interface Toast {
 }
 
 interface ToastApi {
+  /** Errors stay until dismissed; success/info disappear after 5 s. */
   show: (message: ReactNode, tone?: ToastTone) => void
   success: (message: ReactNode) => void
   error: (message: ReactNode) => void
@@ -17,6 +18,10 @@ interface ToastApi {
 
 const ToastContext = createContext<ToastApi | null>(null)
 
+/**
+ * Toasts never cover primary actions (docs/ux-review.md G-3): below 640px they drop in at the top, under the
+ * sticky header; from 640px they sit bottom-right, above the sticky action bar (`--action-bar-h`).
+ */
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([])
   const nextId = useRef(1)
@@ -26,8 +31,8 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const show = useCallback(
     (message: ReactNode, tone: ToastTone = 'info') => {
       const id = nextId.current++
-      setToasts((items) => [...items.slice(-3), { id, tone, message }])
-      setTimeout(() => dismiss(id), tone === 'error' ? 9000 : 5000)
+      setToasts((items) => [...items.slice(-2), { id, tone, message }])
+      if (tone !== 'error') setTimeout(() => dismiss(id), 5000)
     },
     [dismiss],
   )
@@ -40,22 +45,37 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastContext.Provider value={value}>
       {children}
-      <div className="pointer-events-none fixed right-4 bottom-4 z-50 flex w-[min(380px,calc(100vw-2rem))] flex-col gap-2" aria-live="polite" role="status">
+      <div
+        data-toast-region=""
+        aria-live="polite"
+        role="status"
+        className={cx(
+          'pointer-events-none fixed z-(--z-toast) flex w-[min(380px,calc(100vw-1.5rem))] flex-col gap-2',
+          'max-sm:top-[calc(var(--header-h)+8px)] max-sm:left-1/2 max-sm:-translate-x-1/2',
+          'sm:right-4 sm:bottom-[calc(var(--action-bar-h)+16px)]',
+        )}
+      >
         {toasts.map((toast) => (
           <div
             key={toast.id}
+            role={toast.tone === 'error' ? 'alert' : undefined}
             className={cx(
               'pointer-events-auto flex items-start gap-2 rounded-lg border bg-canvas px-3 py-2.5 text-sm shadow-lg',
-              toast.tone === 'success' && 'border-success/40',
-              toast.tone === 'error' && 'border-danger/40',
+              toast.tone === 'success' && 'border-positive/40',
+              toast.tone === 'error' && 'border-negative/40',
               toast.tone === 'info' && 'border-line',
             )}
           >
-            <span className={cx('mt-0.5 shrink-0', toast.tone === 'success' ? 'text-success' : toast.tone === 'error' ? 'text-danger' : 'text-accent')}>
+            <span className={cx('mt-0.5 shrink-0', toast.tone === 'success' ? 'text-positive-fg' : toast.tone === 'error' ? 'text-negative-fg' : 'text-info-fg')}>
               {toast.tone === 'success' ? <CheckIcon /> : toast.tone === 'error' ? <AlertIcon /> : <InfoIcon />}
             </span>
             <div className="min-w-0 flex-1 break-words text-fg">{toast.message}</div>
-            <button type="button" onClick={() => dismiss(toast.id)} className="shrink-0 rounded p-0.5 text-muted hover:bg-canvas-inset" aria-label="Dismiss notification">
+            <button
+              type="button"
+              onClick={() => dismiss(toast.id)}
+              className="-my-1 -mr-1 inline-flex size-7 shrink-0 items-center justify-center rounded text-muted hover:bg-canvas-inset"
+              aria-label="Dismiss notification"
+            >
               <XIcon size={14} />
             </button>
           </div>

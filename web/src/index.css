@@ -6,7 +6,8 @@
 
   --color-fg: #1f2328;
   --color-muted: #59636e;
-  --color-subtle: #818b98;
+  /* Tertiary text. Darkened from #818b98 (3.45:1) to pass AA (≥ 4.5:1) on canvas and canvas-subtle. */
+  --color-subtle: #656d76;
   --color-line: #d1d9e0;
   --color-line-muted: #e3e8ee;
   --color-canvas: #ffffff;
@@ -28,6 +29,77 @@
   --color-done: #8250df;
   --color-done-subtle: #fbefff;
   --color-neutral-subtle: #eff2f5;
+
+  /*
+   * Semantic colour tokens (docs/ux-review.md §3.3). Use these for meaning; the raw tones above stay for
+   * backwards compatibility. `*-fg` is the text colour on the matching `*-subtle` background (≥ 6.5:1),
+   * `*-emphasis` is for borders, bars and solid fills (white text on it is ≥ 4.5:1 except caution).
+   */
+  --color-positive: #1a7f37;
+  --color-positive-fg: #116329;
+  --color-positive-subtle: #dafbe1;
+  --color-positive-emphasis: #1f883d;
+  --color-negative: #d1242f;
+  --color-negative-fg: #a40e26;
+  --color-negative-subtle: #ffebe9;
+  --color-negative-emphasis: #cf222e;
+  /* caution: dark text on #fff8c5 with a #bf8700 border. Never white text on #bf8700 (3.1:1). */
+  --color-caution: #9a6700;
+  --color-caution-fg: #7d4e00;
+  --color-caution-subtle: #fff8c5;
+  --color-caution-emphasis: #bf8700;
+  --color-info: #0969da;
+  --color-info-fg: #0550ae;
+  --color-info-subtle: #ddf4ff;
+  --color-info-emphasis: #0757b8;
+  --color-neutral: #59636e;
+  --color-neutral-fg: #59636e;
+  --color-neutral-emphasis: #818b98;
+  --color-merged: #8250df;
+  --color-merged-fg: #6639ba;
+  --color-merged-subtle: #fbefff;
+  --color-merged-emphasis: #8250df;
+  --color-reference: #1f2328;
+  --color-reference-fg: #1f2328;
+  --color-reference-subtle: #f6f8fa;
+  --color-reference-emphasis: #59636e;
+
+  /*
+   * Type scale (§3.2). Nothing readable below 12px: use these instead of ad-hoc pixel sizes.
+   * text-caption 12/16 · text-body 14/20 · text-body-lg 16/24 · text-title 20/28 · text-page 24/32 ·
+   * text-metric 28/34 (hero number, tabular) · text-metric-sm 20/28 (stat tiles).
+   */
+  --text-caption: 0.75rem;
+  --text-caption--line-height: 1rem;
+  --text-body: 0.875rem;
+  --text-body--line-height: 1.25rem;
+  --text-body-lg: 1rem;
+  --text-body-lg--line-height: 1.5rem;
+  --text-title: 1.25rem;
+  --text-title--line-height: 1.75rem;
+  --text-title--font-weight: 600;
+  --text-page: 1.5rem;
+  --text-page--line-height: 2rem;
+  --text-page--font-weight: 600;
+  --text-metric: 1.75rem;
+  --text-metric--line-height: 2.125rem;
+  --text-metric--font-weight: 600;
+  --text-metric-sm: 1.25rem;
+  --text-metric-sm--line-height: 1.75rem;
+  --text-metric-sm--font-weight: 600;
+}
+
+/*
+ * Layout and layering (§3.5, §3.11). --header-h is measured by <Layout>, --action-bar-h by
+ * <StickyActionBar>; floating UI, toasts and anchors read them so nothing lands under a bar.
+ */
+:root {
+  --header-h: 57px;
+  --action-bar-h: 0px;
+  --z-header: 30;
+  --z-actionbar: 35;
+  --z-popover: 40;
+  --z-toast: 60;
 }
 
 @layer base {
@@ -35,6 +107,14 @@
     color: var(--color-fg);
     background: var(--color-canvas-subtle);
     -webkit-font-smoothing: antialiased;
+    /* Anchors, scrollIntoView and focus land below the sticky header and above the action bar. */
+    scroll-padding-top: calc(var(--header-h) + 12px);
+    scroll-padding-bottom: calc(var(--action-bar-h) + 12px);
+  }
+
+  /* Never let a stray wide element make the whole page scroll sideways. */
+  body {
+    overflow-x: clip;
   }
 
   body {
@@ -92,8 +172,63 @@
     @apply inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium whitespace-nowrap;
   }
 
+  /* Neutral outline tag: category, topic, mode, doc type, requirement. No fill, no meaning by colour. */
+  .tag {
+    @apply inline-flex max-w-full items-center gap-1 rounded-full border border-line bg-canvas px-2 py-0.5 text-xs font-medium whitespace-nowrap text-muted;
+  }
+
   .code-inline {
-    @apply rounded bg-canvas-inset px-1.5 py-0.5 font-mono text-[12px];
+    @apply rounded bg-canvas-inset px-1.5 py-0.5 font-mono text-xs;
+  }
+
+  /* Eyebrow above a title: 12px sentence case, muted. No uppercase + tracking. */
+  .eyebrow {
+    @apply text-xs font-medium text-muted;
+  }
+
+  /*
+   * Screen-reader-only text that stays in flow. Unlike `sr-only` (position: absolute), it can't escape an
+   * overflow-x-auto table wrapper that isn't positioned and make the whole page scroll sideways (OV-21).
+   * Use it for hidden text inside table cells and other scrolled content.
+   */
+  .sr-text {
+    display: inline-block;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  /* 24×24 hit area around a 16px checkbox (WCAG 2.5.8); use on <input type="checkbox">. */
+  .checkbox {
+    appearance: none;
+    flex-shrink: 0;
+    width: 24px;
+    height: 24px;
+    margin: -4px;
+    cursor: pointer;
+    border-radius: 6px;
+    background: center / 16px 16px no-repeat
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect x='.5' y='.5' width='15' height='15' rx='3.5' fill='%23fff' stroke='%2359636e'/%3E%3C/svg%3E");
+  }
+
+  .checkbox:checked {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='4' fill='%230969da'/%3E%3Cpath d='M4 8.5l2.7 2.6L12 5.5' fill='none' stroke='%23fff' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  }
+
+  .checkbox:indeterminate {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='4' fill='%230969da'/%3E%3Cpath d='M4.5 8h7' stroke='%23fff' stroke-width='1.8' stroke-linecap='round'/%3E%3C/svg%3E");
+  }
+
+  .checkbox:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+  }
+
+  .checkbox:hover:not(:disabled) {
+    background-color: var(--color-canvas-inset);
   }
 
   .link-quiet {
@@ -119,5 +254,9 @@
   .animate-pulse-dot,
   .animate-spin {
     animation: none;
+  }
+
+  html {
+    scroll-behavior: auto;
   }
 }

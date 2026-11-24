@@ -1,16 +1,19 @@
 import type { ExperimentStatus, Gate, Stage, StageName, StageState, TriageStatus, VerdictName } from '../api/types'
+import { CLAIM_CHECK, claimCheckSemantics, EXPERIMENT_STATUS, statusSemantics, type SemanticInfo, type StatusSemantics } from './semantics'
+
+export type { Tone } from './semantics'
 
 export const STAGES: StageName[] = ['plan', 'approve', 'build', 'smoke', 'tune', 'run', 'judge', 'decide']
 
 export const STAGE_LABELS: Record<StageName, string> = {
   plan: 'Plan',
-  approve: 'Approve spec',
+  approve: 'Approve plan',
   build: 'Build',
   smoke: 'Smoke test',
   tune: 'Tune',
-  run: 'A/B run',
+  run: 'A/B test',
   judge: 'Judge',
-  decide: 'Merge / drop',
+  decide: 'Merge or drop',
 }
 
 /** Same mapping as STAGE_OF_STATUS in paperatlas/lab/service.py. */
@@ -76,51 +79,21 @@ export function rerunsOf(id: number, experiments: readonly { id: number; rerun_o
     .sort((a, b) => a - b)
 }
 
-export type Tone = 'neutral' | 'accent' | 'attention' | 'success' | 'danger' | 'done' | 'muted'
+/** Label, tone, icon and description of an experiment status (lib/semantics.ts is the source of truth). */
+export type StatusInfo = StatusSemantics
 
-export interface StatusInfo {
-  label: string
-  tone: Tone
-  /** true while the backend/worker is doing something (show a pulse). */
-  busy: boolean
-}
-
-const STATUS_INFO: Record<ExperimentStatus, StatusInfo> = {
-  blocked: { label: 'Waiting for prerequisite', tone: 'neutral', busy: false },
-  queued: { label: 'Queued', tone: 'neutral', busy: false },
-  planning: { label: 'Planning', tone: 'accent', busy: true },
-  awaiting_approval: { label: 'Needs approval', tone: 'attention', busy: false },
-  approving: { label: 'Approved — starting', tone: 'accent', busy: true },
-  building: { label: 'Building', tone: 'accent', busy: true },
-  smoke_testing: { label: 'Smoke testing', tone: 'accent', busy: true },
-  tuning: { label: 'Tuning', tone: 'accent', busy: true },
-  waiting_gpu: { label: 'Waiting for GPU', tone: 'neutral', busy: true },
-  running: { label: 'Running A/B', tone: 'accent', busy: true },
-  judging: { label: 'Judging', tone: 'accent', busy: true },
-  awaiting_decision: { label: 'Needs decision', tone: 'attention', busy: false },
-  finalizing: { label: 'Finalizing', tone: 'accent', busy: true },
-  cancelling: { label: 'Cancelling', tone: 'neutral', busy: true },
-  merged: { label: 'Merged', tone: 'done', busy: false },
-  dropped: { label: 'Dropped', tone: 'muted', busy: false },
-  rejected: { label: 'Rejected', tone: 'muted', busy: false },
-  failed: { label: 'Failed', tone: 'danger', busy: false },
-  cancelled: { label: 'Cancelled', tone: 'muted', busy: false },
-}
+/** @deprecated use EXPERIMENT_STATUS from lib/semantics.ts */
+export const STATUS_INFO: Record<ExperimentStatus, StatusInfo> = EXPERIMENT_STATUS
 
 export function statusInfo(status: string): StatusInfo {
-  return STATUS_INFO[status as ExperimentStatus] ?? { label: status.replace(/_/g, ' '), tone: 'neutral', busy: false }
+  return statusSemantics(status)
 }
 
-export const VERDICT_INFO: Record<VerdictName, { label: string; tone: Tone; description: string }> = {
-  reproduced: { label: 'Reproduced', tone: 'success', description: 'Effect reached the target derived from the paper’s claim.' },
-  partial: { label: 'Partial', tone: 'attention', description: 'Significant improvement, but below the target.' },
-  not_reproduced: { label: 'Not reproduced', tone: 'neutral', description: 'No significant change (95% CI includes 0).' },
-  regression: { label: 'Regression', tone: 'danger', description: 'Got worse, or a quality / memory guardrail failed.' },
-  inconclusive: { label: 'Inconclusive', tone: 'attention', description: 'Not enough complete measurements (missing rounds or quality metrics) to judge.' },
-}
+/** Claim-check verdicts ("Reproduced", "Partly reproduced", …). Re-exported from lib/semantics.ts. */
+export const VERDICT_INFO: Record<VerdictName, SemanticInfo> = CLAIM_CHECK
 
-export function verdictInfo(verdict: string) {
-  return VERDICT_INFO[verdict as VerdictName] ?? { label: verdict.replace(/_/g, ' '), tone: 'neutral' as Tone, description: '' }
+export function verdictInfo(verdict: string): SemanticInfo {
+  return claimCheckSemantics(verdict)
 }
 
 /** Client-side equivalent of service._stage_progress for list rows (which carry `stage` but no `stages`). */
@@ -199,7 +172,7 @@ export const TRIAGE_STATUS_LABEL: Record<TriageStatus, string> = {
   distill: 'Distilling claims',
   match: 'Matching',
   shortlist: 'Shortlisting',
-  awaiting_pick: 'Ready — pick claims',
+  awaiting_pick: 'Ready: pick claims',
   picked: 'Picked',
   failed: 'Failed',
   done: 'Done',
