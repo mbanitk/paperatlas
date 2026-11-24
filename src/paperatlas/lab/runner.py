@@ -15,7 +15,7 @@ from sqlalchemy import update
 from paperatlas.db.engine import session_scope
 from paperatlas.db.schema import Experiment, Run
 from paperatlas.lab.events import Reporter
-from paperatlas.lab.gpu import gpu_lock
+from paperatlas.lab.gpu import gpu_lock, wait_for_quiet_gpu
 from paperatlas.lab.planner import SAFE_WORKLOAD, _workload_names
 from paperatlas.lab.process import run_command
 from paperatlas.lab.protocol import comparison_arms, tune_configs, uses_paper_baseline, workload_file
@@ -129,6 +129,11 @@ def run_benchmark(
     stage = {"adopt": "run", "eval": "run"}.get(kind, kind)
     try:
         with gpu_lock(on_wait=on_wait, should_cancel=should_cancel):
+            quiet = wait_for_quiet_gpu(lambda message: report(stage, message, None, level="warning"),
+                                       should_cancel=should_cancel) if kind != "smoke" else {"checked": False}
+            if quiet.get("checked") and not quiet.get("quiet"):
+                report(stage, f"GPU still {quiet['background_gpu_pct']}% busy from other apps after "
+                       f"{quiet['waited_s']}s; measuring anyway (expect noisier results)", None, level="warning")
             _set_status(experiment_id, active_status)
             what = {"smoke": "Smoke A/B", "tune": "Tuning", "eval": "Claim check", "adopt": "Adoption check"}[kind]
             report(
@@ -154,6 +159,7 @@ def run_benchmark(
         problems = validate_results(results)
         if problems:
             raise RunFailed(f"Results do not match the bench contract: {problems}")
+        results["background_gpu"] = quiet
         results["comparison"] = {
             "kind": comparison,
             "workload": workload_label,

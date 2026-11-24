@@ -310,3 +310,16 @@ def test_batch_keeps_at_most_parallel_experiments_in_flight(monkeypatch):
     started = batch.run_batch(1, parallel=2, say=lambda message: None)
     assert [s["claim_id"] for s in started] == [1, 2, 3, 4, 5]
     assert state["max"] == 2 and all(s["status"] == "awaiting_decision" for s in started)
+
+
+def test_measurements_wait_for_other_apps_to_release_the_gpu(monkeypatch):
+    from paperatlas.lab import gpu
+
+    readings = iter([90, 80, 85, 5, 0, 0])
+    monkeypatch.setattr(gpu, "gpu_utilization", lambda: next(readings))
+    monkeypatch.setattr(gpu.time, "sleep", lambda s: None)
+    said = []
+    result = gpu.wait_for_quiet_gpu(said.append, window_s=3)
+    assert result["quiet"] and result["background_gpu_pct"] < 15 and len(said) == 1
+    monkeypatch.setattr(gpu, "gpu_utilization", lambda: None)
+    assert gpu.wait_for_quiet_gpu() == {"checked": False}
