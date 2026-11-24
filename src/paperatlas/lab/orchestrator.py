@@ -195,6 +195,13 @@ def node_plan(state: ExperimentState, report) -> dict:
     experiment_id = state["experiment_id"]
     context = service.experiment_context(experiment_id)
     set_experiment(experiment_id, status="planning", error=None)
+    rerun_of = context["experiment"].get("rerun_of_experiment_id")
+    if rerun_of and context["spec"] and not state.get("feedback"):
+        spec = _reuse_spec(context)
+        _raise_if_cancelled(experiment_id)
+        set_experiment(experiment_id, spec=spec, flag_name=spec["flag_name"], status="awaiting_approval")
+        report("approve", f"Spec copied from #{rerun_of} — waiting for approval (Gate 2)", {"spec": spec})
+        return {"feedback": None}
     report("plan", "Writing the experiment spec", None)
     llm = build_default_llm_client()
     if context["experiment"].get("depends_on_experiment_id"):
@@ -210,7 +217,7 @@ def node_plan(state: ExperimentState, report) -> dict:
         context["profile"],
         context["match"].get("target_metric") if context["match"] else None,
         llm,
-        feedback=state.get("feedback"),
+        feedback=state.get("feedback") or service.rerun_feedback(experiment_id),
         companions=context["bundle"],
         baseline_flags=context["prerequisite_flags"],
     )
@@ -218,6 +225,17 @@ def node_plan(state: ExperimentState, report) -> dict:
     set_experiment(experiment_id, spec=spec, flag_name=spec["flag_name"], status="awaiting_approval")
     report("approve", "Spec ready — waiting for approval (Gate 2)", {"spec": spec})
     return {"feedback": None}
+
+
+def _reuse_spec(context: dict) -> dict:
+    """A previous run's spec, refreshed for the project as it is now (techniques, prerequisites, prediction)."""
+    from paperatlas.lab.planner import ExperimentSpec, unique_flag_name
+
+    spec = ExperimentSpec.model_validate(context["spec"])
+    spec.flag_name = unique_flag_name(spec.flag_name, {t.get("name") for t in context["profile"].get("techniques") or []})
+    spec.baseline_flags = list(context["prerequisite_flags"])
+    spec.prediction = (context["match"] or {}).get("prediction")
+    return spec.model_dump()
 
 
 def _gate_cancel_check(experiment_id: int, stage: str) -> None:

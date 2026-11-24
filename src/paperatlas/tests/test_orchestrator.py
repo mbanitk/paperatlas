@@ -606,3 +606,30 @@ def test_ratchet_keeps_the_best_iteration_and_reverts_later_changes(lab, monkeyp
     assert detail["verdict_detail"]["median_delta_pct"] > 15
     worktree = detail["worktree_path"] if "worktree_path" in detail else service.experiment_context(experiment_id)["worktree"]
     assert (Path(worktree) / "technique.py").read_text() == "version = 1\n"
+
+
+def test_rerun_reuses_the_spec_at_gate_2_or_replans_with_the_previous_result(lab):
+    claim_id = service.recommendations(lab["project"]["id"])[0]["claim_id"]
+    first = service.create_experiments(lab["project"]["id"], [claim_id])[0]["id"]
+    drain()
+    with pytest.raises(service.ServiceError):
+        service.rerun_experiment(first)  # still waiting at Gate 2
+    service.decide_spec(first, "approve", overrides={"rounds": 4, "hypothesis": "edited hypothesis"})
+    drain()
+    assert service.experiment_status(first) == "awaiting_decision"
+
+    second = service.rerun_experiment(first, comment="new engine")["id"]
+    with pytest.raises(service.ServiceError):
+        service.rerun_experiment(first)  # second is in progress
+    drain()
+    detail = service.get_experiment(second)
+    assert detail["status"] == "awaiting_approval" and detail["rerun_of_experiment_id"] == first
+    assert detail["spec"]["hypothesis"] == "edited hypothesis" and detail["spec"]["rounds"] == 4
+    assert service.experiment_status(first) == "awaiting_decision"
+
+    service.decide_spec(second, "reject", comment="not now")
+    drain()
+    third = service.rerun_experiment(first, replan=True)["id"]
+    assert "re-runs experiment" in service.rerun_feedback(third)
+    drain()
+    assert service.get_experiment(third)["spec"]["hypothesis"] != "edited hypothesis"

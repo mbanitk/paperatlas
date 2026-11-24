@@ -328,6 +328,9 @@ class Experiment(Base):
     depends_on_experiment_id: Mapped[Optional[int]] = mapped_column(
         Integer, ForeignKey(f"{LAB}.experiments.id", ondelete="SET NULL")
     )
+    rerun_of_experiment_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey(f"{LAB}.experiments.id", ondelete="SET NULL")
+    )
     thread_id: Mapped[str] = mapped_column(Text, unique=True)
     status: Mapped[str] = mapped_column(Text, server_default="planning")
     spec: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default="{}")

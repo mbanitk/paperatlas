@@ -278,3 +278,35 @@ def test_json_extraction_tolerates_think_blocks_and_fences():
     assert extract_json_object('<think>{"no": 1}</think>\n```json\n{"ok": true}\n```') == '{"ok": true}'
     with pytest.raises(LLMError):
         extract_json_object("no json here")
+
+
+def test_batch_keeps_at_most_parallel_experiments_in_flight(monkeypatch):
+    from paperatlas.lab import batch
+
+    state = {"running": {}, "next": 100, "max": 0, "ticks": 0}
+
+    def busy(project_id):
+        return [(i, "building") for i in state["running"]]
+
+    def create(project_id, claim_ids):
+        state["next"] += 1
+        state["running"][state["next"]] = 3  # settles after 3 polls
+        state["max"] = max(state["max"], len(state["running"]))
+        return [{"id": state["next"], "title": f"claim {claim_ids[0]}"}]
+
+    def tick(_):
+        state["ticks"] += 1
+        for i in list(state["running"]):
+            state["running"][i] -= 1
+            if state["running"][i] <= 0:
+                del state["running"][i]
+
+    monkeypatch.setattr(batch, "busy_experiments", busy)
+    # claim c becomes experiment 100 + c, so the claims still pending are those above the last one started
+    monkeypatch.setattr(batch, "pending_claims", lambda project_id, current: [c for c in range(1, 6) if 100 + c > state["next"]])
+    monkeypatch.setattr(batch.service, "create_experiments", create)
+    monkeypatch.setattr(batch.service, "get_experiment", lambda i: {"id": i, "status": "awaiting_decision", "verdict": "partial"})
+    monkeypatch.setattr(batch.time, "sleep", tick)
+    started = batch.run_batch(1, parallel=2, say=lambda message: None)
+    assert [s["claim_id"] for s in started] == [1, 2, 3, 4, 5]
+    assert state["max"] == 2 and all(s["status"] == "awaiting_decision" for s in started)

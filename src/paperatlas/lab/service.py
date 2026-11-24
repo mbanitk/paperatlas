@@ -657,6 +657,7 @@ def experiment_context(experiment_id: int) -> dict[str, Any]:
                 "flag_name": experiment.flag_name,
                 "mode": experiment.mode,
                 "depends_on_experiment_id": experiment.depends_on_experiment_id,
+                "rerun_of_experiment_id": experiment.rerun_of_experiment_id,
             },
             "project": {"id": project.id, "name": project.name, "repo_path": project.repo_path},
             "profile": project.profile or {},
@@ -742,6 +743,7 @@ def experiment_summary(experiment: Experiment, claim: Claim, concept: Concept, p
         "mode": experiment.mode,
         "bundle_claim_ids": list(experiment.bundle_claim_ids or []),
         "depends_on_experiment_id": experiment.depends_on_experiment_id,
+        "rerun_of_experiment_id": experiment.rerun_of_experiment_id,
         "title": concept.name,
         "technique": claim.technique,
         "category": claim.category,
@@ -1004,6 +1006,71 @@ def retry_experiment(experiment_id: int) -> dict[str, Any]:
         session.add(Event(stage="retry", message="Retrying from the last completed step", experiment_id=experiment_id))
         session.add(Job(kind="experiment.run", payload={"experiment_id": experiment_id}, experiment_id=experiment_id))
     return get_experiment(experiment_id)
+
+
+RERUNNABLE_STATUSES = ("awaiting_decision", "merged", "dropped", "rejected", "failed", "cancelled")
+
+
+def rerun_experiment(experiment_id: int, replan: bool = False, comment: Optional[str] = None) -> dict[str, Any]:
+    """Start a new experiment for the same claim (same mode and bundle) on the project's current code.
+
+    By default the new experiment reuses the previous spec and stops at Gate 2 so it can be reviewed or edited;
+    with `replan` the spec is written again from the paper, with the previous result as feedback. The previous
+    experiment is left untouched (its verdict and branch stay available)."""
+    with session_scope() as session:
+        old = _lock_experiment(session, experiment_id, RERUNNABLE_STATUSES)
+        in_flight = session.execute(
+            select(Experiment.id, Experiment.status).where(
+                Experiment.project_id == old.project_id,
+                Experiment.claim_id == old.claim_id,
+                Experiment.id != old.id,
+                Experiment.status.notin_(RERUNNABLE_STATUSES),
+            )
+        ).first()
+        if in_flight:
+            raise ServiceError(f"claim already has experiment {in_flight.id} in progress ({in_flight.status})", 409)
+        spec = {}
+        if not replan and old.spec:
+            spec = {k: v for k, v in old.spec.items() if k not in ("prediction",)}
+        experiment = Experiment(
+            project_id=old.project_id,
+            claim_id=old.claim_id,
+            triage_id=old.triage_id,
+            thread_id=f"exp-{uuid.uuid4()}",
+            status="queued",
+            mode=old.mode,
+            bundle_claim_ids=list(old.bundle_claim_ids or []),
+            rerun_of_experiment_id=old.id,
+            spec=spec,
+        )
+        session.add(experiment)
+        session.flush()
+        new_id = experiment.id
+        how = "re-planning the spec from the paper" if replan or not spec else "reusing its spec (review it at Gate 2)"
+        note = f" — {comment}" if comment else ""
+        session.add(Event(stage="plan", message=f"Re-run of #{old.id}: {how}{note}", experiment_id=new_id))
+        session.add(Event(stage="plan", message=f"Re-run started as #{new_id}{note}", experiment_id=old.id))
+        session.add(Job(kind="experiment.run", payload={"experiment_id": new_id}, experiment_id=new_id))
+    return get_experiment(new_id)
+
+
+def rerun_feedback(experiment_id: int) -> Optional[str]:
+    """What the previous run of this claim learned, for the planner when re-planning."""
+    with session_scope() as session:
+        experiment = session.get(Experiment, experiment_id)
+        if experiment is None or not experiment.rerun_of_experiment_id:
+            return None
+        previous = session.get(Experiment, experiment.rerun_of_experiment_id)
+        verdict = session.scalar(select(Verdict).where(Verdict.experiment_id == previous.id))
+    if verdict is None:
+        return f"This re-runs experiment #{previous.id}, which ended as '{previous.status}' ({previous.error or 'no verdict'})."
+    analysis = (verdict.details or {}).get("analysis") or {}
+    return (
+        f"This re-runs experiment #{previous.id} (previous verdict: {verdict.verdict}, "
+        f"{verdict.median_delta_pct if verdict.median_delta_pct is not None else 'n/a'}% on {verdict.primary_metric}). "
+        f"Diagnosis then: {analysis.get('diagnosis')} — {analysis.get('summary')}. "
+        f"Suggested change then: {analysis.get('next_changes') or 'none'}. Design this run to address it."
+    )
 
 
 def experiment_events(experiment_id: int, after_id: int = 0) -> list[dict[str, Any]]:

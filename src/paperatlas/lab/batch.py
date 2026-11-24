@@ -1,9 +1,10 @@
-"""One-at-a-time batch: run every claim that is testable on a project, strictly in series.
+"""Batch: run every claim that is testable on a project, `parallel` experiments at a time (default 1 = serial).
 
-The next experiment starts only when the previous one has finished judging (it then waits at Gate 3 for a human
-merge/drop, which does not hold up the queue) or ended (failed, rejected, cancelled). Gate 2 is approved
-automatically — the batch is an explicit instruction to run them all. Safe to restart: claims that already have
-an experiment are skipped.
+Each experiment has its own git worktree, so builds (the coding agent, tests) run side by side; GPU benchmarks
+always take the GPU lock, so measurements never overlap. A slot frees up when an experiment has finished judging
+(it then waits at Gate 3 for a human merge/drop, which does not hold up the queue) or ended (failed, rejected,
+cancelled). Gate 2 is approved automatically — the batch is an explicit instruction to run them all. Safe to
+restart: claims that already have an experiment are skipped.
 """
 
 from __future__ import annotations
@@ -51,14 +52,14 @@ def busy_experiments(project_id: int) -> list[tuple[int, str]]:
         ]
 
 
-def wait_until_settled(project_id: int, poll_s: float, say: Callable[[str], None]) -> None:
-    """Block while any experiment is in flight; approve Gate 2 for those waiting on it."""
-    while busy := busy_experiments(project_id):
-        for experiment_id, status in busy:
-            if status == "awaiting_approval":
-                service.decide_spec(experiment_id, "approve", comment="Approved by the one-at-a-time batch run")
+def approve_waiting(busy: list[tuple[int, str]], say: Callable[[str], None]) -> None:
+    for experiment_id, status in busy:
+        if status == "awaiting_approval":
+            try:
+                service.decide_spec(experiment_id, "approve", comment="Approved by the batch run")
                 say(f"#{experiment_id}: Gate 2 approved automatically")
-        time.sleep(poll_s)
+            except service.ServiceError as exc:
+                say(f"#{experiment_id}: could not approve Gate 2: {exc}")
 
 
 def run_batch(
@@ -67,28 +68,48 @@ def run_batch(
     poll_s: float = 20.0,
     say: Callable[[str], None] = print,
     current_engine_only: bool = False,
+    parallel: int = 1,
 ) -> list[dict]:
-    done: list[dict] = []
+    parallel = max(1, parallel)
+    started: list[dict] = []
+    reported: set[int] = set()
     skipped: set[int] = set()
+    exhausted = False
     while True:
-        wait_until_settled(project_id, poll_s, say)
-        if done and "status" not in done[-1]:
-            last = service.get_experiment(done[-1]["id"])
-            done[-1].update(status=last["status"], verdict=last.get("verdict"))
-            say(f"#{last['id']} settled: {last['status']} · verdict {last.get('verdict')}")
-        if limit is not None and len(done) >= limit:
-            break
-        claims = [c for c in pending_claims(project_id, current_engine_only) if c not in skipped]
-        if not claims:
-            say("No testable claims left")
-            break
-        claim_id = claims[0]
-        try:
-            experiment = service.create_experiments(project_id, [claim_id])[0]
-        except service.ServiceError as exc:
-            say(f"claim {claim_id} skipped: {exc}")
-            skipped.add(claim_id)
+        busy = busy_experiments(project_id)
+        approve_waiting(busy, say)
+        busy_ids = {experiment_id for experiment_id, _ in busy}
+        for item in started:
+            if item["id"] not in busy_ids and item["id"] not in reported:
+                detail = service.get_experiment(item["id"])
+                item.update(status=detail["status"], verdict=detail.get("verdict"))
+                reported.add(item["id"])
+                say(f"#{item['id']} settled: {detail['status']} · verdict {detail.get('verdict')}")
+        room = parallel - len(busy)
+        can_start = not exhausted and (limit is None or len(started) < limit)
+        if room > 0 and can_start:
+            in_flight_claims = {c["claim_id"] for c in started if c["id"] in busy_ids}
+            claims = [
+                c for c in pending_claims(project_id, current_engine_only) if c not in skipped and c not in in_flight_claims
+            ]
+            if not claims:
+                exhausted = True
+                say("No testable claims left to start")
+                continue
+            claim_id = claims[0]
+            try:
+                experiment = service.create_experiments(project_id, [claim_id])[0]
+            except service.ServiceError as exc:
+                say(f"claim {claim_id} skipped: {exc}")
+                skipped.add(claim_id)
+                continue
+            started.append({"id": experiment["id"], "claim_id": claim_id, "title": experiment.get("title")})
+            say(
+                f"#{experiment['id']} started for claim {claim_id}: {experiment.get('title')} "
+                f"({len(busy) + 1}/{parallel} running, {len(claims) - 1} queued)"
+            )
             continue
-        done.append({"id": experiment["id"], "claim_id": claim_id, "title": experiment.get("title")})
-        say(f"#{experiment['id']} started for claim {claim_id}: {experiment.get('title')} ({len(claims) - 1} left after it)")
-    return done
+        if not busy and (not can_start or exhausted):
+            break
+        time.sleep(poll_s)
+    return started

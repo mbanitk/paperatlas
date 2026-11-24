@@ -215,6 +215,18 @@ def cancel(experiment_id: int) -> dict[str, Any]:
     return service.cancel_experiment(experiment_id)
 
 
+class RerunRequest(BaseModel):
+    replan: bool = False
+    comment: Optional[str] = None
+
+
+@app.post("/experiments/{experiment_id}/rerun", tags=["experiments"])
+def rerun(experiment_id: int, body: Optional[RerunRequest] = None) -> dict[str, Any]:
+    """New experiment for the same claim on the current code; reuses the spec (Gate 2) unless replan=true."""
+    body = body or RerunRequest()
+    return service.rerun_experiment(experiment_id, body.replan, body.comment)
+
+
 @app.post("/experiments/{experiment_id}/retry", tags=["experiments"])
 def retry(experiment_id: int) -> dict[str, Any]:
     return service.retry_experiment(experiment_id)

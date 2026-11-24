@@ -227,6 +227,13 @@ def cmd_control(args: argparse.Namespace) -> None:
     print(f"experiment {result['id']}: {result['status']}")
 
 
+def cmd_rerun(args: argparse.Namespace) -> None:
+    from paperatlas.lab import service
+
+    result = service.rerun_experiment(args.experiment, replan=args.replan, comment=args.comment)
+    print(f"experiment {result['id']} re-runs #{args.experiment}: {result['status']}")
+
+
 def cmd_watch(args: argparse.Namespace) -> None:
     from paperatlas.lab import service
 
@@ -257,7 +264,8 @@ def cmd_batch(args: argparse.Namespace) -> None:
     def say(message: str) -> None:
         print(f"{datetime.now():%H:%M:%S} {message}", flush=True)
 
-    run_batch(_project_id(args.project), limit=args.limit, poll_s=args.poll, say=say, current_engine_only=args.retest)
+    run_batch(_project_id(args.project), limit=args.limit, poll_s=args.poll, say=say, current_engine_only=args.retest,
+              parallel=args.parallel)
 
 
 def cmd_report(args: argparse.Namespace) -> None:
@@ -409,6 +417,12 @@ def build_parser() -> argparse.ArgumentParser:
         command.add_argument("experiment", type=int)
         command.set_defaults(func=cmd_control, control=control)
 
+    rerun = r2e_sub.add_parser("rerun", help="start a new experiment for the same claim on the current code")
+    rerun.add_argument("experiment", type=int)
+    rerun.add_argument("--replan", action="store_true", help="write a fresh spec from the paper instead of reusing it")
+    rerun.add_argument("--comment", default=None)
+    rerun.set_defaults(func=cmd_rerun)
+
     watch = r2e_sub.add_parser("watch", help="follow an experiment until its next gate")
     watch.add_argument("experiment", type=int)
     watch.set_defaults(func=cmd_watch)
@@ -424,6 +438,10 @@ def build_parser() -> argparse.ArgumentParser:
     batch.add_argument("--project", required=True)
     batch.add_argument("--limit", type=int, default=None)
     batch.add_argument("--poll", type=float, default=20.0)
+    batch.add_argument(
+        "--parallel", type=int, default=1,
+        help="experiments in flight at once (builds run side by side; GPU benchmarks still take turns)",
+    )
     batch.add_argument(
         "--retest", action="store_true", help="also re-run claims whose experiments predate the last project re-profile"
     )
