@@ -1,55 +1,25 @@
 import { useEffect, useState } from 'react'
-import { Link, useSearchParams } from 'react-router'
+import { useSearchParams } from 'react-router'
 import { useCategories, useClaims, useProjects, useTopics } from '../../api/queries'
 import type { Claim, Project } from '../../api/types'
-import { ClaimChips } from '../../components/ClaimCard'
-import { GenerateClaimExplainer } from '../../components/Explainers'
-import { ClaimDeepDive, ClaimHeadline, ClaimOverview, ThemeBadge } from '../../components/ClaimStory'
-import { RelatedStrip } from '../../components/Related'
-import { SearchIcon, SparkIcon } from '../../components/Icons'
-import { Button, EmptyState, ErrorState, Loading, Pagination, PaperLink, useDebounced } from '../../components/ui'
-import { formatScore, humanize, pluralize } from '../../lib/format'
+import { ClaimSummary } from '../../components/ClaimStory'
+import { ChevronDown, SearchIcon, SparkIcon, XIcon } from '../../components/Icons'
+import { Button, EmptyState, ErrorState, Loading, Pagination, cx, useDebounced } from '../../components/ui'
+import { formatAcronyms, formatScore, humanize, pluralize } from '../../lib/format'
+import { sentenceCase } from '../../lib/semantics'
 
 const LIMIT = 30
 
-function ClaimRow({ claim, project, primerOpen = false }: { claim: Claim; project?: Project; primerOpen?: boolean }) {
-  const [open, setOpen] = useState(false)
-  const explainer = claim.explainer
+function ClaimRow({ claim, project }: { claim: Claim; project?: Project }) {
   return (
-    <li className="px-4 py-4">
-      <div className="flex min-w-0 items-start gap-3">
-        <ThemeBadge claim={claim} explainer={explainer} className="hidden sm:inline-flex" />
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-            <Link to={`/research/claims/${claim.id}`} className="font-semibold text-fg hover:text-accent">
-              {claim.name}
-            </Link>
-            {typeof claim.search_score === 'number' && <span className="text-[11px] text-muted">relevance {formatScore(claim.search_score)}</span>}
-          </div>
-          <div className="mt-0.5 truncate text-xs text-muted">
-            <PaperLink paperId={claim.paper_id} title={claim.paper_title ?? claim.paper_id} className="text-muted hover:text-accent" />
-          </div>
-          <ClaimHeadline claim={claim} explainer={explainer} />
-        </div>
-      </div>
-      <ClaimOverview claim={claim} explainer={explainer} project={project} primerOpen={primerOpen} className="mt-3" />
-      {!explainer && <RelatedStrip related={claim.related} claimId={claim.id} paperId={claim.paper_id} className="mt-3" />}
-      <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2">
-        <ClaimChips claim={claim} />
-        {explainer ? (
-          <Button size="sm" variant="invisible" onClick={() => setOpen(!open)} aria-expanded={open} icon={<SparkIcon size={14} />}>
-            {open ? 'Hide explanation' : 'Explain'}
-          </Button>
-        ) : (
-          claim.testable && <GenerateClaimExplainer claimId={claim.id} projectId={project?.id} />
-        )}
-      </div>
-      {open && explainer && (
-        <div className="mt-3 space-y-6 border-t border-line-muted pt-4">
-          <ClaimDeepDive explainer={explainer} projectName={project?.name} />
-          <RelatedStrip related={claim.related} claimId={claim.id} paperId={claim.paper_id} />
-        </div>
-      )}
+    <li>
+      <ClaimSummary
+        claim={claim}
+        project={project}
+        to={`/research/claims/${claim.id}`}
+        canGenerate={claim.testable}
+        footer={typeof claim.search_score === 'number' && <span className="tabular-nums">Relevance {formatScore(claim.search_score)}</span>}
+      />
     </li>
   )
 }
@@ -61,6 +31,7 @@ export default function Claims() {
   const testable = params.get('testable') ?? ''
   const offset = Number(params.get('offset')) || 0
   const [search, setSearch] = useState(params.get('q') ?? '')
+  const [filtersOpen, setFiltersOpen] = useState(false)
   const q = useDebounced(search.trim(), 450)
   const categories = useCategories()
   const topics = useTopics()
@@ -93,89 +64,122 @@ export default function Claims() {
     if ((params.get('q') ?? '') !== q) update({ q: q || null })
   }, [q])
 
+  const topicName = topics.data?.find((item) => item.slug === topic)?.name
+  const activeFilters: { key: string; label: string }[] = [
+    category ? { key: 'category', label: `Category: ${sentenceCase(formatAcronyms(humanize(category)))}` } : null,
+    topic ? { key: 'topic', label: `Topic: ${formatAcronyms(topicName ?? topic)}` } : null,
+    testable ? { key: 'testable', label: testable === 'true' ? 'Testable only' : 'Not testable only' } : null,
+  ].filter((item): item is { key: string; label: string } => !!item)
+
   return (
     <div>
-      <div className="mb-4 grid gap-3 md:grid-cols-[1fr_auto_auto_auto] md:items-end">
-        <div>
-          <label htmlFor="claim-search" className="label">
-            Search claims
-          </label>
-          <div className="relative">
-            <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-subtle" />
-            <input
-              id="claim-search"
-              type="search"
-              className="input pl-8"
-              placeholder="hybrid full-text + semantic search, e.g. “time to first token”"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-          </div>
-        </div>
-        <div>
-          <label htmlFor="claim-category" className="label">
-            Category
-          </label>
-          <select id="claim-category" className="input md:w-48" value={category} onChange={(e) => update({ category: e.target.value || null })}>
-            <option value="">All categories</option>
-            {categories.data?.map((item) => (
-              <option key={item} value={item}>
-                {humanize(item)}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label htmlFor="claim-topic" className="label">
-            Topic
-          </label>
-          <select id="claim-topic" className="input md:w-56" value={topic} onChange={(e) => update({ topic: e.target.value || null })}>
-            <option value="">All topics</option>
-            {topics.data?.map((item) => (
-              <option key={item.slug} value={item.slug}>
-                {item.rank}. {item.name}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label htmlFor="claim-testable" className="label">
-            Testable
-          </label>
-          <select id="claim-testable" className="input md:w-32" value={testable} onChange={(e) => update({ testable: e.target.value || null })}>
-            <option value="">Any</option>
-            <option value="true">Testable</option>
-            <option value="false">Not testable</option>
-          </select>
-        </div>
-      </div>
-
-      <div className="card">
-        {claims.isLoading ? (
-          <Loading label={q ? 'Searching…' : 'Loading claims…'} />
-        ) : claims.isError ? (
-          <div className="p-4">
-            <ErrorState error={claims.error} onRetry={() => claims.refetch()} />
-          </div>
-        ) : !claims.data?.items.length ? (
-          <EmptyState title="No claim cards match" icon={<SparkIcon size={28} />}>
-            Try a broader search or clear the filters.
-          </EmptyState>
-        ) : (
-          <>
-            <div className="border-b border-line-muted px-4 py-2 text-xs text-muted">
-              {pluralize(claims.data.total, 'claim card')}
-              {q && ' · ranked by relevance'}
-              {claims.isFetching && ' · updating…'}
+      <section aria-label="Filters" className="mb-3 rounded-lg border border-line bg-canvas p-3">
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="min-w-0 flex-1 basis-56">
+            <label htmlFor="claim-search" className="label">
+              Search claims
+            </label>
+            <div className="relative">
+              <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-muted" />
+              <input
+                id="claim-search"
+                type="search"
+                className="input pl-8"
+                placeholder="e.g. time to first token"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
             </div>
-            <ul className="divide-y divide-line-muted">
-              {claims.data.items.map((claim, index) => (
-                <ClaimRow key={claim.id} claim={claim} project={project} primerOpen={index === 0} />
-              ))}
-            </ul>
-          </>
+          </div>
+          <Button
+            className="md:hidden"
+            onClick={() => setFiltersOpen((value) => !value)}
+            aria-expanded={filtersOpen}
+            aria-controls="claim-filters"
+            icon={<ChevronDown size={14} className={cx('transition-transform', filtersOpen && 'rotate-180')} />}
+          >
+            Filters{activeFilters.length > 0 && <span className="tabular-nums"> ({activeFilters.length})</span>}
+          </Button>
+          <div id="claim-filters" className={cx('w-full flex-wrap items-end gap-3 md:flex md:w-auto', filtersOpen ? 'grid grid-cols-1 sm:grid-cols-3' : 'hidden')}>
+            <div>
+              <label htmlFor="claim-category" className="label">
+                Category
+              </label>
+              <select id="claim-category" className="input md:w-48" value={category} onChange={(e) => update({ category: e.target.value || null })}>
+                <option value="">All categories</option>
+                {categories.data?.map((item) => (
+                  <option key={item} value={item}>
+                    {sentenceCase(formatAcronyms(humanize(item)))}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label htmlFor="claim-topic" className="label">
+                Topic
+              </label>
+              <select id="claim-topic" className="input md:w-56" value={topic} onChange={(e) => update({ topic: e.target.value || null })}>
+                <option value="">All topics</option>
+                {topics.data?.map((item) => (
+                  <option key={item.slug} value={item.slug}>
+                    {item.rank}. {formatAcronyms(item.name)}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label htmlFor="claim-testable" className="label">
+                Testable
+              </label>
+              <select id="claim-testable" className="input md:w-36" value={testable} onChange={(e) => update({ testable: e.target.value || null })}>
+                <option value="">Any</option>
+                <option value="true">Testable</option>
+                <option value="false">Not testable</option>
+              </select>
+            </div>
+          </div>
+        </div>
+        {activeFilters.length > 0 && (
+          <div className="mt-3 flex flex-wrap items-center gap-1.5">
+            <span className="text-xs text-muted">Active:</span>
+            {activeFilters.map((filter) => (
+              <button
+                key={filter.key}
+                type="button"
+                className="tag min-h-6 text-fg hover:border-fg"
+                onClick={() => update({ [filter.key]: null })}
+                aria-label={`Remove filter: ${filter.label}`}
+              >
+                {filter.label}
+                <XIcon size={12} className="shrink-0" />
+              </button>
+            ))}
+          </div>
         )}
-      </div>
+      </section>
+
+      {claims.isLoading ? (
+        <Loading label={q ? 'Searching…' : 'Loading claims…'} />
+      ) : claims.isError ? (
+        <ErrorState error={claims.error} onRetry={() => claims.refetch()} />
+      ) : !claims.data?.items.length ? (
+        <EmptyState title="No claim cards match" icon={<SparkIcon size={28} />}>
+          Try a broader search or clear the filters.
+        </EmptyState>
+      ) : (
+        <>
+          <p className="mb-2 text-xs text-muted" aria-live="polite">
+            {pluralize(claims.data.total, 'claim card')}
+            {q && ' · ranked by relevance'}
+            {claims.isFetching && ' · updating…'}
+          </p>
+          <ul className="space-y-3">
+            {claims.data.items.map((claim) => (
+              <ClaimRow key={claim.id} claim={claim} project={project} />
+            ))}
+          </ul>
+        </>
+      )}
       {!q && claims.data && <Pagination total={claims.data.total} limit={LIMIT} offset={offset} onChange={(next) => update({ offset: next ? String(next) : null })} />}
     </div>
   )

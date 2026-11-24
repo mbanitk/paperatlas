@@ -6,16 +6,16 @@ import { keys, useCategories, useCreateExperiments, useProjects, useRecommendati
 import { mergeEvents, useEventStream } from '../api/sse'
 import type { ExperimentMode, LabEvent, Project, Recommendation, TriageOptions, TriageStatus, TriageSummary } from '../api/types'
 import { api } from '../api/client'
-import { BlockerBadge, CategoryChip, DocTypeChip, LiveDot, StatusChip } from '../components/Badges'
-import { ClaimCardDetails, ClaimedEffect, Requirements } from '../components/ClaimCard'
-import { GenerateClaimExplainer } from '../components/Explainers'
-import { ClaimDeepDive, ClaimHeadline, ClaimOverview, QuickFacts, ThemeBadge } from '../components/ClaimStory'
+import { BlockerBadge, LiveDot, MetricName, StatusChip, Tag } from '../components/Badges'
+import { ClaimedEffect } from '../components/ClaimCard'
+import { ClaimEyebrow, ClaimSummary } from '../components/ClaimStory'
+import { StickyActionBar } from '../components/ActionBar'
 import { ConfirmDialog, Modal } from '../components/Dialog'
-import { ConceptRef, RelatedStrip } from '../components/Related'
+import { ConceptRef } from '../components/Related'
 import { EventTimeline } from '../components/EventTimeline'
-import { ChevronDown, ChevronRight, RefreshIcon, SearchIcon, SparkIcon } from '../components/Icons'
-import { Meter } from '../components/Charts'
-import { PredictionChip, PredictionRow } from '../components/Prediction'
+import { CheckIcon, ChevronDown, RefreshIcon, SearchIcon, SparkIcon, XIcon } from '../components/Icons'
+import { PredictionChip } from '../components/Prediction'
+import { InfoPopover } from '../components/Tooltip'
 import { useToast } from '../components/Toast'
 import {
   Banner,
@@ -25,23 +25,25 @@ import {
   Chip,
   EmptyState,
   ErrorState,
-  ExternalLink,
   Field,
   InlineError,
   Loading,
+  MathText,
   PageHeader,
-  PaperLink,
   RelativeTime,
   cx,
   errorMessage,
   useDebounced,
 } from '../components/ui'
-import { isPlainLanguage } from '../lib/explainer'
-import { formatScore, humanize, pluralize } from '../lib/format'
+import { experimentVerb, gateOneAnswer, matchScoreExplanation } from '../lib/claims'
+import { formatAcronyms, humanize, pluralize, sanitizeText } from '../lib/format'
 import { LIKELIHOOD_INFO, LIKELIHOODS, likelihoodOf, sortByPrediction } from '../lib/roofline'
+import { sentenceCase } from '../lib/semantics'
 import { isActiveStatus, isTriageRunning, TRIAGE_STATUS_LABEL, TRIAGE_STEPS, triageStepState } from '../lib/stages'
 
 const MAX_PICK = 5
+/** Cards shown before "Show more": keeps Gate 1 a scannable list. */
+const PAGE = 30
 
 // ---- research scan (triage) -----------------------------------------------------------------
 
@@ -90,8 +92,8 @@ function ScanDialog({ open, onClose, projectId, onStarted }: { open: boolean; on
       }
     >
       <p className="mb-4 text-muted">
-        Discovers recent papers and patents on the trending topics, distills them into claim cards and re-ranks them for this project. Ends at
-        Gate 1 with a fresh shortlist. Runs on the worker; you can leave this page.
+        Finds recent papers and patents on the trending topics, summarises them into claim cards and re-ranks them for this project. It ends here
+        at Gate 1 with a fresh shortlist. It runs on the worker and takes several minutes; you can leave this page.
       </p>
       <div className="space-y-4">
         <Checkbox
@@ -102,17 +104,23 @@ function ScanDialog({ open, onClose, projectId, onStarted }: { open: boolean; on
           description="Re-cluster the seed areas and pick a new top 10 (slower)."
         />
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Papers per topic" htmlFor="scan-per-topic" hint="1–50 · blank = configured default">
+          <Field label="Papers per topic" htmlFor="scan-per-topic" hint="1 to 50. Leave blank for the configured default.">
             <input id="scan-per-topic" className="input" type="number" min={1} max={50} value={perTopic} onChange={(e) => setPerTopic(e.target.value)} placeholder="default" />
           </Field>
-          <Field label="Distill limit" htmlFor="scan-distill" hint="Max papers to distill (1–500)">
+          <Field label="Max papers to summarise" htmlFor="scan-distill" hint="1 to 500">
             <input id="scan-distill" className="input" type="number" min={1} max={500} value={distillLimit} onChange={(e) => setDistillLimit(e.target.value)} />
           </Field>
         </div>
-        <Checkbox id="scan-llm" checked={useLlm} onChange={setUseLlm} label="Use the LLM" description="Uncheck to use heuristics only (no API key needed)." />
+        <Checkbox
+          id="scan-llm"
+          checked={useLlm}
+          onChange={setUseLlm}
+          label="Write summaries with the LLM"
+          description="Uncheck to use keyword heuristics instead (no API key needed)."
+        />
       </div>
       {start.error instanceof ApiError && start.error.status === 409 ? (
-        <Banner tone="attention">{start.error.message}</Banner>
+        <Banner tone="caution">{start.error.message}</Banner>
       ) : (
         <InlineError error={start.error} />
       )}
@@ -153,7 +161,7 @@ function TriageProgress({ triageId, onReady }: { triageId: number; onReady: () =
       title={
         <span className="flex items-center gap-2">
           Research scan #{data.id}
-          <Chip tone={data.status === 'failed' ? 'danger' : running ? 'accent' : 'success'}>{TRIAGE_STATUS_LABEL[data.status] ?? data.status}</Chip>
+          <Chip tone={data.status === 'failed' ? 'negative' : running ? 'info' : 'neutral'}>{TRIAGE_STATUS_LABEL[data.status] ?? sentenceCase(humanize(data.status))}</Chip>
         </span>
       }
       actions={running ? <LiveDot status={status} /> : <RelativeTime iso={data.updated_at} className="text-xs text-muted" />}
@@ -166,21 +174,24 @@ function TriageProgress({ triageId, onReady }: { triageId: number; onReady: () =
               key={step.key}
               className={cx(
                 'rounded-md border px-2.5 py-1.5 text-xs',
-                state === 'done' && 'border-success/30 bg-success-subtle text-success',
-                state === 'active' && 'border-accent/40 bg-accent-subtle font-semibold text-accent',
-                state === 'failed' && 'border-danger/30 bg-danger-subtle text-danger',
+                state === 'done' && 'border-line bg-canvas text-fg',
+                state === 'active' && 'border-info/40 bg-info-subtle font-semibold text-info-fg',
+                state === 'failed' && 'border-negative/30 bg-negative-subtle text-negative-fg',
                 state === 'pending' && 'border-line-muted bg-canvas-subtle text-muted',
               )}
             >
-              {step.label}
-              <span className="block text-[10.5px] opacity-80">{state === 'active' ? 'running…' : state}</span>
+              <span className="flex items-center gap-1">
+                {state === 'done' && <CheckIcon size={12} className="shrink-0" />}
+                {step.label}
+              </span>
+              <span className="block text-xs font-normal text-muted">{state === 'active' ? 'Running…' : state === 'done' ? 'Done' : state === 'failed' ? 'Failed' : 'Waiting'}</span>
             </li>
           )
         })}
       </ol>
       {data.status === 'queued' && (
         <p className="mb-2 text-xs text-muted">
-          Queued — it starts when a worker picks it up (<code className="code-inline">paperatlas services up</code> runs one).
+          Queued. It starts when a worker picks it up (<code className="code-inline">paperatlas services up</code> runs one).
         </p>
       )}
       <div className="max-h-56 overflow-y-auto rounded-md border border-line-muted px-3">
@@ -203,14 +214,14 @@ function TriageBanner({ triage, logOpen, onToggleLog }: { triage: TriageSummary;
         }
       >
         <strong>Research scan #{triage.id}</strong> finished <RelativeTime iso={triage.updated_at} /> with {pluralize(triage.shortlist_size, 'shortlisted claim')}.
-        Gate 1: pick 1–2 claims below — the new experiments are linked to this scan.
+        Pick 1–2 claims below; new experiments are linked to this scan.
       </Banner>
     )
   }
   if (triage.status === 'failed') {
     return (
       <Banner
-        tone="danger"
+        tone="negative"
         action={
           <Button size="sm" variant="invisible" onClick={onToggleLog} aria-expanded={logOpen}>
             {logOpen ? 'Hide scan log' : 'Scan log'}
@@ -226,172 +237,124 @@ function TriageBanner({ triage, logOpen, onToggleLog }: { triage: TriageSummary;
 
 // ---- recommendation card --------------------------------------------------------------------
 
-function RecommendationCard({ item, selected, disabledReason, onToggle, shortlisted, project, primerOpen = false }: {
+/**
+ * Compact Gate 1 card (§3.4): what it is, what we expect here vs what the paper reports, effort and risk;
+ * Explain and Evidence open the rest. Selecting it adds it to the pick bar.
+ */
+function RecommendationCard({ item, selected, maxReached, onToggle, shortlisted, project }: {
   item: Recommendation
   selected: boolean
-  disabledReason: string | null
+  /** The pick limit is reached, so unselected cards can't be added. */
+  maxReached: boolean
   onToggle: () => void
   shortlisted: boolean
   project?: Project
-  primerOpen?: boolean
 }) {
-  const [open, setOpen] = useState<'explain' | 'card' | null>(null)
   const blocked = !item.testable_here || item.blockers.length > 0
   const checkboxId = `pick-${item.claim_id}`
+  const experimentId = `${checkboxId}-experiment`
+  const reasonId = `${checkboxId}-reason`
+  const active = !!item.experiment_status && isActiveStatus(item.experiment_status)
+  const disabled = !selected && (active || maxReached)
   const explainer = item.explainer
-  const plain = isPlainLanguage(explainer)
-  const toggle = (panel: 'explain' | 'card') => setOpen((current) => (current === panel ? null : panel))
-  const chips = (
-    <div className="flex flex-wrap items-center gap-1.5">
-      <CategoryChip category={item.category} />
-      {item.topics.map((topic) => (
-        <Link key={topic.slug} to={`/research/topics/${topic.slug}`} className="chip border-line bg-canvas text-muted hover:border-accent hover:text-accent hover:no-underline">
-          {topic.name}
-        </Link>
-      ))}
-      <Requirements claim={item} />
-    </div>
-  )
   return (
-    <article
-      className={cx(
-        'card transition-colors',
-        selected ? 'border-accent ring-1 ring-accent' : blocked ? 'border-line-muted bg-canvas-subtle/60' : 'hover:border-subtle/60',
-      )}
-      aria-labelledby={`rec-title-${item.claim_id}`}
-    >
-      <div className="flex gap-3 p-4">
-        <div className="flex flex-col items-center gap-2 pt-0.5">
-          <input
-            id={checkboxId}
-            type="checkbox"
-            className="size-4.5 accent-accent disabled:cursor-not-allowed"
-            checked={selected}
-            disabled={!!disabledReason && !selected}
-            onChange={onToggle}
-            aria-describedby={disabledReason ? `${checkboxId}-reason` : undefined}
-            aria-label={`Select “${item.name}” for an experiment`}
-          />
-          <span className="text-xs font-semibold text-muted tabular-nums" title="Rank">
-            #{item.rank}
+    <ClaimSummary
+      claim={item}
+      explainer={explainer}
+      project={project}
+      prediction={item.prediction ?? null}
+      fit={item.fit}
+      blockers={item.blockers}
+      selected={selected}
+      muted={blocked && !selected}
+      titleId={`rec-title-${item.claim_id}`}
+      leading={
+        <input
+          id={checkboxId}
+          type="checkbox"
+          className="checkbox"
+          checked={selected}
+          disabled={disabled}
+          onChange={onToggle}
+          aria-describedby={disabled ? (active ? experimentId : reasonId) : undefined}
+          aria-label={`Select for testing: ${sanitizeText(item.name)}`}
+        />
+      }
+      title={
+        <label htmlFor={checkboxId} className={cx(disabled ? 'cursor-default' : 'cursor-pointer')}>
+          <MathText>{item.name}</MathText>
+        </label>
+      }
+      eyebrow={<ClaimEyebrow claim={item} explainer={explainer} prefix={`#${item.rank}`} />}
+      status={
+        <>
+          {selected && (
+            <Chip tone="info">
+              <CheckIcon size={12} className="shrink-0" /> Selected
+            </Chip>
+          )}
+          {shortlisted && <Tag title="On the latest research scan’s shortlist">Shortlisted</Tag>}
+          {item.blockers.map((blocker) => (
+            <BlockerBadge key={blocker} blocker={blocker} />
+          ))}
+        </>
+      }
+      note={item.rationale ? `Why here: ${sanitizeText(item.rationale)}` : undefined}
+      footer={
+        <>
+          <span className="hidden items-center sm:inline-flex">
+            Match <strong className="ml-1 font-semibold text-fg tabular-nums">{item.score.toFixed(2)}</strong>
+            <InfoPopover title="Match score" label="About the match score" content={matchScoreExplanation(item)} />
           </span>
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 items-start gap-3">
-            <ThemeBadge claim={item} explainer={explainer} className="hidden sm:inline-flex" />
-            <div className="min-w-0 flex-1">
-              <h3 id={`rec-title-${item.claim_id}`} className="text-base leading-snug font-semibold">
-                <label htmlFor={checkboxId} className="cursor-pointer">
-                  {item.name}
-                </label>
-              </h3>
-              <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted">
-                <DocTypeChip docType={item.paper_doc_type} />
-                <PaperLink paperId={item.paper_id} title={item.paper_title ?? item.paper_id} className="min-w-0 text-muted hover:text-accent" />
-                {item.paper_date && <span>· {item.paper_date.slice(0, 7)}</span>}
-                {item.paper_url && (
-                  <>
-                    <span>·</span>
-                    <ExternalLink href={item.paper_url} className="text-muted">
-                      source
-                    </ExternalLink>
-                  </>
-                )}
-                {shortlisted && <Chip tone="accent">shortlisted</Chip>}
-                {item.blockers.map((blocker) => (
-                  <BlockerBadge key={blocker} blocker={blocker} />
-                ))}
-              </div>
-              <ClaimHeadline claim={item} explainer={explainer} />
-            </div>
-          </div>
-
-          <ClaimOverview
-            claim={item}
-            explainer={explainer}
-            project={project}
-            prediction={item.prediction ?? null}
-            fit={item.fit}
-            blockers={item.blockers}
-            primerOpen={primerOpen}
-            className="mt-3.5"
-          />
-
-          {!plain && <PredictionRow prediction={item.prediction} className="mt-3" />}
-
-          {!explainer && (
-            <>
-              <RelatedStrip related={item.related} claimId={item.claim_id} paperId={item.paper_id} className="mt-3" />
-              <div className="mt-3">{chips}</div>
-            </>
+          {item.experiment_id && item.experiment_status && (
+            <Link id={experimentId} to={`/experiments/${item.experiment_id}`} className="inline-flex min-h-6 items-center gap-1.5 text-fg hover:no-underline">
+              <span className="underline-offset-2 hover:underline">
+                <span className="hidden sm:inline">{experimentVerb(item.experiment_status)} </span>
+                <span className="sr-text sm:hidden">{experimentVerb(item.experiment_status)} experiment </span>#{item.experiment_id}
+              </span>
+              <StatusChip status={item.experiment_status} short className="sm:hidden" />
+              <StatusChip status={item.experiment_status} className="max-sm:hidden" />
+            </Link>
           )}
-
+          {maxReached && !selected && !active && (
+            <span id={reasonId} className="text-muted">
+              Limit of {MAX_PICK} reached
+            </span>
+          )}
+        </>
+      }
+      evidence={
+        <>
           {item.rationale && (
-            <p className="mt-3.5 rounded-lg bg-canvas-subtle px-3.5 py-2.5 text-sm text-fg">
-              <span className="mr-1 inline-flex items-center gap-1 text-xs font-semibold text-done">
-                <SparkIcon size={12} /> Why for this project:
-              </span>
-              {item.rationale}
-            </p>
+            <section aria-label="Why it suits this project">
+              <h4 className="mb-1 text-sm font-semibold text-fg">Why it suits {project?.name ?? 'this project'}</h4>
+              <p className="max-w-[75ch] text-fg">{sanitizeText(item.rationale)}</p>
+            </section>
           )}
-
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-muted">
-              <div className="w-20">
-                <Meter value={Math.min(item.score, 1)} label={`Match score ${formatScore(item.score)}`} tone="done" />
-              </div>
-              <span title="score = fit × (0.4 + gain) ÷ effort cost">
-                score <strong className="text-fg tabular-nums">{formatScore(item.score)}</strong>
-              </span>
-              {plain && <QuickFacts claim={item} explainer={explainer} fit={item.fit} blockers={item.blockers} />}
-              {item.target_metric && (
-                <span>
-                  measured as <code className="code-inline">{item.target_metric}</code>
-                </span>
-              )}
-            </div>
-            <div className="flex flex-wrap items-center gap-1">
-              {item.experiment_id && item.experiment_status && (
-                <Link to={`/experiments/${item.experiment_id}`} className="mr-1 inline-flex items-center gap-1.5 text-xs hover:no-underline">
-                  Experiment #{item.experiment_id} <StatusChip status={item.experiment_status} />
-                </Link>
-              )}
-              {explainer ? (
-                <Button size="sm" variant="invisible" onClick={() => toggle('explain')} aria-expanded={open === 'explain'} icon={<SparkIcon size={14} />}>
-                  {open === 'explain' ? 'Hide explanation' : 'Explain'}
-                </Button>
-              ) : (
-                <GenerateClaimExplainer claimId={item.claim_id} projectId={item.project_id} />
-              )}
-              <Button size="sm" variant="invisible" onClick={() => toggle('card')} aria-expanded={open === 'card'} icon={open === 'card' ? <ChevronDown /> : <ChevronRight />}>
-                Claim card
-              </Button>
-            </div>
-          </div>
-          {disabledReason && !selected && (
-            <p id={`${checkboxId}-reason`} className="mt-2 text-xs text-muted">
-              {disabledReason}
-            </p>
+          <section aria-label="Match score">
+            <h4 className="mb-1 text-sm font-semibold text-fg">
+              Match score <span className="font-normal text-muted tabular-nums">{item.score.toFixed(2)}</span>
+            </h4>
+            <p className="max-w-[75ch] text-muted">{matchScoreExplanation(item)}</p>
+            {item.target_metric && (
+              <p className="mt-1 flex flex-wrap items-baseline gap-x-1.5 text-muted">
+                The experiment would measure <MetricName metric={item.target_metric} showId className="text-fg" />
+              </p>
+            )}
+          </section>
+          {item.topics.length > 0 && (
+            <section aria-label="Topics" className="flex flex-wrap items-center gap-1.5">
+              <span className="text-xs text-muted">Topics:</span>
+              {item.topics.map((topic) => (
+                <Tag key={topic.slug} to={`/research/topics/${topic.slug}`}>
+                  {formatAcronyms(topic.name)}
+                </Tag>
+              ))}
+            </section>
           )}
-          {open === 'explain' && explainer && (
-            <div className="mt-3 space-y-6 border-t border-line-muted pt-4">
-              <ClaimDeepDive explainer={explainer} projectName={project?.name} />
-              {(item.related || item.topics.length > 0 || item.category) && (
-                <section aria-label="Related concepts and tags" className="space-y-2.5">
-                  <RelatedStrip related={item.related} claimId={item.claim_id} paperId={item.paper_id} />
-                  {chips}
-                </section>
-              )}
-            </div>
-          )}
-          {open === 'card' && (
-            <div className="mt-3 border-t border-line-muted pt-3">
-              <ClaimCardDetails claim={item} showPaper={false} />
-            </div>
-          )}
-        </div>
-      </div>
-    </article>
+        </>
+      }
+    />
   )
 }
 
@@ -446,24 +409,27 @@ function PrerequisitesChoice({ picks, mode, onChange, lookup }: {
   const withPrerequisites = picks.filter((item) => (item.related?.prerequisites?.length ?? 0) > 0)
   if (!withPrerequisites.length) return null
   return (
-    <section className="mb-3 rounded-md border border-accent/30 bg-accent-subtle/30 p-3">
+    <section className="mb-3 rounded-lg border border-line bg-canvas-subtle p-3">
       <h3 className="text-sm font-semibold">Builds on other concepts from the same paper</h3>
       <ul className="mt-1.5 space-y-1.5">
         {withPrerequisites.map((item) => (
           <li key={item.claim_id} className="text-xs">
-            <span className="font-medium text-fg">{item.name}</span> <span className="text-muted">needs first:</span>
+            <span className="font-medium text-fg">
+              <MathText>{item.name}</MathText>
+            </span>{' '}
+            <span className="text-muted">needs first:</span>
             <ol className="mt-1 flex flex-wrap items-center gap-1.5">
               {item.related!.prerequisites.map((node) => {
                 const existing = node.claim_id ? lookup.get(node.claim_id) : undefined
                 return (
                   <li key={node.concept_id} className="flex min-w-0 flex-wrap items-center gap-1">
                     <ConceptRef node={node} max={34} />
-                    <span className={node.testable_here ? 'text-success' : 'text-muted'}>{node.testable_here ? 'testable here' : 'not testable here'}</span>
+                    <span className={node.testable_here ? 'text-fg' : 'text-muted'}>{node.testable_here ? 'Testable here' : 'Not testable here'}</span>
                     {existing?.experiment_id && existing.experiment_status && (
                       <>
-                        <span className="text-subtle">·</span>
+                        <span className="text-muted" aria-hidden="true">·</span>
                         <Link to={`/experiments/${existing.experiment_id}`} className="inline-flex items-center gap-1">
-                          experiment #{existing.experiment_id} <StatusChip status={existing.experiment_status} />
+                          {experimentVerb(existing.experiment_status)} #{existing.experiment_id} <StatusChip status={existing.experiment_status} />
                         </Link>
                       </>
                     )}
@@ -484,15 +450,15 @@ function PrerequisitesChoice({ picks, mode, onChange, lookup }: {
                 key={option.value}
                 className={cx(
                   'flex cursor-pointer gap-2.5 rounded-md border bg-canvas px-3 py-2',
-                  mode === option.value ? 'border-accent ring-1 ring-accent' : 'border-line hover:border-subtle',
+                  mode === option.value ? 'border-info ring-1 ring-info/40' : 'border-line hover:border-muted',
                 )}
               >
-                <input type="radio" name="gate1-mode" value={option.value} checked={mode === option.value} onChange={() => onChange(option.value)} className="mt-0.5 accent-accent" />
+                <input type="radio" name="gate1-mode" value={option.value} checked={mode === option.value} onChange={() => onChange(option.value)} className="mt-0.5 size-4 shrink-0 accent-accent" />
                 <span className="min-w-0">
                   <span className="flex flex-wrap items-center gap-x-2 text-sm font-medium">
                     {option.label}
                     <span className="text-xs font-normal text-muted">
-                      {option.value === 'chain' ? '≈ ' : ''}
+                      {option.value === 'chain' ? 'about ' : ''}
                       {pluralize(count, 'experiment')}
                     </span>
                   </span>
@@ -638,11 +604,24 @@ export default function Recommendations() {
     )
   }
 
-  const disabledReason = (item: Recommendation): string | null => {
-    if (item.experiment_status && isActiveStatus(item.experiment_status)) return `Already being tested in experiment #${item.experiment_id}.`
-    if (selected.size >= MAX_PICK) return `You can start at most ${MAX_PICK} experiments at once.`
-    return null
-  }
+  const [filtersOpen, setFiltersOpen] = useState(false)
+  const [limit, setLimit] = useState(PAGE)
+  useEffect(() => {
+    setLimit(PAGE)
+  }, [projectId, q, topic, category, includeBlocked, predicted, sortByPredicted])
+  const topicName = topics.data?.find((item) => item.slug === topic)?.name
+  const activeFilters: { key: string; label: string }[] = [
+    topic ? { key: 'topic', label: `Topic: ${formatAcronyms(topicName ?? topic)}` } : null,
+    category ? { key: 'category', label: `Category: ${sentenceCase(formatAcronyms(humanize(category)))}` } : null,
+    predicted ? { key: 'pred', label: `Expected: ${LIKELIHOOD_INFO[likelihoodOf({ likelihood: predicted, predicted_gain_pct: null })].label}` } : null,
+    includeBlocked ? { key: 'blocked', label: 'Including blocked' } : null,
+    sortByPredicted ? { key: 'sort', label: 'Sorted by expected gain' } : null,
+  ].filter((item): item is { key: string; label: string } => !!item)
+  const chip = project?.hardware?.chip ? String(project.hardware.chip) : null
+  const likelyCount = (recs.data ?? []).filter((item) => likelihoodOf(item.prediction) === 'likely').length
+  const answer = recs.data
+    ? gateOneAnswer({ total: recs.data.length, likely: likelyCount, project: project?.name, chip, estimated: !!project?.roofline || likelyCount > 0 })
+    : null
 
   if (projects.isLoading) return <Loading label="Loading projects…" />
   if (waitingForTriage) return <Loading label={`Loading research scan #${requestedTriage}…`} />
@@ -659,15 +638,16 @@ export default function Recommendations() {
   }
 
   return (
-    <div className={cx(picks.length > 0 && 'pb-24')}>
+    <div>
       <PageHeader
         title="Recommendations"
-        eyebrow="Gate 1 · pick what to test"
+        eyebrow="Gate 1 · Pick claims to test"
+        answer={answer && <>{answer} Pick 1–2 to test.</>}
         description={
-          <>
-            Claim cards from recent papers, ranked for <strong className="text-fg">{project?.name}</strong>
-            {project?.hardware && <> ({String(project.hardware.chip ?? '')})</>}. Select 1–2 to turn into experiments.
-          </>
+          <span className="max-sm:hidden">
+            Claims from recent papers, ranked by how well they suit <strong className="font-semibold text-fg">{project?.name}</strong>. Nothing is built until you
+            approve the test plan (Gate 2).
+          </span>
         }
         actions={
           <>
@@ -698,7 +678,7 @@ export default function Recommendations() {
               ))}
             </select>
             <Button onClick={() => setScanOpen(true)} icon={<RefreshIcon />} disabled={!!runningTriage}>
-              {runningTriage ? 'Scan running…' : 'Run research scan'}
+              {runningTriage ? 'Scan running…' : 'Run research scan…'}
             </Button>
           </>
         }
@@ -707,7 +687,7 @@ export default function Recommendations() {
       <div className="space-y-3">
         {requestedMissing && (
           <Banner
-            tone="danger"
+            tone="negative"
             action={
               <Button size="sm" variant="invisible" onClick={() => setParam('triage', null)}>
                 Show latest scan
@@ -729,7 +709,7 @@ export default function Recommendations() {
           <TriageProgress
             triageId={progressTriageId}
             onReady={() => {
-              toast.success('Research scan finished — recommendations refreshed')
+              toast.success('Research scan finished. Recommendations refreshed.')
             }}
           />
         )}
@@ -738,134 +718,180 @@ export default function Recommendations() {
         )}
       </div>
 
-      <div className="mt-4 mb-4 grid gap-3 rounded-lg border border-line bg-canvas p-3 md:grid-cols-[1fr_auto_auto_auto] md:items-end">
-        <div>
-          <label htmlFor="rec-search" className="label">
-            Search
-          </label>
-          <div className="relative">
-            <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-subtle" />
-            <input
-              id="rec-search"
-              type="search"
-              className="input pl-8"
-              placeholder="e.g. speculative decoding, KV cache quantization…"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-            />
-          </div>
-        </div>
-        <div>
-          <label htmlFor="rec-topic" className="label">
-            Topic
-          </label>
-          <select id="rec-topic" className="input md:w-56" value={topic} onChange={(e) => setParam('topic', e.target.value || null)}>
-            <option value="">All topics</option>
-            {topics.data?.map((item) => (
-              <option key={item.slug} value={item.slug}>
-                {item.rank}. {item.name}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label htmlFor="rec-category" className="label">
-            Category
-          </label>
-          <select id="rec-category" className="input md:w-48" value={category} onChange={(e) => setParam('category', e.target.value || null)}>
-            <option value="">All categories</option>
-            {categories.data?.map((item) => (
-              <option key={item} value={item}>
-                {humanize(item)}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="pb-1.5">
-          <Checkbox id="rec-blocked" checked={includeBlocked} onChange={(checked) => setParam('blocked', checked ? '1' : null)} label="Include blocked" />
-        </div>
-      </div>
-
-      {recs.isLoading ? (
-        <Loading label={q ? 'Searching (hybrid full-text + vector)…' : 'Ranking claims…'} />
-      ) : recs.isError ? (
-        <ErrorState error={recs.error} onRetry={() => recs.refetch()} />
-      ) : !recs.data?.length ? (
-        <EmptyState title="No recommendations match" icon={<SparkIcon size={28} />} action={<Button onClick={() => setScanOpen(true)}>Run research scan</Button>}>
-          {q || topic || category ? 'Try clearing the filters' : 'No claims have been matched to this project yet'}
-          {!includeBlocked && ' or include blocked claims'}.
-        </EmptyState>
-      ) : (
-        <>
-          {project && !project.roofline && (
-            <div className="mb-3">
-              <Banner tone="muted" action={<Link to={`/projects?project=${project.id}`} className="text-sm">Measure roofline</Link>}>
-                <strong>Predictions are unknown</strong> until the engine’s roofline is measured — the cost model needs it to estimate each claim’s gain here.
-              </Banner>
+      <section aria-label="Filters" className="mt-4 mb-3 rounded-lg border border-line bg-canvas p-3">
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="min-w-0 flex-1 basis-56">
+            <label htmlFor="rec-search" className="label">
+              Search
+            </label>
+            <div className="relative">
+              <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-muted" />
+              <input
+                id="rec-search"
+                type="search"
+                className="input pl-8"
+                placeholder="e.g. speculative decoding, KV cache"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+              />
             </div>
-          )}
-          <div className="mb-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-xs text-muted">
-            <span>
-              {predicted ? `${pluralize(shown.length, 'claim')} of ${recs.data.length}` : pluralize(recs.data.length, 'claim')} {recs.isFetching && '· updating…'}
-              <span className="hidden sm:inline"> · suggested: pick 1–2 (max {MAX_PICK})</span>
-            </span>
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-              <span className="inline-flex items-center gap-1.5">
-              <label htmlFor="rec-predicted">Predicted</label>
-              <select id="rec-predicted" className="input h-7 w-auto py-0 text-xs" value={predicted} onChange={(e) => setParam('pred', e.target.value || null)}>
-                <option value="">any likelihood</option>
+          </div>
+          <Button
+            className="md:hidden"
+            onClick={() => setFiltersOpen((value) => !value)}
+            aria-expanded={filtersOpen}
+            aria-controls="rec-filters"
+            icon={<ChevronDown size={14} className={cx('transition-transform', filtersOpen && 'rotate-180')} />}
+          >
+            Filters{activeFilters.length > 0 && <span className="tabular-nums"> ({activeFilters.length})</span>}
+          </Button>
+          <div id="rec-filters" className={cx('w-full flex-wrap items-end gap-3 md:flex md:w-auto', filtersOpen ? 'grid grid-cols-1 sm:grid-cols-2' : 'hidden')}>
+            <div>
+              <label htmlFor="rec-topic" className="label">
+                Topic
+              </label>
+              <select id="rec-topic" className="input md:w-52" value={topic} onChange={(e) => setParam('topic', e.target.value || null)}>
+                <option value="">All topics</option>
+                {topics.data?.map((item) => (
+                  <option key={item.slug} value={item.slug}>
+                    {item.rank}. {formatAcronyms(item.name)}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label htmlFor="rec-category" className="label">
+                Category
+              </label>
+              <select id="rec-category" className="input md:w-44" value={category} onChange={(e) => setParam('category', e.target.value || null)}>
+                <option value="">All categories</option>
+                {categories.data?.map((item) => (
+                  <option key={item} value={item}>
+                    {sentenceCase(formatAcronyms(humanize(item)))}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label htmlFor="rec-predicted" className="label">
+                Expected here
+              </label>
+              <select id="rec-predicted" className="input md:w-40" value={predicted} onChange={(e) => setParam('pred', e.target.value || null)}>
+                <option value="">Any estimate</option>
                 {LIKELIHOODS.map((value) => (
                   <option key={value} value={value}>
                     {LIKELIHOOD_INFO[value].label}
                   </option>
                 ))}
               </select>
-              </span>
-              <span className="inline-flex items-center gap-1.5">
-              <label htmlFor="rec-sort">Sort</label>
-              <select id="rec-sort" className="input h-7 w-auto py-0 text-xs" value={sortByPredicted ? 'predicted' : ''} onChange={(e) => setParam('sort', e.target.value || null)}>
-                <option value="">match score</option>
-                <option value="predicted">predicted gain here</option>
+            </div>
+            <div>
+              <label htmlFor="rec-sort" className="label">
+                Sort by
+              </label>
+              <select id="rec-sort" className="input md:w-44" value={sortByPredicted ? 'predicted' : ''} onChange={(e) => setParam('sort', e.target.value || null)}>
+                <option value="">Match score</option>
+                <option value="predicted">Expected gain here</option>
               </select>
-              </span>
+            </div>
+            <div className="pb-1">
+              <Checkbox id="rec-blocked" checked={includeBlocked} onChange={(checked) => setParam('blocked', checked ? '1' : null)} label="Include blocked" />
             </div>
           </div>
+        </div>
+        {activeFilters.length > 0 && (
+          <div className="mt-3 flex flex-wrap items-center gap-1.5">
+            <span className="text-xs text-muted">Active:</span>
+            {activeFilters.map((filter) => (
+              <button
+                key={filter.key}
+                type="button"
+                className="tag min-h-6 text-fg hover:border-fg"
+                onClick={() => setParam(filter.key, null)}
+                aria-label={`Remove filter: ${filter.label}`}
+              >
+                {filter.label}
+                <XIcon size={12} className="shrink-0" />
+              </button>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {recs.isLoading ? (
+        <Loading label={q ? 'Searching (full text and semantic)…' : 'Ranking claims…'} />
+      ) : recs.isError ? (
+        <ErrorState error={recs.error} onRetry={() => recs.refetch()} />
+      ) : !recs.data?.length ? (
+        <EmptyState title="No recommendations match" icon={<SparkIcon size={28} />} action={<Button onClick={() => setScanOpen(true)}>Run research scan…</Button>}>
+          {q || topic || category ? 'Try clearing the filters' : 'No claims have been matched to this project yet'}
+          {!includeBlocked && ', or include blocked claims'}.
+        </EmptyState>
+      ) : (
+        <>
+          {project && !project.roofline && (
+            <div className="mb-3">
+              <Banner tone="neutral" action={<Link to={`/projects?project=${project.id}`} className="text-sm">Measure roofline</Link>}>
+                <strong>Expected gains aren’t estimated yet.</strong> The cost model needs the engine’s measured roofline to estimate each claim’s gain here.
+              </Banner>
+            </div>
+          )}
+          <p className="mb-2 text-xs text-muted" aria-live="polite">
+            {predicted ? `${pluralize(shown.length, 'claim')} of ${recs.data.length}` : pluralize(recs.data.length, 'claim')}
+            {recs.isFetching && ' · updating…'}
+            <span> · pick 1–2 (up to {MAX_PICK})</span>
+          </p>
           {!shown.length && (
-            <EmptyState title={`No claims predicted ${LIKELIHOOD_INFO[likelihoodOf({ likelihood: predicted, predicted_gain_pct: null })].label}`} icon={<SparkIcon size={28} />} action={<Button onClick={() => setParam('pred', null)}>Show all predictions</Button>}>
+            <EmptyState
+              title={`No claims with “${LIKELIHOOD_INFO[likelihoodOf({ likelihood: predicted, predicted_gain_pct: null })].label}”`}
+              icon={<SparkIcon size={28} />}
+              action={<Button onClick={() => setParam('pred', null)}>Show every estimate</Button>}
+            >
               {predicted === 'unlikely' && !includeBlocked
-                ? 'Claims the cost model calls unlikely are blocked — tick “Include blocked” to see them.'
-                : 'Try another likelihood or include blocked claims.'}
+                ? 'Claims the cost model calls unlikely to help are blocked. Tick “Include blocked” to see them.'
+                : 'Try another estimate, or include blocked claims.'}
             </EmptyState>
           )}
           <div className="space-y-3">
-            {shown.map((item, index) => (
+            {shown.slice(0, limit).map((item) => (
               <RecommendationCard
                 key={item.claim_id}
-                primerOpen={index === 0}
                 item={item}
                 selected={selected.has(item.claim_id)}
-                disabledReason={disabledReason(item)}
+                maxReached={selected.size >= MAX_PICK}
                 onToggle={() => toggle(item)}
                 shortlisted={shortlist.has(item.claim_id)}
                 project={project}
               />
             ))}
           </div>
+          {shown.length > limit && (
+            <div className="mt-4 flex flex-col items-center gap-1">
+              <Button onClick={() => setLimit((value) => value + PAGE)}>Show {Math.min(PAGE, shown.length - limit)} more</Button>
+              <span className="text-xs text-muted">
+                Showing {limit} of {shown.length}, {sortByPredicted ? 'highest expected gain' : 'best match'} first
+              </span>
+            </div>
+          )}
         </>
       )}
 
-      {picks.length > 0 && (
-        <div className="fixed inset-x-0 bottom-0 z-20 border-t border-line bg-canvas/95 shadow-[0_-4px_12px_rgb(0_0_0/0.06)] backdrop-blur">
-          <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-3 px-4 py-3 sm:px-6">
-            <div className="min-w-0 flex-1 text-sm">
-              <strong>{pluralize(picks.length, 'claim')} selected</strong>
-              <span className="text-muted"> · {picks.map((item) => item.name).join(' · ')}</span>
-              {picks.length > 2 && <div className="text-xs text-attention">Tip: 1–2 at a time keeps the GPU queue short.</div>}
-            </div>
-            <Button onClick={() => setSelected(new Map())}>Clear</Button>
+      <StickyActionBar
+        open={picks.length > 0}
+        label="Selected claims"
+        summary={
+          <>
+            <strong className="font-semibold tabular-nums">{picks.length} selected</strong>
+            {picks.length > 2 && <span className="hidden text-caution-fg sm:inline"> · 1–2 at a time keeps the queue short</span>}
+          </>
+        }
+        actions={
+          <>
+            <Button variant="invisible" onClick={() => setSelected(new Map())}>
+              Clear
+            </Button>
             <Button
               variant="primary"
-              icon={<SparkIcon />}
               disabled={create.isPending}
               onClick={() => {
                 // Never reset (and so re-enable) a Gate 1 submit that is still in flight.
@@ -876,11 +902,11 @@ export default function Recommendations() {
                 setConfirmOpen(true)
               }}
             >
-              Start {pluralize(picks.length, 'experiment')}
+              Review & start
             </Button>
-          </div>
-        </div>
-      )}
+          </>
+        }
+      />
 
       <ConfirmDialog
         open={confirmOpen}
@@ -891,18 +917,27 @@ export default function Recommendations() {
         loading={create.isPending}
         error={create.error ? errorMessage(create.error) : null}
         confirmDisabled={blockedPicks.length > 0 && !force}
+        initialFocus="cancel"
+        cost={
+          <>
+            Creates {pluralize(plannedCount(effectiveMode, picks, lookup), 'experiment')}, each built on its own branch. The planner writes each test plan
+            with the LLM; nothing is merged without your decision at Gate 3.
+          </>
+        }
       >
         <p className="mb-3 text-muted">
-          For each claim the planner writes an experiment spec for <strong className="text-fg">{project?.name}</strong>. Nothing is built until you
-          approve the spec (Gate 2).
+          For each claim the planner writes a test plan for <strong className="text-fg">{project?.name}</strong>. Nothing is built until you approve the
+          plan (Gate 2).
         </p>
         <ul className="mb-3 space-y-2">
           {picks.map((item) => (
-            <li key={item.claim_id} className="rounded-md border border-line-muted px-3 py-2">
-              <div className="font-medium">{item.name}</div>
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
-                <ClaimedEffect claim={item} />
+            <li key={item.claim_id} className="rounded-lg border border-line px-3 py-2">
+              <div className="font-medium">
+                <MathText>{item.name}</MathText>
+              </div>
+              <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
                 <PredictionChip prediction={item.prediction} />
+                <ClaimedEffect claim={item} />
               </div>
               {item.blockers.length > 0 && (
                 <div className="mt-1 flex flex-wrap gap-1">
@@ -917,13 +952,13 @@ export default function Recommendations() {
         <PrerequisitesChoice picks={picks} mode={mode} onChange={setMode} lookup={lookup} />
         {pickTriage && <p className="mb-3 text-xs text-muted">Linked to research scan #{pickTriage.id}.</p>}
         {blockedPicks.length > 0 && (
-          <div className="rounded-md border border-attention-emphasis/40 bg-attention-subtle p-3">
+          <div className="rounded-lg border border-caution-emphasis/60 bg-caution-subtle p-3">
             <Checkbox
               id="force-blocked"
               checked={force}
               onChange={setForce}
-              label={`Start anyway — ${pluralize(blockedPicks.length, 'claim')} marked as blocked on this project`}
-              description="The matcher thinks these cannot be tested here; the experiment will likely fail."
+              label={`Start anyway: ${pluralize(blockedPicks.length, 'claim')} ${blockedPicks.length === 1 ? 'is' : 'are'} blocked on this project`}
+              description="The matcher thinks these can’t be tested here, so the experiment will probably fail."
             />
           </div>
         )}
