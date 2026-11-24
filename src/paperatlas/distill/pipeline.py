@@ -100,9 +100,12 @@ class DistillPipeline:
         distilled: list[str] = []
         if paper_ids is not None:
             ids = list(paper_ids)
-            if reprocess:
-                self.store.reset_distillation(ids)
-            rows = [row for row in self.store.fetch_by_ids(ids) if reprocess or not row["distilled_at"]]
+            protected = self.store.reset_distillation(ids) if reprocess else set()
+            rows = [
+                row
+                for row in self.store.fetch_by_ids(ids)
+                if (reprocess and row["paper_id"] not in protected) or not row["distilled_at"]
+            ]
         else:
             if reprocess:
                 self.store.reset_distillation()
@@ -115,10 +118,10 @@ class DistillPipeline:
                 row = futures[future]
                 try:
                     concepts = future.result()
+                    claim_ids = self._persist(row, concepts)
                 except Exception:  # noqa: BLE001 - one bad paper must not stop the batch
                     logger.exception("Distilling %s failed", row["paper_id"])
                     continue
-                claim_ids = self._persist(row, concepts)
                 logger.info("[%d/%d] %s: %d claims — %s", index, len(rows), row["paper_id"], len(claim_ids), row["title"][:70])
                 stats.papers += 1
                 distilled.append(row["paper_id"])

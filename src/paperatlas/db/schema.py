@@ -391,6 +391,7 @@ class Job(Base):
     run_after: Mapped[datetime] = _now()
     locked_by: Mapped[Optional[str]] = mapped_column(Text)
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    heartbeat_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     error: Mapped[Optional[str]] = mapped_column(Text)
     result: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB)

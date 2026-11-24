@@ -270,3 +270,226 @@ def test_chain_mode_runs_prerequisites_first_and_builds_on_merged_flags(linked):
     drain()
     third_detail = service.get_experiment(third)
     assert third_detail["status"] == "blocked" and "was not merged" in third_detail["error"]
+
+
+def _at_gate_3(lab):
+    claim_id = service.recommendations(lab["project"]["id"])[0]["claim_id"]
+    experiment_id = service.create_experiments(lab["project"]["id"], [claim_id])[0]["id"]
+    drain()
+    service.decide_spec(experiment_id, "approve")
+    drain()
+    assert service.experiment_status(experiment_id) == "awaiting_decision"
+    return experiment_id
+
+
+def _drop_checkpoints():
+    from sqlalchemy import text
+
+    from paperatlas.db.engine import get_engine
+
+    with get_engine(lab_db_url()).begin() as connection:
+        for table in ("checkpoint_writes", "checkpoint_blobs", "checkpoints"):
+            connection.execute(text(f"DELETE FROM agent.{table}"))
+
+
+def test_resume_for_another_gate_is_ignored(lab):
+    from paperatlas.lab.events import enqueue
+
+    experiment_id = _at_gate_3(lab)
+    branch = service.get_experiment(experiment_id)["branch"]
+    for resume in ({"gate": "approve_spec", "decision": "approve"}, {"decision": "drop"}):
+        enqueue("experiment.resume", {"experiment_id": experiment_id, "resume": resume}, experiment_id=experiment_id)
+        drain()
+        assert service.experiment_status(experiment_id) == "awaiting_decision"
+    assert orchestrator.git(lab["repo"], "branch", "--list", branch)
+    service.decide_merge(experiment_id, "merge")
+    drain()
+    assert service.experiment_status(experiment_id) == "merged"
+
+
+def test_resume_job_requeued_mid_build_continues_from_checkpoint(lab, monkeypatch):
+    from paperatlas.lab.process import WorkerShutdown
+
+    real_build, interrupted = orchestrator.build_experiment, []
+
+    def build_once_interrupted(*args, **kwargs):
+        if not interrupted:
+            interrupted.append(1)
+            raise WorkerShutdown("worker is shutting down")
+        return real_build(*args, **kwargs)
+
+    monkeypatch.setattr(orchestrator, "build_experiment", build_once_interrupted)
+    claim_id = service.recommendations(lab["project"]["id"])[0]["claim_id"]
+    experiment_id = service.create_experiments(lab["project"]["id"], [claim_id])[0]["id"]
+    drain()
+    service.decide_spec(experiment_id, "approve")
+    drain()  # the re-queued resume job runs again in the same drain
+    assert interrupted and service.experiment_status(experiment_id) == "awaiting_decision"
+    assert lab["calls"]["build"] == 1
+
+
+def test_finalize_rejects_unknown_decisions():
+    with pytest.raises(ValueError, match="Gate 3"):
+        orchestrator.node_finalize.__wrapped__({"experiment_id": 1, "decision": "approve"}, None)
+
+
+def test_concurrent_gate_decisions_make_one_transition(lab):
+    import threading
+
+    from paperatlas.db.engine import session_scope
+    from paperatlas.db.schema import Job
+    from sqlalchemy import func, select
+
+    experiment_id = _at_gate_3(lab)
+    barrier, outcomes = threading.Barrier(2), []
+
+    def decide(decision):
+        barrier.wait()
+        try:
+            service.decide_merge(experiment_id, decision)
+            outcomes.append("ok")
+        except service.ServiceError as exc:
+            outcomes.append(exc.status_code)
+
+    threads = [threading.Thread(target=decide, args=(d,)) for d in ("merge", "drop")]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert sorted(outcomes, key=str) == [409, "ok"]
+    with session_scope() as session:
+        jobs = session.scalar(
+            select(func.count()).where(Job.experiment_id == experiment_id, Job.kind == "experiment.resume", Job.status == "queued")
+        )
+    assert jobs == 1
+
+
+def test_claim_skips_experiments_with_a_running_job_and_leases_are_fenced(lab):
+    from datetime import UTC, datetime, timedelta
+
+    from paperatlas.db.engine import session_scope
+    from paperatlas.db.schema import Job
+    from paperatlas.lab.events import enqueue, fail_job, finish_job, heartbeat_jobs, requeue_stale_jobs
+    from sqlalchemy import update
+
+    claim_ids = [r["claim_id"] for r in service.recommendations(lab["project"]["id"])]
+    first = service.create_experiments(lab["project"]["id"], claim_ids[:1])[0]["id"]
+    enqueue("experiment.run", {"experiment_id": first}, experiment_id=first)
+    other = enqueue("distill", {})
+    job = claim_next_job("w1")
+    assert job["experiment_id"] == first
+    assert claim_next_job("w2")["id"] == other  # the second job of `first` waits
+    assert claim_next_job("w2") is None
+
+    assert heartbeat_jobs([job["id"]], "w1") == 1
+    assert requeue_stale_jobs(lease_s=300) == 0  # fresh leases are kept
+    with session_scope() as session:
+        session.execute(update(Job).where(Job.id == job["id"]).values(heartbeat_at=datetime.now(UTC) - timedelta(minutes=10)))
+    assert requeue_stale_jobs(lease_s=300) == 1
+    reclaimed = claim_next_job("w3")
+    assert reclaimed["id"] == job["id"]
+    assert not finish_job(job["id"], {"stale": True}, worker_id="w1")
+    assert not fail_job(job["id"], "stale", worker_id="w1")
+    assert finish_job(job["id"], {"ok": True}, worker_id="w3")
+
+
+def test_worker_shutdown_requeues_the_job(db, monkeypatch):
+    from paperatlas.db.engine import session_scope
+    from paperatlas.db.schema import Job
+    from paperatlas.lab.events import enqueue
+    from paperatlas.lab.process import WorkerShutdown
+    from paperatlas.services import worker
+
+    def interrupted(payload, job):
+        raise WorkerShutdown("worker is shutting down")
+
+    monkeypatch.setitem(worker.HANDLERS, "distill", interrupted)
+    job_id = enqueue("distill", {})
+    execute(claim_next_job())
+    with session_scope() as session:
+        job = session.get(Job, job_id)
+        assert (job.status, job.locked_by, job.payload.get("resumed")) == ("queued", None, True)
+
+
+def test_cancel_during_planning_is_not_overwritten(lab, monkeypatch):
+    from paperatlas.db.engine import session_scope
+    from paperatlas.db.schema import Experiment
+    from sqlalchemy import update
+
+    real_plan = orchestrator.plan_experiment
+
+    def plan_then_cancel(*args, **kwargs):
+        spec = real_plan(*args, **kwargs)
+        with session_scope() as session:
+            session.execute(update(Experiment).values(status="cancelling"))
+        return spec
+
+    monkeypatch.setattr(orchestrator, "plan_experiment", plan_then_cancel)
+    claim_id = service.recommendations(lab["project"]["id"])[0]["claim_id"]
+    experiment_id = service.create_experiments(lab["project"]["id"], [claim_id])[0]["id"]
+    drain()
+    detail = service.get_experiment(experiment_id)
+    assert detail["status"] == "cancelled" and detail["error"].startswith("plan:")
+
+
+def test_rejected_experiment_with_lost_checkpoint_is_not_replanned(lab, monkeypatch):
+    from paperatlas.lab.events import enqueue
+
+    plans = []
+    real_plan = orchestrator.plan_experiment
+    monkeypatch.setattr(orchestrator, "plan_experiment", lambda *a, **k: plans.append(1) or real_plan(*a, **k))
+    claim_id = service.recommendations(lab["project"]["id"])[0]["claim_id"]
+    experiment_id = service.create_experiments(lab["project"]["id"], [claim_id])[0]["id"]
+    drain()
+    service.decide_spec(experiment_id, "reject", comment="no")
+    _drop_checkpoints()
+    drain()
+    enqueue("experiment.run", {"experiment_id": experiment_id}, experiment_id=experiment_id)
+    drain()
+    assert service.experiment_status(experiment_id) == "rejected"
+    assert plans == [1]
+
+
+def test_merge_survives_profiling_failure_and_finalize_is_idempotent(lab, monkeypatch):
+    from paperatlas.db.engine import session_scope
+    from paperatlas.db.schema import Experiment
+    from sqlalchemy import update
+
+    def broken_profile(*args, **kwargs):
+        raise RuntimeError("profiler exploded")
+
+    experiment_id = _at_gate_3(lab)
+    monkeypatch.setattr(orchestrator, "register_project", broken_profile)
+    service.decide_merge(experiment_id, "merge")
+    drain()
+    detail = service.get_experiment(experiment_id)
+    assert detail["status"] == "merged", detail["error"]
+    sha = detail["build"]["merge_sha"]
+    assert any("profiler exploded" in e["message"] for e in service.experiment_events(experiment_id))
+
+    # A finalize interrupted after the git merge (outcome not recorded) is retried without re-merging.
+    with session_scope() as session:
+        session.execute(
+            update(Experiment).where(Experiment.id == experiment_id).values(status="failed", error="finalize: crash", build={})
+        )
+    _drop_checkpoints()
+    service.retry_experiment(experiment_id)
+    drain()
+    assert service.experiment_status(experiment_id) == "awaiting_decision"
+    service.decide_merge(experiment_id, "merge")
+    drain()
+    detail = service.get_experiment(experiment_id)
+    assert detail["status"] == "merged" and detail["build"]["merge_sha"] == sha
+
+
+def test_finalize_refuses_to_merge_modified_measurement_files(lab):
+    experiment_id = _at_gate_3(lab)
+    worktree = service.get_experiment(experiment_id)["worktree_path"]
+    head = orchestrator.git(lab["repo"], "rev-parse", "main")
+    with open(f"{worktree}/lab.yaml", "a", encoding="utf-8") as handle:
+        handle.write("# tampered\n")
+    service.decide_merge(experiment_id, "merge")
+    drain()
+    detail = service.get_experiment(experiment_id)
+    assert detail["status"] == "failed" and detail["error"].startswith("finalize:")
+    assert orchestrator.git(lab["repo"], "rev-parse", "main") == head

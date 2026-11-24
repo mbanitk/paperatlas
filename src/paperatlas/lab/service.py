@@ -145,7 +145,7 @@ def get_claim(claim_id: int, project_id: Optional[int] = None) -> dict[str, Any]
             raise ServiceError(f"claim {claim_id} not found", 404)
         data = claim_dict(*row)
         data["explainer"] = _explainers_for(session, [claim_id], project_id).get(claim_id)
-        data["related"] = related_for_claims([claim_id]).get(claim_id)
+        data["related"] = related_for_claims([claim_id], project_id).get(claim_id)
         data["paper_explainer"] = row[2].explainer
         if row[0].group_id:
             group = session.get(ClaimGroup, row[0].group_id)
@@ -383,7 +383,7 @@ def recommendations(
         ).all():
             topics_by_paper.setdefault(paper_id, []).append({"slug": slug, "name": name})
         items = []
-        related = related_for_claims([row[1].id for row in rows])
+        related = related_for_claims([row[1].id for row in rows], project_id)
         for rank, (match, claim, concept, paper, experiment_id) in enumerate(rows, start=1):
             item = claim_dict(claim, concept, paper)
             item.update(
@@ -420,7 +420,7 @@ def _steps_for(project_id: int, claim_ids: list[int], mode: str) -> list[dict[st
     if mode == "bundle":
         primary, members = claim_ids[0], []
         for cid in claim_ids:
-            members += [p["claim_id"] for p in prerequisite_chain(cid) if p["claim_id"]]
+            members += [p["claim_id"] for p in prerequisite_chain(cid, project_id) if p["claim_id"]]
             if cid != primary:
                 members.append(cid)
         members = [cid for cid in dict.fromkeys(members) if cid != primary]
@@ -429,7 +429,7 @@ def _steps_for(project_id: int, claim_ids: list[int], mode: str) -> list[dict[st
     for cid in claim_ids:
         pending: list[int] = []
         previous = len(steps) - 1 if steps else None
-        for prerequisite in prerequisite_chain(cid):
+        for prerequisite in prerequisite_chain(cid, project_id):
             pid = prerequisite["claim_id"]
             if not pid or any(step["claim_id"] == pid for step in steps):
                 continue
@@ -783,7 +783,7 @@ def get_experiment(experiment_id: int) -> dict[str, Any]:
                 {"id": d.id, "status": d.status, "claim_id": d.claim_id}
                 for d in session.scalars(select(Experiment).where(Experiment.depends_on_experiment_id == experiment_id)).all()
             ],
-            related=related_for_claims([claim.id]).get(claim.id),
+            related=related_for_claims([claim.id], experiment.project_id).get(claim.id),
             worktree_path=experiment.worktree_path,
             stages=_stage_progress(experiment.status, experiment.error),
             runs=[
@@ -840,19 +840,59 @@ def _require_status(experiment_id: int, expected: tuple[str, ...]) -> None:
         raise ServiceError(f"experiment {experiment_id} is '{status}', expected one of {expected}", 409)
 
 
-def update_spec(experiment_id: int, overrides: dict[str, Any]) -> dict[str, Any]:
-    _require_status(experiment_id, ("awaiting_approval",))
-    context = experiment_context(experiment_id)
+def _lock_experiment(session, experiment_id: int, expected: tuple[str, ...]) -> Experiment:
+    """Row-lock the experiment and check its status, so concurrent gate decisions serialize and
+    only the first one can make the transition (the others get a 409)."""
+    experiment = session.scalar(select(Experiment).where(Experiment.id == experiment_id).with_for_update())
+    if experiment is None:
+        raise ServiceError(f"experiment {experiment_id} not found", 404)
+    if experiment.status not in expected:
+        raise ServiceError(f"experiment {experiment_id} is '{experiment.status}', expected one of {expected}", 409)
+    return experiment
+
+
+def _apply_spec_overrides(session, experiment: Experiment, overrides: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any]:
     try:
-        spec = apply_overrides(context["spec"], overrides, context["profile"])
+        spec = apply_overrides(experiment.spec or {}, overrides, profile)
     except ValueError as exc:
         raise ServiceError(str(exc)) from exc
-    with session_scope() as session:
-        session.execute(
-            update(Experiment).where(Experiment.id == experiment_id).values(spec=spec, flag_name=spec["flag_name"])
-        )
-    emit("approve", f"Spec edited: {', '.join(sorted(overrides))}", {"overrides": overrides}, experiment_id=experiment_id)
+    experiment.spec = spec
+    experiment.flag_name = spec["flag_name"]
+    session.add(
+        Event(stage="approve", message=f"Spec edited: {', '.join(sorted(overrides))}", data={"overrides": overrides},
+              experiment_id=experiment.id)
+    )
     return spec
+
+
+def update_spec(experiment_id: int, overrides: dict[str, Any]) -> dict[str, Any]:
+    profile = experiment_context(experiment_id)["profile"]
+    with session_scope() as session:
+        experiment = _lock_experiment(session, experiment_id, ("awaiting_approval",))
+        return _apply_spec_overrides(session, experiment, overrides, profile)
+
+
+def _transition_gate(
+    session,
+    experiment: Experiment,
+    gate: str,
+    new_status: str,
+    stage: str,
+    message: str,
+    resume: dict[str, Any],
+) -> None:
+    """Move the experiment off its gate and queue the resume job in the caller's transaction.
+    The resume payload names its gate, so the graph ignores it if replayed at another gate."""
+    experiment.status = new_status
+    experiment.updated_at = func.now()
+    session.add(Event(stage=stage, message=message, data={"comment": resume.get("comment")}, experiment_id=experiment.id))
+    session.add(
+        Job(
+            kind="experiment.resume",
+            payload={"experiment_id": experiment.id, "resume": {**resume, "gate": gate}},
+            experiment_id=experiment.id,
+        )
+    )
 
 
 def decide_spec(
@@ -866,34 +906,37 @@ def decide_spec(
     _require_status(experiment_id, ("awaiting_approval",))
     if decision == "revise" and not comment:
         raise ServiceError("a comment is required to request a revision")
-    spec = update_spec(experiment_id, overrides) if overrides else experiment_context(experiment_id)["spec"]
-    _mark_gate_pending(experiment_id, {"approve": "approving", "revise": "planning", "reject": "rejected"}[decision])
-    emit("approve", f"Gate 2: {decision} requested", {"comment": comment}, experiment_id=experiment_id)
-    enqueue(
-        "experiment.resume",
-        {"experiment_id": experiment_id, "resume": {"decision": decision, "comment": comment, "spec": spec}},
-        experiment_id=experiment_id,
-    )
+    profile = experiment_context(experiment_id)["profile"] if overrides else {}
+    with session_scope() as session:
+        experiment = _lock_experiment(session, experiment_id, ("awaiting_approval",))
+        spec = _apply_spec_overrides(session, experiment, overrides, profile) if overrides else (experiment.spec or {})
+        _transition_gate(
+            session,
+            experiment,
+            "approve_spec",
+            {"approve": "approving", "revise": "planning", "reject": "rejected"}[decision],
+            "approve",
+            f"Gate 2: {decision} requested",
+            {"decision": decision, "comment": comment, "spec": spec},
+        )
     return get_experiment(experiment_id)
 
 
 def decide_merge(experiment_id: int, decision: str, comment: Optional[str] = None) -> dict[str, Any]:
     if decision not in ("merge", "drop"):
         raise ServiceError("decision must be merge or drop")
-    _require_status(experiment_id, ("awaiting_decision",))
-    _mark_gate_pending(experiment_id, "finalizing")
-    emit("decide", f"Gate 3: {decision} requested", {"comment": comment}, experiment_id=experiment_id)
-    enqueue(
-        "experiment.resume",
-        {"experiment_id": experiment_id, "resume": {"decision": decision, "comment": comment}},
-        experiment_id=experiment_id,
-    )
-    return get_experiment(experiment_id)
-
-
-def _mark_gate_pending(experiment_id: int, status: str) -> None:
     with session_scope() as session:
-        session.execute(update(Experiment).where(Experiment.id == experiment_id).values(status=status))
+        experiment = _lock_experiment(session, experiment_id, ("awaiting_decision",))
+        _transition_gate(
+            session,
+            experiment,
+            "merge",
+            "finalizing",
+            "decide",
+            f"Gate 3: {decision} requested",
+            {"decision": decision, "comment": comment},
+        )
+    return get_experiment(experiment_id)
 
 
 def cancel_experiment(experiment_id: int) -> dict[str, Any]:
@@ -901,6 +944,9 @@ def cancel_experiment(experiment_id: int) -> dict[str, Any]:
     if status in TERMINAL_STATUSES:
         raise ServiceError(f"experiment is already {status}", 409)
     with session_scope() as session:
+        status = session.scalar(select(Experiment.status).where(Experiment.id == experiment_id).with_for_update())
+        if status in TERMINAL_STATUSES:
+            raise ServiceError(f"experiment is already {status}", 409)
         queued = session.execute(
             update(Job)
             .where(Job.experiment_id == experiment_id, Job.status == "queued")
@@ -920,11 +966,11 @@ def cancel_experiment(experiment_id: int) -> dict[str, Any]:
 
 
 def retry_experiment(experiment_id: int) -> dict[str, Any]:
-    _require_status(experiment_id, ("failed", "cancelled", "blocked"))
     with session_scope() as session:
-        session.execute(update(Experiment).where(Experiment.id == experiment_id).values(status="queued"))
-    emit("retry", "Retrying from the last completed step", experiment_id=experiment_id)
-    enqueue("experiment.run", {"experiment_id": experiment_id}, experiment_id=experiment_id)
+        experiment = _lock_experiment(session, experiment_id, ("failed", "cancelled", "blocked"))
+        experiment.status = "queued"
+        session.add(Event(stage="retry", message="Retrying from the last completed step", experiment_id=experiment_id))
+        session.add(Job(kind="experiment.run", payload={"experiment_id": experiment_id}, experiment_id=experiment_id))
     return get_experiment(experiment_id)
 
 

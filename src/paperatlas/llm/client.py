@@ -132,7 +132,9 @@ class LLMClient:
             "Content-Type": "application/json",
         }
         payload = self._payload(system_prompt, user_prompt, schema)
-        for attempt in range(1, self.config.max_retries + 1):
+        attempt = 0
+        while attempt < self.config.max_retries:
+            attempt += 1
             started = time.monotonic()
             try:
                 response = httpx.post(
@@ -147,7 +149,9 @@ class LLMClient:
                 time.sleep(2**attempt)
                 continue
             if response.status_code == 400 and "temperature" in response.text and "temperature" in payload:
+                # Model rejects `temperature`: resend without it; this does not use a retry.
                 payload.pop("temperature")
+                attempt -= 1
                 continue
             if response.status_code in _RETRY_STATUS and attempt < self.config.max_retries:
                 logger.warning("LLM %s, retrying (%d/%d)", response.status_code, attempt, self.config.max_retries)

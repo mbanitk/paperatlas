@@ -56,6 +56,21 @@ describe('layoutFlow', () => {
     expect(layoutFlow(chain).edges.find((e) => e.style === 'skip')?.route).toBe('arc')
   })
 
+  it('arcs skip edges above every intermediate node on branched flows', () => {
+    const branched = {
+      nodes: ['a', 'b', 'd', 'c'].map((id) => node(id)),
+      edges: [edge('a', 'b'), edge('b', 'c'), edge('a', 'd'), edge('d', 'c'), edge('a', 'c', 'skip')],
+    }
+    const layout = layoutFlow(branched)
+    const skip = layout.edges.find((e) => e.style === 'skip')!
+    expect(skip.route).toBe('arc')
+    const high = parseFloat(skip.path.split(' ')[5])
+    const b = layout.nodes.find((n) => n.id === 'b')!
+    expect(b.y).toBeLessThan(layout.nodes.find((n) => n.id === 'a')!.y)
+    expect(high).toBeLessThan(b.y)
+    expect(high).toBeGreaterThanOrEqual(0)
+  })
+
   it('drops broken input instead of failing', () => {
     expect(layoutFlow(null).nodes).toEqual([])
     const broken = sanitizeDiagram({ nodes: [node('a'), node('a'), node('b')], edges: [edge('a', 'zzz'), edge('a', 'a'), edge('a', 'b')] })

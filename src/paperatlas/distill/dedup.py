@@ -3,15 +3,39 @@
 from __future__ import annotations
 
 import logging
-from typing import Iterable, Optional
+from typing import Any, Iterable, Optional
 
+import numpy as np
 from sqlalchemy import func, select, update
 
 from paperatlas.db.engine import session_scope
 from paperatlas.db.schema import Claim, ClaimGroup
-from paperatlas.db.search import nearest_claims
 
 logger = logging.getLogger(__name__)
+
+
+def _nearest_same_category(
+    embedding: Any,
+    category: Optional[str],
+    min_similarity: float,
+    exclude_id: int,
+    limit: int = 10,
+    url: Optional[str] = None,
+) -> list[int]:
+    """Nearest claims of the same category (filtered before the LIMIT, not after)."""
+    distance = Claim.embedding.cosine_distance(np.asarray(embedding, dtype=np.float32))
+    with session_scope(url) as session:
+        rows = session.execute(
+            select(Claim.id, (1 - distance).label("similarity"))
+            .where(
+                Claim.embedding.is_not(None),
+                Claim.id != exclude_id,
+                Claim.category.is_not_distinct_from(category),
+            )
+            .order_by(distance)
+            .limit(limit)
+        ).all()
+    return [row.id for row in rows if row.similarity >= min_similarity]
 
 
 def assign_claim_groups(
@@ -31,13 +55,9 @@ def assign_claim_groups(
 
     grouped = 0
     for claim_id, embedding, category, paper_id in pending:
-        neighbours = [
-            neighbour_id
-            for neighbour_id, _, neighbour_category in nearest_claims(
-                embedding, min_similarity, exclude_id=claim_id, url=url
-            )
-            if neighbour_category == category
-        ]
+        neighbours = _nearest_same_category(
+            embedding, category, min_similarity, exclude_id=claim_id, url=url
+        )
         if not neighbours:
             continue
         with session_scope(url) as session:

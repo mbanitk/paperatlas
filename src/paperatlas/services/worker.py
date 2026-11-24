@@ -7,11 +7,22 @@ import signal
 import threading
 import time
 import traceback
+from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 from paperatlas.db import migrate
-from paperatlas.lab.events import WORKER_ID, claim_next_job, emit, fail_job, finish_job, requeue_stale_jobs
+from paperatlas.lab.events import (
+    WORKER_ID,
+    claim_next_job,
+    emit,
+    fail_job,
+    finish_job,
+    heartbeat_jobs,
+    requeue_job,
+    requeue_stale_jobs,
+)
+from paperatlas.lab.process import WorkerShutdown, request_shutdown
 from paperatlas.settings import env
 
 logger = logging.getLogger(__name__)
@@ -93,18 +104,60 @@ HANDLERS: dict[str, Callable[[dict, dict], dict]] = {
 }
 
 
+HEARTBEAT_S = float(env("PAPERATLAS_JOB_HEARTBEAT_S", "30"))
+_running: set[int] = set()
+_running_lock = threading.Lock()
+
+
+def running_job_ids() -> list[int]:
+    with _running_lock:
+        return list(_running)
+
+
 def execute(job: dict[str, Any]) -> None:
     handler = HANDLERS.get(job["kind"])
     started = time.monotonic()
+    with _running_lock:
+        _running.add(job["id"])
     try:
         if handler is None:
             raise ValueError(f"no handler for job kind {job['kind']!r}")
         result = handler(job["payload"] or {}, job)
         finish_job(job["id"], result)
         logger.info("Job %s (%s) done in %.1fs", job["id"], job["kind"], time.monotonic() - started)
+    except WorkerShutdown:
+        logger.warning("Job %s (%s) interrupted by worker shutdown; re-queued", job["id"], job["kind"])
+        requeue_job(job["id"])
     except Exception as exc:  # noqa: BLE001 - recorded on the job
         logger.exception("Job %s (%s) failed", job["id"], job["kind"])
         fail_job(job["id"], f"{exc}\n{traceback.format_exc()[-6000:]}")
+    finally:
+        with _running_lock:
+            _running.discard(job["id"])
+
+
+def _keep_leases(done: threading.Event, interval_s: float = HEARTBEAT_S) -> None:
+    """Renew this worker's job leases and reclaim jobs whose worker stopped heartbeating."""
+    while not done.wait(interval_s):
+        try:
+            heartbeat_jobs(running_job_ids())
+            requeued = requeue_stale_jobs()
+            if requeued:
+                logger.warning("Re-queued %d job(s) whose worker lease expired", requeued)
+        except Exception:  # noqa: BLE001 - retried on the next beat
+            logger.exception("Job heartbeat failed")
+
+
+@contextmanager
+def lease_keeper() -> Iterator[None]:
+    """Heartbeat this process's running jobs for as long as the block runs."""
+    done = threading.Event()
+    thread = threading.Thread(target=_keep_leases, args=(done,), name="job-heartbeat", daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        done.set()
 
 
 def run_worker(concurrency: int = 3, poll_s: float = 1.0) -> None:
@@ -116,8 +169,20 @@ def run_worker(concurrency: int = 3, poll_s: float = 1.0) -> None:
     if requeued:
         logger.info("Re-queued %d job(s) left running by a previous worker", requeued)
     stop = threading.Event()
-    signal.signal(signal.SIGTERM, lambda *_: stop.set())
-    signal.signal(signal.SIGINT, lambda *_: stop.set())
+
+    def on_signal(*_: Any) -> None:
+        # Running commands kill their process groups (they run in their own sessions) and their
+        # jobs are re-queued, so nothing keeps the GPU busy once this worker is gone.
+        stop.set()
+        request_shutdown()
+
+    signal.signal(signal.SIGTERM, on_signal)
+    signal.signal(signal.SIGINT, on_signal)
+    with lease_keeper():
+        _serve(stop, concurrency, poll_s)
+
+
+def _serve(stop: threading.Event, concurrency: int, poll_s: float) -> None:
     slots = threading.Semaphore(concurrency)
     logger.info("Worker %s started (concurrency %d)", WORKER_ID, concurrency)
     with ThreadPoolExecutor(max_workers=concurrency, thread_name_prefix="job") as pool:
@@ -138,7 +203,7 @@ def run_worker(concurrency: int = 3, poll_s: float = 1.0) -> None:
                     slots.release()
 
             pool.submit(task)
-    logger.info("Worker stopping; waiting for running jobs to finish")
+        logger.info("Worker stopping; interrupting running jobs")
 
 
 def main() -> None:

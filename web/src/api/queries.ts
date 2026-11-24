@@ -101,7 +101,8 @@ export const useRecommendations = (projectId: number | undefined, params: Recomm
     queryKey: keys.recommendations(projectId ?? 0, params),
     queryFn: ({ signal }) => api.lab.recommendations(projectId!, params, signal),
     enabled: !!projectId,
-    placeholderData: keepPreviousData,
+    // Keep the old page only while filtering within one project: never show (or let users pick) another project's claims.
+    placeholderData: (previous, previousQuery) => (previousQuery?.queryKey[1] === (projectId ?? 0) ? previous : undefined),
   })
 
 export const useTriageList = (projectId?: number) =>
@@ -186,12 +187,17 @@ export const useExplainClaim = (projectId: number | undefined) => {
       if (!projectId) throw new Error('Register a project first — claim explanations are written for a target project.')
       return api.lab.explainClaim(projectId, claimId)
     },
-    onSuccess: (explainer: ClaimExplainer, claimId) => {
+    // Pin the originating project: the hook's projectId may change while the ~15 s call is in flight.
+    onMutate: () => ({ projectId }),
+    onSuccess: (explainer: ClaimExplainer, claimId, { projectId }) => {
       const patch = <T extends { id?: number; claim_id?: number }>(item: T): T =>
         item.id === claimId || item.claim_id === claimId ? { ...item, explainer } : item
-      client.setQueriesData<Recommendation[]>({ queryKey: ['recommendations'] }, (old) => old?.map(patch))
+      // Explainers are per project: patch only this project's caches (and the project-less views, which show the
+      // latest explainer); other projects' caches are just invalidated below.
+      client.setQueriesData<Recommendation[]>({ queryKey: ['recommendations', projectId] }, (old) => old?.map(patch))
       client.setQueriesData<Paged<Claim>>({ queryKey: ['claims'] }, (old) => (old ? { ...old, items: old.items.map(patch) } : old))
-      client.setQueriesData<ClaimDetail>({ queryKey: ['claim', claimId] }, (old) => (old ? { ...old, explainer } : old))
+      for (const key of [keys.claim(claimId, projectId), keys.claim(claimId)])
+        client.setQueryData<ClaimDetail>(key, (old) => (old ? { ...old, explainer } : old))
       client.setQueriesData<PaperDetail>({ queryKey: ['paper'] }, (old) => (old ? { ...old, claims: old.claims.map(patch) } : old))
       for (const key of ['recommendations', 'claims', 'claim', 'paper']) client.invalidateQueries({ queryKey: [key] })
     },
@@ -259,8 +265,11 @@ function useExperimentMutation<TVars>(id: number, mutationFn: (vars: TVars) => P
     mutationFn,
     // e.g. 409 because someone else already decided: show the current state
     onError: () => client.invalidateQueries({ queryKey: keys.experiment(id), exact: true }),
-    onSuccess: (experiment) => {
+    onSuccess: async (experiment) => {
+      // A detail GET started before the decision could land afterwards and resurrect the old status (and gate controls).
+      await client.cancelQueries({ queryKey: keys.experiment(experiment.id), exact: true })
       client.setQueryData(keys.experiment(experiment.id), experiment)
+      client.invalidateQueries({ queryKey: keys.experiment(experiment.id), exact: true })
       client.invalidateQueries({ queryKey: ['experiments'] })
       client.invalidateQueries({ queryKey: keys.stats })
       client.invalidateQueries({ queryKey: ['jobs'] })

@@ -57,6 +57,7 @@ function ScanDialog({ open, onClose, projectId, onStarted }: { open: boolean; on
     distillValue > 500
 
   const submit = () => {
+    if (start.isPending) return
     const options: TriageOptions = { refresh_topics: refreshTopics, per_topic: perTopicValue, distill_limit: distillValue, use_llm: useLlm }
     start.mutate(options, {
       onSuccess: (triage) => {
@@ -72,9 +73,12 @@ function ScanDialog({ open, onClose, projectId, onStarted }: { open: boolean; on
       open={open}
       onClose={onClose}
       title="Run a research scan"
+      dismissable={!start.isPending}
       footer={
         <>
-          <Button onClick={onClose}>Cancel</Button>
+          <Button onClick={onClose} disabled={start.isPending}>
+            Cancel
+          </Button>
           <Button variant="primary" onClick={submit} loading={start.isPending} disabled={invalid} icon={<RefreshIcon />}>
             Start scan
           </Button>
@@ -486,7 +490,12 @@ export default function Recommendations() {
   const navigate = useNavigate()
   const toast = useToast()
   const projects = useProjects()
-  const projectId = Number(params.get('project')) || projects.data?.[0]?.id
+  // A scan link (?triage=) decides the project: scan ids are global and links may omit ?project.
+  const requestedTriage = Number(params.get('triage')) || undefined
+  const requested = useTriage(requestedTriage)
+  const requestedMissing = requested.isError
+  const waitingForTriage = !!requestedTriage && requested.isLoading
+  const projectId = requested.data?.project_id ?? (Number(params.get('project')) || (waitingForTriage ? undefined : projects.data?.[0]?.id))
   const project = projects.data?.find((item) => item.id === projectId)
   const topics = useTopics()
   const categories = useCategories()
@@ -518,11 +527,22 @@ export default function Recommendations() {
 
   const recs = useRecommendations(projectId, { limit: 60, include_blocked: includeBlocked || undefined, topic: topic || undefined, category: category || undefined, q: q || undefined })
   const triageList = useTriageList(projectId)
-  const requestedTriage = Number(params.get('triage')) || undefined
-  const latestTriage: TriageSummary | undefined = triageList.data?.find((item) => item.id === requestedTriage) ?? triageList.data?.[0]
+  const requestedSummary: TriageSummary | undefined = requested.data && {
+    id: requested.data.id,
+    project_id: requested.data.project_id,
+    status: requested.data.status,
+    options: requested.data.options,
+    shortlist_size: requested.data.shortlist.length,
+    created_at: requested.data.created_at,
+    updated_at: requested.data.updated_at,
+  }
+  // Never substitute another scan for a requested one: a missing scan gets a not-found banner instead.
+  const latestTriage: TriageSummary | undefined = requestedTriage
+    ? (triageList.data?.find((item) => item.id === requestedTriage) ?? requestedSummary)
+    : triageList.data?.[0]
   const runningTriage = triageList.data?.find((item) => isTriageRunning(item.status))
   const [showProgress, setShowProgress] = useState(false)
-  const progressTriageId = runningTriage?.id ?? (showProgress ? requestedTriage ?? latestTriage?.id : undefined)
+  const progressTriageId = runningTriage?.id ?? (showProgress ? latestTriage?.id : undefined)
   const pickTriage = latestTriage?.status === 'awaiting_pick' ? latestTriage : triageList.data?.find((item) => item.status === 'awaiting_pick')
   const pickTriageDetail = useTriage(pickTriage?.id)
   const shortlist = useMemo(() => new Set((pickTriageDetail.data?.shortlist ?? []).map((item) => item.claim_id)), [pickTriageDetail.data])
@@ -548,13 +568,14 @@ export default function Recommendations() {
     })
   }
 
-  const picks = [...selected.values()]
+  // Selections never carry over to another project (they would be submitted with this project's id).
+  const picks = [...selected.values()].filter((item) => item.project_id === projectId)
   const blockedPicks = picks.filter((item) => !item.testable_here || item.blockers.length > 0)
   const hasPrerequisites = picks.some((item) => (item.related?.prerequisites?.length ?? 0) > 0)
   const effectiveMode: ExperimentMode = hasPrerequisites ? mode : 'single'
 
   const startExperiments = () => {
-    if (!projectId) return
+    if (!projectId || !picks.length || create.isPending) return
     create.mutate(
       {
         project_id: projectId,
@@ -588,6 +609,7 @@ export default function Recommendations() {
   }
 
   if (projects.isLoading) return <Loading label="Loading projects…" />
+  if (waitingForTriage) return <Loading label={`Loading research scan #${requestedTriage}…`} />
   if (projects.isError) return <ErrorState error={projects.error} onRetry={() => projects.refetch()} />
   if (!projects.data?.length) {
     return (
@@ -616,7 +638,23 @@ export default function Recommendations() {
             <label htmlFor="project-select" className="sr-only">
               Project
             </label>
-            <select id="project-select" className="input w-auto" value={projectId} onChange={(e) => setParam('project', e.target.value)}>
+            <select
+              id="project-select"
+              className="input w-auto"
+              value={projectId}
+              onChange={(e) => {
+                const value = e.target.value
+                setParams(
+                  (current) => {
+                    const next = new URLSearchParams(current)
+                    next.set('project', value)
+                    next.delete('triage')
+                    return next
+                  },
+                  { replace: true },
+                )
+              }}
+            >
               {projects.data.map((item) => (
                 <option key={item.id} value={item.id}>
                   {item.name}
@@ -631,6 +669,26 @@ export default function Recommendations() {
       />
 
       <div className="space-y-3">
+        {requestedMissing && (
+          <Banner
+            tone="danger"
+            action={
+              <Button size="sm" variant="invisible" onClick={() => setParam('triage', null)}>
+                Show latest scan
+              </Button>
+            }
+          >
+            {requested.error instanceof ApiError && requested.error.status === 404 ? (
+              <>
+                <strong>Research scan #{requestedTriage} was not found.</strong> It may have been deleted.
+              </>
+            ) : (
+              <>
+                <strong>Research scan #{requestedTriage} could not be loaded:</strong> {errorMessage(requested.error)}
+              </>
+            )}
+          </Banner>
+        )}
         {progressTriageId && (
           <TriageProgress
             triageId={progressTriageId}
@@ -734,7 +792,19 @@ export default function Recommendations() {
               {picks.length > 2 && <div className="text-xs text-attention">Tip: 1–2 at a time keeps the GPU queue short.</div>}
             </div>
             <Button onClick={() => setSelected(new Map())}>Clear</Button>
-            <Button variant="primary" icon={<SparkIcon />} onClick={() => { setForce(false); setMode('single'); create.reset(); setConfirmOpen(true) }}>
+            <Button
+              variant="primary"
+              icon={<SparkIcon />}
+              disabled={create.isPending}
+              onClick={() => {
+                // Never reset (and so re-enable) a Gate 1 submit that is still in flight.
+                if (create.isPending) return
+                setForce(false)
+                setMode('single')
+                create.reset()
+                setConfirmOpen(true)
+              }}
+            >
               Start {pluralize(picks.length, 'experiment')}
             </Button>
           </div>

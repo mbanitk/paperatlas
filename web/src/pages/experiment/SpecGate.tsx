@@ -6,7 +6,7 @@ import { CheckIcon, GateIcon, XIcon } from '../../components/Icons'
 import { useToast } from '../../components/Toast'
 import { Button, Card, Chip, DefinitionList, Field, InlineError, cx, errorMessage } from '../../components/ui'
 import { formatDuration, formatPct, humanize } from '../../lib/format'
-import { diffOverrides, FIELD_LABELS, specToForm, validateSpecForm, type SpecForm } from '../../lib/spec'
+import { diffOverrides, FIELD_LABELS, rebaseForm, specToForm, validateSpecForm, type SpecForm } from '../../lib/spec'
 
 function metricInfo(project: Project | undefined, name: string | undefined) {
   return project?.metrics?.find((metric) => metric.name === name)
@@ -103,6 +103,7 @@ function DecisionDialog({ open, onClose, kind, onSubmit, loading, error, overrid
       onClose={onClose}
       title={kind === 'revise' ? 'Request a revision' : 'Reject this experiment?'}
       size="sm"
+      dismissable={!loading}
       footer={
         <>
           <Button onClick={onClose} disabled={loading}>
@@ -110,7 +111,9 @@ function DecisionDialog({ open, onClose, kind, onSubmit, loading, error, overrid
           </Button>
           <Button
             variant={kind === 'reject' ? 'dangerSolid' : 'primary'}
-            onClick={() => onSubmit(comment.trim())}
+            onClick={() => {
+              if (!loading) onSubmit(comment.trim())
+            }}
             disabled={required && !comment.trim()}
             loading={loading}
           >
@@ -135,6 +138,7 @@ function DecisionDialog({ open, onClose, kind, onSubmit, loading, error, overrid
           className="input min-h-24"
           value={comment}
           onChange={(event) => setComment(event.target.value)}
+          disabled={loading}
           required={required}
           aria-required={required}
         />
@@ -154,6 +158,15 @@ export function SpecGate({ experiment, project }: { experiment: Experiment; proj
   const [dialog, setDialog] = useState<'approve' | 'revise' | 'reject' | null>(null)
   const edit = useEditSpec(experiment.id)
   const decide = useSpecDecision(experiment.id)
+  const locked = edit.isPending || decide.isPending
+
+  // The server spec changed (a save landed, or someone else edited it): rebase the form instead of remounting it.
+  const specKey = JSON.stringify(spec)
+  const [base, setBase] = useState(() => ({ key: specKey, form: specToForm(spec, fields) }))
+  if (base.key !== specKey) {
+    setBase({ key: specKey, form: specToForm(spec, fields) })
+    setForm(rebaseForm(base.form, form, spec, fields))
+  }
 
   const overrides = diffOverrides(spec, form, fields)
   const changed = Object.keys(overrides) as EditableField[]
@@ -161,13 +174,16 @@ export function SpecGate({ experiment, project }: { experiment: Experiment; proj
   const hasErrors = Object.keys(errors).length > 0
   const set = (field: EditableField, value: string) => setForm((current) => ({ ...current, [field]: value }))
 
-  const save = () =>
+  const save = () => {
+    if (edit.isPending) return
     edit.mutate(overrides, {
       onSuccess: () => toast.success(`Spec saved: ${changed.map((field) => FIELD_LABELS[field]).join(', ')}`),
       onError: (error) => toast.error(errorMessage(error)),
     })
+  }
 
   const submit = (decision: 'approve' | 'revise' | 'reject', comment?: string) => {
+    if (decide.isPending) return
     decide.reset()
     decide.mutate(
       { decision, overrides: decision === 'approve' && changed.length ? overrides : undefined, comment: comment || undefined },
@@ -188,6 +204,8 @@ export function SpecGate({ experiment, project }: { experiment: Experiment; proj
   }
 
   const open = (kind: 'approve' | 'revise' | 'reject') => {
+    // Never reset (and so re-enable) a decision that is still in flight.
+    if (decide.isPending) return
     decide.reset()
     setDialog(kind)
   }
@@ -199,7 +217,14 @@ export function SpecGate({ experiment, project }: { experiment: Experiment; proj
   const claimed = spec.claimed_gain_pct
 
   const select = (field: 'primary_metric' | 'workload' | 'model', values: string[], label: (value: string) => string = (v) => v) => (
-    <select id={`spec-${field}`} className={fieldClass(field)} value={form[field]} onChange={(event) => set(field, event.target.value)} aria-describedby={describedBy(field)}>
+    <select
+      id={`spec-${field}`}
+      className={fieldClass(field)}
+      value={form[field]}
+      onChange={(event) => set(field, event.target.value)}
+      disabled={locked}
+      aria-describedby={describedBy(field)}
+    >
       {!values.includes(form[field]) && <option value={form[field]}>{form[field]}</option>}
       {values.map((value) => (
         <option key={value} value={value}>
@@ -220,6 +245,7 @@ export function SpecGate({ experiment, project }: { experiment: Experiment; proj
       className={fieldClass(field)}
       value={form[field]}
       onChange={(event) => set(field, event.target.value)}
+      disabled={locked}
       aria-invalid={!!errors[field]}
       aria-describedby={describedBy(field)}
     />
@@ -243,7 +269,7 @@ export function SpecGate({ experiment, project }: { experiment: Experiment; proj
       <form
         onSubmit={(event) => {
           event.preventDefault()
-          if (!hasErrors) open('approve')
+          if (!hasErrors && !locked) open('approve')
         }}
         noValidate
       >
@@ -255,6 +281,7 @@ export function SpecGate({ experiment, project }: { experiment: Experiment; proj
                 className={cx(fieldClass('hypothesis'), 'min-h-16')}
                 value={form.hypothesis}
                 onChange={(event) => set('hypothesis', event.target.value)}
+                disabled={locked}
                 aria-invalid={!!errors.hypothesis}
                 aria-describedby={describedBy('hypothesis')}
               />
@@ -267,6 +294,7 @@ export function SpecGate({ experiment, project }: { experiment: Experiment; proj
                 className={cx(fieldClass('flag_name'), 'font-mono')}
                 value={form.flag_name}
                 onChange={(event) => set('flag_name', event.target.value)}
+                disabled={locked}
                 aria-invalid={!!errors.flag_name}
                 aria-describedby={describedBy('flag_name')}
                 spellCheck={false}
@@ -342,12 +370,12 @@ export function SpecGate({ experiment, project }: { experiment: Experiment; proj
                 <Button variant="invisible" onClick={() => setForm(specToForm(spec, fields))} disabled={edit.isPending}>
                   Reset
                 </Button>
-                <Button onClick={save} loading={edit.isPending} disabled={hasErrors}>
+                <Button onClick={save} loading={edit.isPending} disabled={hasErrors || decide.isPending}>
                   Save edits
                 </Button>
               </>
             )}
-            <Button type="submit" variant="primary" icon={<CheckIcon />} disabled={hasErrors || decide.isPending}>
+            <Button type="submit" variant="primary" icon={<CheckIcon />} disabled={hasErrors || locked}>
               {changed.length > 0 ? 'Approve with edits' : 'Approve'}
             </Button>
           </div>

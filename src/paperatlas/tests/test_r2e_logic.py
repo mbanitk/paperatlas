@@ -81,7 +81,7 @@ def test_plan_without_llm_respects_claim_and_project():
     assert spec["primary_metric"] == "decode_tokens_per_s"
     assert spec["direction"] == "higher_is_better"
     assert spec["success_threshold_pct"] <= 8.0
-    assert spec["lossless"] and spec["guardrails"]["min_output_agreement"] == 0.95
+    assert spec["lossless"] and spec["guardrails"]["min_output_agreement"] == 1.0
     assert spec["flag_name"].isidentifier()
 
 

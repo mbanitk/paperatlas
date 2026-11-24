@@ -387,7 +387,7 @@ export default function ExperimentDetail() {
 
         <div className="grid gap-6 xl:grid-cols-3">
           <div className="min-w-0 space-y-6 xl:col-span-2">
-            {data.status === 'awaiting_approval' && <SpecGate key={JSON.stringify(data.spec)} experiment={data} project={project.data} />}
+            {data.status === 'awaiting_approval' && <SpecGate key={data.id} experiment={data} project={project.data} />}
             {data.verdict_detail && <VerdictPanel experiment={data} verdict={data.verdict_detail} project={project.data} />}
 
             <Card

@@ -4,9 +4,11 @@ import logging
 from datetime import date
 from typing import Any, Optional
 
+import httpx
+
 from paperatlas.concepts.extraction.models import PaperAuthor, PaperMetadata
 
-from .base import HttpSource, clean_text, parse_date, query_terms
+from .base import HttpSource, SourceError, clean_text, parse_date, query_terms
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +40,14 @@ class HuggingFacePapersSource(HttpSource):
                 haystack = f"{paper.title} {paper.abstract or ''} {' '.join(paper.keywords)}".lower()
                 if all(term in haystack for term in terms):
                     found[paper.canonical_id()] = paper
-        data = self._request("GET", HF_SEARCH_URL, params={"q": query, "limit": 100}).json()
+        try:
+            data = self._request("GET", HF_SEARCH_URL, params={"q": query, "limit": 100}).json()
+        except (SourceError, httpx.HTTPError, ValueError) as exc:
+            if not found:
+                raise
+            # Search is best-effort on top of the daily feed: keep the feed matches.
+            logger.warning("hf_papers search failed for %r, using daily-feed matches: %s", query, exc)
+            data = []
         for item in data or []:
             paper = parse_hf_paper(item)
             if paper and (not since or (paper.publication_date and paper.publication_date >= since)):
