@@ -82,6 +82,10 @@ def test_experiment_runs_through_all_gates_and_merges(lab):
     assert detail["verdict_detail"]["verdict"] == "reproduced"
     assert detail["verdict_detail"]["has_report"]
     assert [s["state"] for s in detail["stages"]] == ["done"] * 7 + ["waiting"]
+    # No separate adoption check ran (the claim check already used the project default): nothing to summarise.
+    summary = next(row for row in service.list_experiments(lab["project"]["id"]) if row["id"] == experiment["id"])
+    assert summary["verdict"] == "reproduced"
+    assert summary["adoption_verdict"] is None and summary["adoption_median_delta_pct"] is None
 
     service.decide_merge(experiment["id"], "merge")
     drain()
@@ -530,6 +534,11 @@ def test_fixable_diagnosis_rebuilds_with_the_analysts_changes_then_waits_at_gate
     details = detail["verdict_detail"]["details"]
     assert [it["diagnosis"] for it in details["iterations"]] == ["implementation_suspect", "reproduced"]
     assert details["analysis"]["diagnosis"] == "reproduced" and details["adoption"]["verdict"] == "worth_adopting"
+    # Lists carry the adoption check next to the claim check, so a claim gain can't hide a regression here.
+    summary = next(row for row in service.list_experiments(lab["project"]["id"], status="needs_you") if row["id"] == experiment_id)
+    assert summary["adoption_verdict"] == "worth_adopting"
+    assert summary["adoption_median_delta_pct"] == pytest.approx(details["adoption"]["median_delta_pct"])
+    assert detail["adoption_verdict"] == "worth_adopting"
 
 
 def test_batch_runs_testable_claims_one_at_a_time(lab, monkeypatch):

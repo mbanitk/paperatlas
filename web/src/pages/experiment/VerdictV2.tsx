@@ -1,167 +1,177 @@
-import type { ReactNode } from 'react'
 import type { Analysis, Experiment, IterationEntry, MechanismTable, TuningResult, VerdictDetail } from '../../api/types'
-import { Delta, VerdictBadge } from '../../components/Badges'
-import { ImprovementChart } from '../../components/Charts'
-import { AlertIcon, CheckIcon, SparkIcon } from '../../components/Icons'
-import { Chip, cx, TONE_CLASSES } from '../../components/ui'
-import { formatCI, formatNumber, formatPct, formatWorkload } from '../../lib/format'
-import { adoptionInfo, chosenBy, claimTarget, diagnosisInfo, formatConfig, formatKnobValue, protocolOf } from '../../lib/protocol'
-import { predictionMatchesMetric } from '../../lib/roofline'
-import { PredictedLine } from '../../components/Prediction'
+import { CodeToken, Delta, MetricName, OutcomeBadge } from '../../components/Badges'
+import { ArrowDownIcon, ArrowUpIcon, CheckIcon } from '../../components/Icons'
+import { TableScroll } from '../../components/Table'
+import { AnswerBlock, Chip, cx, Disclosure } from '../../components/ui'
+import { formatCI, formatNumber, formatSigned, formatWorkload, humanize, roundNumbersInText } from '../../lib/format'
+import { chosenBy, claimTarget, diagnosisInfo, formatConfig, formatKnobValue, recommendDecision, type CheckResult } from '../../lib/protocol'
+import { semanticTone } from '../../lib/semantics'
 
-function Tile({ kicker, question, badge, children, className }: { kicker: string; question: string; badge: ReactNode; children: ReactNode; className?: string }) {
-  return (
-    <section className={cx('min-w-0 rounded-lg border px-3.5 py-3', className)}>
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div className="min-w-0">
-          <div className="text-[11px] font-semibold tracking-wide text-muted uppercase">{kicker}</div>
-          <h3 className="text-sm font-semibold text-fg">{question}</h3>
-        </div>
-        {badge}
-      </div>
-      <div className="mt-2 space-y-1 text-sm">{children}</div>
-    </section>
-  )
-}
+const ci = (check: Pick<CheckResult, 'low' | 'high'>) => (check.low !== null && check.high !== null ? `95% CI ${formatCI(check.low, check.high)}` : null)
 
-function Measured({ median, low, high }: { median: number | null | undefined; low: number | null | undefined; high: number | null | undefined }) {
-  return (
-    <div className="flex flex-wrap items-baseline gap-x-2">
-      <span className="text-2xl font-semibold">
-        <Delta value={median} />
-      </span>
-      <span className="text-xs text-muted tabular-nums">95% CI {formatCI(low, high)}</span>
-    </div>
-  )
-}
-
-/** "Does the paper's claim hold?" (claim check) and "Is it worth adopting here?" (adoption check). */
+/**
+ * The two measured answers, side by side (docs/ux-review.md X-1, X-3): "Does the paper's claim hold?" (claim
+ * check) and "Is it worth adopting here?" (adoption check). Each is tinted by its own outcome only.
+ */
 export function VerdictTiles({ experiment, verdict }: { experiment: Experiment; verdict: VerdictDetail }) {
   const details = verdict.details ?? {}
-  const protocol = protocolOf(experiment.spec)
   const comparison = details.comparison
-  const adoption = details.adoption
+  const recommendation = recommendDecision(verdict)
+  const { claim, adoption } = recommendation
   const threshold = details.success_threshold_pct ?? experiment.spec.success_threshold_pct ?? null
   const target = details.target_pct ?? claimTarget(verdict.claimed_gain_pct, threshold)
   const paperBaseline = comparison?.baseline === 'paper baseline'
   const paperWorkload = comparison?.workload === 'paper regime'
-  const adoptionLabel = adoption ? adoptionInfo(adoption.verdict) : details.worth_adopting ? adoptionInfo('worth_adopting') : adoptionInfo('not_reproduced')
-  const prediction = experiment.spec.prediction
-  const band = predictionMatchesMetric(prediction, verdict.primary_metric) ? prediction!.predicted_gain_pct : null
+  // The planner's baseline description can run to a paragraph; it lives in the test plan, not in this tile.
+  const claimSetup = `vs ${paperBaseline ? 'the paper’s baseline' : 'the project default'} on ${
+    paperWorkload ? 'a paper-like workload' : (comparison?.workload ?? formatWorkload(details.workload ?? experiment.spec.workload))
+  }`
+  const adoptionWorkload = formatWorkload(details.adoption?.workload ?? details.workload ?? experiment.spec.workload)
+  const sep = <span aria-hidden="true"> · </span>
 
   return (
     <div className="grid gap-3 md:grid-cols-2">
-      <Tile kicker="Claim check" question="Does the paper’s claim hold?" badge={<VerdictBadge verdict={verdict.verdict} />} className="border-done/30 bg-done-subtle/25">
-        <Measured median={verdict.median_delta_pct} low={verdict.ci_low_pct} high={verdict.ci_high_pct} />
-        <p className="text-xs text-muted">
-          target ≥ {formatPct(target, 1)}
-          {typeof verdict.claimed_gain_pct === 'number' && <> · paper claims {formatPct(verdict.claimed_gain_pct, 0)}</>} · <code>{verdict.primary_metric}</code>
-        </p>
-        <PredictedLine prediction={prediction} metric={verdict.primary_metric} />
-        <p className="text-xs">
-          <span className="text-muted">vs </span>
-          {paperBaseline ? <strong>{protocol.paper_baseline.description || 'the paper’s baseline'}</strong> : <strong>the project default</strong>}
-          <span className="text-muted"> on </span>
-          {paperWorkload ? <strong>a paper-like workload</strong> : <strong>{comparison?.workload ?? formatWorkload(details.workload ?? experiment.spec.workload)}</strong>}
-        </p>
-        {details.reason && <p className="text-xs text-muted">{details.reason}</p>}
-      </Tile>
-      <Tile
-        kicker="Adoption check"
-        question="Is it worth adopting here?"
-        badge={<Chip tone={adoptionLabel.tone}>{adoptionLabel.label}</Chip>}
-        className="border-success/30 bg-success-subtle/25"
-      >
-        {adoption ? (
+      <AnswerBlock
+        register="measured"
+        tone={claim.info.tone}
+        label={
+          <span>
+            <span className="font-semibold text-fg">Claim check</span> · does the paper’s claim hold?
+          </span>
+        }
+        value={formatSigned(claim.delta, { digits: 1, fallback: 'Not measured' })}
+        badge={<OutcomeBadge kind="verdict" value={claim.verdict} explain />}
+        confidence={
           <>
-            <Measured median={adoption.median_delta_pct} low={adoption.ci_low_pct} high={adoption.ci_high_pct} />
-            <p className="text-xs text-muted">
-              success bar ≥ {formatPct(threshold, 1)} · quality{' '}
-              {adoption.quality_ok ? <span className="text-success">OK</span> : <span className="text-danger">{adoption.quality_problems.join('; ') || 'failed'}</span>}
-            </p>
-            <p className="text-xs">
-              <span className="text-muted">vs </span>
-              <strong>the project default</strong>
-              <span className="text-muted"> on </span>
-              <strong>{formatWorkload(adoption.workload ?? experiment.spec.workload)}</strong>
-            </p>
-            {adoption.reason && <p className="text-xs text-muted">{adoption.reason}</p>}
+            {ci(claim)}
+            {target !== null && (
+              <>
+                {sep}target {formatSigned(target, { digits: 1 })}
+              </>
+            )}
+            {typeof verdict.claimed_gain_pct === 'number' && (
+              <>
+                {sep}paper reports {formatSigned(verdict.claimed_gain_pct, { digits: 0 })}
+              </>
+            )}
+            {claim.quality === 'unmeasured' && <>{sep}quality not fully measured</>}
+            {!claim.qualityOk && (
+              <>
+                {sep}
+                <span className="font-semibold text-negative-fg">quality failed: {claim.qualityProblems.join('; ') || 'guardrail broken'}</span>
+              </>
+            )}
+            <span className="block">
+              <MetricName metric={verdict.primary_metric} /> · {claimSetup}
+            </span>
           </>
-        ) : (
-          <p className="text-xs text-muted">
-            Same comparison as the claim check (project default on the project workload): the gain {details.worth_adopting ? 'clears' : 'does not clear'} the{' '}
-            {formatPct(threshold, 1)} success bar.
-          </p>
-        )}
-      </Tile>
-      <div className="rounded-md border border-line-muted px-3 py-2 md:col-span-2">
-        <div className="mb-0.5 text-[11px] font-semibold tracking-wide text-muted uppercase">Claim check vs the paper</div>
-        <ImprovementChart
-          median={verdict.median_delta_pct}
-          low={verdict.ci_low_pct}
-          high={verdict.ci_high_pct}
-          claimed={verdict.claimed_gain_pct}
-          threshold={threshold}
-          target={target}
-          predicted={band}
-        />
-      </div>
+        }
+      />
+      <AnswerBlock
+        register="measured"
+        tone={adoption.info.tone}
+        label={
+          <span>
+            <span className="font-semibold text-fg">Adoption check</span> · worth adopting here?
+          </span>
+        }
+        value={formatSigned(adoption.delta, { digits: 1, fallback: 'Not measured' })}
+        badge={<OutcomeBadge kind="adoption" value={adoption.verdict} explain />}
+        confidence={
+          recommendation.separateAdoption ? (
+            <>
+              {ci(adoption)}
+              {threshold !== null && (
+                <>
+                  {sep}success bar {formatSigned(threshold, { digits: 1 })}
+                </>
+              )}
+              {sep}quality{' '}
+              {adoption.quality === 'ok' ? (
+                'OK'
+              ) : adoption.quality === 'unmeasured' ? (
+                'not fully measured'
+              ) : (
+                <span className="font-semibold text-negative-fg">failed: {adoption.qualityProblems.join('; ') || 'guardrail broken'}</span>
+              )}
+              <span className="block">vs the project default on {adoptionWorkload}</span>
+            </>
+          ) : recommendation.paperOnly ? (
+            'Not measured on your default workload: the claim check used the paper’s setup.'
+          ) : (
+            <>
+              Same A/B test as the claim check (project default, your workload){threshold !== null && <>{sep}success bar {formatSigned(threshold, { digits: 1 })}</>}
+            </>
+          )
+        }
+      />
     </div>
   )
 }
 
-const DIAGNOSIS_BORDER: Record<string, string> = {
-  success: 'border-l-success-emphasis',
-  attention: 'border-l-attention-emphasis',
-  danger: 'border-l-danger-emphasis',
-  neutral: 'border-l-subtle',
-  muted: 'border-l-line',
-}
-
-/** The analyst's reading of the result: why the numbers moved, compared with the paper. */
+/** The analyst's reading of the result: one sentence and a label first, the full analysis on demand (X-5). */
 export function DiagnosisCallout({ analysis, iteration, maxIterations, settled }: { analysis: Analysis; iteration: number; maxIterations: number; settled: boolean }) {
   const info = diagnosisInfo(analysis.diagnosis)
   const suggested = analysis.worth_iterating && analysis.next_changes?.trim()
+  const hasMore = analysis.evidence?.length > 0 || !!analysis.paper_comparison || !!suggested
+  const tone = semanticTone(info.tone)
   return (
-    <section className={cx('rounded-md border border-l-4 border-line-muted bg-canvas-subtle/60 px-3.5 py-3', DIAGNOSIS_BORDER[info.tone])} aria-label="Diagnosis">
+    <section
+      className={cx('rounded-lg border border-l-4 border-line bg-canvas px-3.5 py-3', tone === 'negative' ? 'border-l-negative-emphasis' : 'border-l-neutral-emphasis')}
+      aria-label="Why it came out this way"
+    >
       <div className="flex flex-wrap items-center gap-2">
-        <SparkIcon size={14} className="text-done" />
-        <span className="text-xs font-semibold tracking-wide text-muted uppercase">Diagnosis</span>
-        <span className={cx('chip font-semibold', TONE_CLASSES[info.tone])} title={info.description}>
-          {info.label}
-        </span>
-        {analysis.model && <span className="ml-auto text-[11px] text-subtle">by {analysis.model}</span>}
+        <h3 className="text-sm font-semibold text-fg">Why it came out this way</h3>
+        <OutcomeBadge kind="diagnosis" value={analysis.diagnosis} explain />
+        {analysis.model && <span className="ml-auto text-xs text-muted">analysis by {analysis.model}</span>}
       </div>
-      {analysis.summary && <p className="mt-2 text-sm text-fg">{analysis.summary}</p>}
-      {analysis.evidence?.length > 0 && (
-        <ul className="mt-2 space-y-1 text-sm">
-          {analysis.evidence.map((item) => (
-            <li key={item} className="flex gap-2">
-              <span className="mt-2 size-1 shrink-0 rounded-full bg-muted" aria-hidden="true" />
-              <span>{item}</span>
-            </li>
-          ))}
-        </ul>
-      )}
-      {analysis.paper_comparison && (
-        <p className="mt-2 rounded border border-done/20 bg-done-subtle/40 px-2.5 py-1.5 text-sm">
-          <span className="mr-1 text-xs font-semibold text-done">vs the paper</span>
-          {analysis.paper_comparison}
-        </p>
-      )}
-      {suggested && (
-        <div className="mt-2 text-sm">
-          <span className="text-xs font-semibold text-muted">
-            {settled && iteration >= maxIterations
-              ? `Suggested next change — not tried (limit of ${maxIterations} iteration${maxIterations > 1 ? 's' : ''} reached)`
-              : 'Next change'}
-            :
-          </span>{' '}
-          {analysis.next_changes}
-          {analysis.expected_effect && <span className="block text-xs text-muted">Expected: {analysis.expected_effect}</span>}
-        </div>
+      {analysis.summary && <p className="mt-2 line-clamp-3 text-sm text-fg">{roundNumbersInText(analysis.summary)}</p>}
+      {hasMore && (
+        <Disclosure label="Show full analysis" className="mt-1.5">
+          <div className="space-y-2 text-sm">
+            {analysis.summary && <p className="text-fg">{roundNumbersInText(analysis.summary)}</p>}
+            {analysis.evidence?.length > 0 && (
+              <ul className="space-y-1">
+                {analysis.evidence.map((item) => (
+                  <li key={item} className="flex gap-2">
+                    <span className="mt-2 size-1 shrink-0 rounded-full bg-muted" aria-hidden="true" />
+                    <span>{roundNumbersInText(item)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {analysis.paper_comparison && (
+              <p className="rounded-md border border-line bg-canvas-subtle px-2.5 py-1.5">
+                <span className="mr-1 text-xs font-semibold text-muted">Compared with the paper:</span>
+                {roundNumbersInText(analysis.paper_comparison)}
+              </p>
+            )}
+            {suggested && (
+              <p>
+                <span className="text-xs font-semibold text-muted">
+                  {settled && iteration >= maxIterations
+                    ? `Suggested next change, not tried (the limit of ${maxIterations} iteration${maxIterations > 1 ? 's' : ''} was reached)`
+                    : 'Next change'}
+                  :
+                </span>{' '}
+                {analysis.next_changes}
+                {analysis.expected_effect && <span className="block text-xs text-muted">Expected: {analysis.expected_effect}</span>}
+              </p>
+            )}
+          </div>
+        </Disclosure>
       )}
     </section>
+  )
+}
+
+function Change({ value }: { value: number | null }) {
+  if (value === null || value === undefined) return <span className="text-muted">Not reported</span>
+  return (
+    <span className="inline-flex items-center gap-0.5 whitespace-nowrap text-fg tabular-nums">
+      {value > 0 ? <ArrowUpIcon size={12} className="text-muted" /> : value < 0 ? <ArrowDownIcon size={12} className="text-muted" /> : null}
+      {formatSigned(value, { digits: 1 })}
+    </span>
   )
 }
 
@@ -172,23 +182,17 @@ export function MechanismTableView({ mechanism }: { mechanism: MechanismTable })
   return (
     <div>
       <h3 className="mb-1 flex flex-wrap items-center gap-2 text-sm font-semibold">
-        Mechanism counters
+        What the technique did
         {missing.size > 0 ? (
-          <Chip tone="attention">
-            <AlertIcon size={12} /> {missing.size} not reported
-          </Chip>
+          <Chip tone="caution">{missing.size} counter{missing.size > 1 ? 's' : ''} not reported</Chip>
         ) : (
-          mechanism.measured && (
-            <Chip tone="success">
-              <CheckIcon size={12} /> all reported
-            </Chip>
-          )
+          mechanism.measured && <Chip tone="neutral">All counters reported</Chip>
         )}
       </h3>
-      <p className="mb-2 text-xs text-muted">What the technique did, per 1,000 generated tokens — tells a broken build apart from a claim that does not transfer.</p>
-      <div className="overflow-x-auto rounded-md border border-line-muted">
+      <p className="mb-2 text-xs text-muted">Counts per 1,000 generated tokens. They tell a broken build apart from a claim that doesn’t transfer.</p>
+      <TableScroll label="Mechanism counters" stickyFirstColumn>
         <table className="w-full text-sm">
-          <caption className="sr-only">Mechanism counters per 1,000 generated tokens</caption>
+          <caption className="sr-text">Mechanism counters per 1,000 generated tokens</caption>
           <thead className="bg-canvas-subtle text-left text-xs text-muted">
             <tr>
               <th scope="col" className="px-3 py-2 font-medium">
@@ -212,30 +216,28 @@ export function MechanismTableView({ mechanism }: { mechanism: MechanismTable })
             {mechanism.rows.map((row) => {
               const absent = missing.has(row.name)
               return (
-                <tr key={row.name} className={cx('border-t border-line-muted align-top', absent && 'bg-attention-subtle/50')}>
-                  <th scope="row" className="px-3 py-2 text-left font-normal">
-                    <code className="code-inline">{row.name}</code>
-                    {!row.expected && <span className="ml-1 text-[11px] text-subtle">extra</span>}
-                    {row.meaning && <div className="text-[11px] text-muted">{row.meaning}</div>}
+                <tr key={row.name} className={cx('border-t border-line-muted align-top', absent && 'bg-caution-subtle/50')}>
+                  <th scope="row" className="min-w-40 px-3 py-2 text-left font-normal">
+                    <div className="text-fg">{row.meaning || humanize(row.name)}</div>
+                    <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
+                      <CodeToken className="text-xs">{row.name}</CodeToken>
+                      {!row.expected && <span className="text-xs text-muted">extra</span>}
+                    </div>
                   </th>
                   <td className="px-3 py-2 text-right tabular-nums">{formatNumber(row.baseline_per_1k_tokens, 1)}</td>
                   <td className="px-3 py-2 text-right tabular-nums">
-                    {absent ? <span className="text-xs font-semibold text-attention">not reported</span> : formatNumber(row.variant_per_1k_tokens, 1)}
+                    {absent ? <span className="text-xs font-semibold text-caution-fg">Not reported</span> : formatNumber(row.variant_per_1k_tokens, 1)}
                   </td>
-                  <td className="px-3 py-2 text-right tabular-nums">
-                    {typeof row.change_pct === 'number' ? (
-                      <span className={row.change_pct > 0 ? 'text-done' : row.change_pct < 0 ? 'text-accent' : 'text-muted'}>{formatPct(row.change_pct, 1)}</span>
-                    ) : (
-                      <span className="text-muted">—</span>
-                    )}
+                  <td className="px-3 py-2 text-right">
+                    <Change value={row.change_pct} />
                   </td>
-                  <td className="px-3 py-2 text-xs text-done">{row.paper_value ?? <span className="text-muted">—</span>}</td>
+                  <td className="px-3 py-2 text-xs text-fg">{row.paper_value ?? <span className="text-muted">Not reported</span>}</td>
                 </tr>
               )
             })}
           </tbody>
         </table>
-      </div>
+      </TableScroll>
       {mechanism.tokens && (mechanism.tokens.baseline > 0 || mechanism.tokens.variant > 0) && (
         <p className="mt-1 text-xs text-muted">
           Measured over {formatNumber(mechanism.tokens.baseline, 0)} baseline and {formatNumber(mechanism.tokens.variant, 0)} method tokens.
@@ -245,12 +247,12 @@ export function MechanismTableView({ mechanism }: { mechanism: MechanismTable })
   )
 }
 
-/** The knob sweep before the measured runs: each arm keeps its best configuration. */
+/** The settings sweep before the measured runs: each side keeps its best configuration. */
 export function TuningTable({ tuning, metric, direction, knobOrder = [] }: { tuning: TuningResult; metric?: string; direction?: string; knobOrder?: string[] }) {
   if (tuning.skipped || !tuning.trials?.length) {
     return (
-      <p className="text-xs text-muted">
-        Tuning skipped{tuning.configs?.length ? ` — ran the paper’s setting (${formatConfig(tuning.variant)})` : ' — no knobs to tune'}.
+      <p className="text-sm text-muted">
+        Tuning skipped{tuning.configs?.length ? `: ran the paper’s setting (${formatConfig(tuning.variant)})` : ': there were no settings to tune'}.
       </p>
     )
   }
@@ -268,15 +270,16 @@ export function TuningTable({ tuning, metric, direction, knobOrder = [] }: { tun
     <div>
       <h3 className="mb-1 text-sm font-semibold">Tuning</h3>
       <p className="mb-2 text-xs text-muted">
-        {tuning.trials.length} configurations, short runs on <code>{tuning.metric ?? metric}</code>; each arm keeps its best, so the paper’s baseline gets the same budget.
+        Before measuring, {tuning.trials.length} settings were tried with short runs on <MetricName metric={tuning.metric ?? metric} />. Each side keeps its
+        best setting, so the baseline gets the same tuning budget as the method.
       </p>
-      <div className="overflow-x-auto rounded-md border border-line-muted">
+      <TableScroll label="Tuning trials" stickyFirstColumn>
         <table className="w-full text-sm">
-          <caption className="sr-only">Tuning trials</caption>
+          <caption className="sr-text">Tuning trials</caption>
           <thead className="bg-canvas-subtle text-left text-xs text-muted">
             <tr>
               {knobs.map((knob) => (
-                <th key={knob} scope="col" className="px-3 py-2 font-mono font-medium">
+                <th key={knob} scope="col" className="px-3 py-2 font-mono font-medium whitespace-nowrap">
                   {knob}
                 </th>
               ))}
@@ -287,7 +290,7 @@ export function TuningTable({ tuning, metric, direction, knobOrder = [] }: { tun
                 Method
               </th>
               <th scope="col" className="px-3 py-2 font-medium">
-                <span className="sr-only">Chosen</span>
+                Chosen for
               </th>
             </tr>
           </thead>
@@ -295,19 +298,20 @@ export function TuningTable({ tuning, metric, direction, knobOrder = [] }: { tun
             {tuning.trials.map((trial, index) => {
               const chosen = chosenBy(tuning, trial.config)
               return (
-                <tr key={index} className={cx('border-t border-line-muted', chosen.includes('method') && 'bg-success-subtle/40')}>
+                <tr key={index} className={cx('border-t border-line-muted', chosen.includes('method') && 'bg-info-subtle/40')}>
                   {knobs.map((knob) => (
-                    <td key={knob} className="px-3 py-1.5 font-mono text-xs tabular-nums">
+                    <td key={knob} className="px-3 py-1.5 font-mono text-xs whitespace-nowrap tabular-nums">
                       {formatKnobValue(trial.config[knob])}
-                      {index === 0 && knob === knobs[0] && <span className="ml-1.5 font-sans text-[10.5px] text-done">paper</span>}
+                      {index === 0 && knob === knobs[0] && <span className="ml-1.5 font-sans text-xs text-muted">(paper)</span>}
                     </td>
                   ))}
                   <td className={cx('px-3 py-1.5 text-right tabular-nums', trial.baseline === bestBaseline && 'font-semibold')}>{formatNumber(trial.baseline)}</td>
                   <td className={cx('px-3 py-1.5 text-right tabular-nums', trial.variant === bestVariant && 'font-semibold')}>{formatNumber(trial.variant)}</td>
                   <td className="px-3 py-1.5 text-xs whitespace-nowrap">
+                    {chosen.length === 0 && <span className="text-muted">Neither</span>}
                     {chosen.map((arm) => (
-                      <span key={arm} className={cx('mr-1 inline-flex items-center gap-0.5', arm === 'method' ? 'text-success' : 'text-muted')}>
-                        <CheckIcon size={12} /> {arm}
+                      <span key={arm} className="mr-1.5 inline-flex items-center gap-0.5 text-fg">
+                        <CheckIcon size={12} className="text-muted" /> {arm}
                       </span>
                     ))}
                   </td>
@@ -316,72 +320,70 @@ export function TuningTable({ tuning, metric, direction, knobOrder = [] }: { tun
             })}
           </tbody>
         </table>
-      </div>
+      </TableScroll>
     </div>
   )
 }
 
-/** What happened in each build → measure → diagnose round. */
+/** What happened in each build → measure → analyse round, in plain words. */
 export function IterationsTimeline({ iterations, kept }: { iterations: IterationEntry[]; kept?: number | null }) {
   if (iterations.length < 2) return null
   const keptEntry = kept != null ? iterations.find((entry) => entry.iteration === kept) : undefined
   return (
     <div>
-      <h3 className="mb-1 text-sm font-semibold">Iterations</h3>
-      {keptEntry && keptEntry !== iterations[iterations.length - 1] ? (
-        <p className="mb-2 text-xs text-muted">
-          Iteration {keptEntry.iteration} scored best, so it was kept: later iterations’ code was reverted and the verdict above is iteration {keptEntry.iteration}’s.
-        </p>
-      ) : (
-        keptEntry && <p className="mb-2 text-xs text-muted">The last iteration scored best and was kept.</p>
-      )}
+      <h3 className="mb-1 text-sm font-semibold">How the result was reached: {iterations.length} iterations</h3>
+      <p className="mb-2 text-xs text-muted">
+        When the analysis finds a fixable problem, the build goes back to the coding agent with one change, then it’s measured again.{' '}
+        {keptEntry && keptEntry !== iterations[iterations.length - 1]
+          ? `Iteration ${keptEntry.iteration} scored best, so its code was kept and later changes were reverted; the result above is iteration ${keptEntry.iteration}’s.`
+          : keptEntry
+            ? 'The last iteration scored best and was kept.'
+            : ''}
+      </p>
       <ol className="relative space-y-3 border-l-2 border-line-muted pl-4">
         {iterations.map((entry, index) => {
           const last = index === iterations.length - 1
           const state = keptEntry ? (entry.iteration === keptEntry.iteration ? 'kept' : entry.iteration > keptEntry.iteration ? 'reverted' : null) : last ? 'final' : null
-          const diagnosis = entry.diagnosis ? diagnosisInfo(entry.diagnosis) : null
           return (
             <li key={entry.iteration} className="relative">
               <span
-                className={cx(
-                  'absolute top-1 -left-[23px] size-3 rounded-full border-2 border-canvas',
-                  state === 'kept' ? 'bg-success-emphasis' : state === 'final' ? 'bg-accent-emphasis' : 'bg-subtle',
-                )}
+                className={cx('absolute top-1 -left-[23px] size-3 rounded-full border-2 border-canvas', state === 'kept' || state === 'final' ? 'bg-info' : 'bg-neutral-emphasis')}
                 aria-hidden="true"
               />
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
                 <span className={cx('font-semibold', state === 'reverted' && 'text-muted')}>Iteration {entry.iteration}</span>
-                {state === 'kept' && (
-                  <Chip tone="success">
-                    <CheckIcon size={12} /> kept
-                  </Chip>
-                )}
-                {state === 'reverted' && <Chip tone="muted">reverted</Chip>}
-                {entry.sha && (
-                  <code className="code-inline text-[11px]" title={entry.sha}>
-                    {entry.sha.slice(0, 7)}
-                  </code>
-                )}
-                <VerdictBadge verdict={entry.verdict} />
-                <Delta value={entry.median_delta_pct} />
-                <span className="text-xs text-muted tabular-nums">CI {formatCI(entry.ci_low_pct, entry.ci_high_pct)}</span>
-                {diagnosis && <Chip tone={diagnosis.tone}>{diagnosis.label}</Chip>}
-                {entry.adoption_verdict && (
-                  <span className="text-xs text-muted">
-                    adoption: {adoptionInfo(entry.adoption_verdict).label}
-                    {typeof entry.adoption_median_delta_pct === 'number' && ` (${formatPct(entry.adoption_median_delta_pct, 1)})`}
-                  </span>
-                )}
-                {state === 'final' && <span className="text-xs font-semibold text-accent">final</span>}
-                {entry.quality_ok === false && <Chip tone="danger">quality failed</Chip>}
+                {state === 'kept' && <Chip tone="info">Kept</Chip>}
+                {state === 'final' && <Chip tone="info">Final</Chip>}
+                {state === 'reverted' && <Chip tone="neutral">Reverted</Chip>}
+                {entry.quality_ok === false && <Chip tone="negative">Quality failed</Chip>}
+                {entry.diagnosis && <OutcomeBadge kind="diagnosis" value={entry.diagnosis} />}
               </div>
-              {entry.summary && <p className="mt-0.5 text-sm text-muted">{entry.summary}</p>}
-              {entry.tuned?.variant && Object.keys(entry.tuned.variant).length > 0 && (
-                <p className="mt-0.5 text-xs text-muted">tuned method: {formatConfig(entry.tuned.variant)}</p>
-              )}
+              <dl className="mt-1 grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-2 gap-y-1 text-sm">
+                <dt className="text-xs text-muted">Claim check</dt>
+                <dd className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <OutcomeBadge kind="verdict" value={entry.verdict} />
+                  <Delta value={entry.median_delta_pct} ci={[entry.ci_low_pct, entry.ci_high_pct]} />
+                </dd>
+                {entry.adoption_verdict && (
+                  <>
+                    <dt className="text-xs text-muted">Adoption check</dt>
+                    <dd className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <OutcomeBadge kind="adoption" value={entry.adoption_verdict} />
+                      <Delta value={entry.adoption_median_delta_pct} />
+                    </dd>
+                  </>
+                )}
+              </dl>
+              {entry.summary && <p className="mt-1 text-sm text-muted">{roundNumbersInText(entry.summary)}</p>}
+              {entry.tuned?.variant && Object.keys(entry.tuned.variant).length > 0 && <p className="mt-0.5 text-xs text-muted">Tuned method: {formatConfig(entry.tuned.variant)}</p>}
               {!last && entry.next_changes && (
-                <p className="mt-1 rounded border border-line-muted bg-canvas-subtle px-2 py-1 text-xs">
-                  <span className="font-semibold">Tried next:</span> {entry.next_changes}
+                <p className="mt-1 rounded-md border border-line-muted bg-canvas-subtle px-2 py-1 text-xs">
+                  <span className="font-semibold">Changed for the next iteration:</span> {entry.next_changes}
+                </p>
+              )}
+              {entry.sha && (
+                <p className="mt-0.5 text-xs text-muted">
+                  Commit <CodeToken className="text-xs">{entry.sha.slice(0, 7)}</CodeToken>
                 </p>
               )}
             </li>
