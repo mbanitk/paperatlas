@@ -257,7 +257,7 @@ def cmd_batch(args: argparse.Namespace) -> None:
     def say(message: str) -> None:
         print(f"{datetime.now():%H:%M:%S} {message}", flush=True)
 
-    run_batch(_project_id(args.project), limit=args.limit, poll_s=args.poll, say=say)
+    run_batch(_project_id(args.project), limit=args.limit, poll_s=args.poll, say=say, current_engine_only=args.retest)
 
 
 def cmd_report(args: argparse.Namespace) -> None:
@@ -424,6 +424,9 @@ def build_parser() -> argparse.ArgumentParser:
     batch.add_argument("--project", required=True)
     batch.add_argument("--limit", type=int, default=None)
     batch.add_argument("--poll", type=float, default=20.0)
+    batch.add_argument(
+        "--retest", action="store_true", help="also re-run claims whose experiments predate the last project re-profile"
+    )
     batch.set_defaults(func=cmd_batch)
 
     report = r2e_sub.add_parser("report", help="re-render an experiment's HTML report from stored results")

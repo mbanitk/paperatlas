@@ -15,7 +15,7 @@ from typing import Callable, Optional
 from sqlalchemy import select
 
 from paperatlas.db.engine import session_scope
-from paperatlas.db.schema import Experiment, Match
+from paperatlas.db.schema import Experiment, Match, Project
 from paperatlas.lab import service
 
 logger = logging.getLogger(__name__)
@@ -24,9 +24,16 @@ logger = logging.getLogger(__name__)
 SETTLED = ("awaiting_decision", "finalizing", "merged", "dropped", "rejected", "failed", "cancelled", "blocked")
 
 
-def pending_claims(project_id: int) -> list[int]:
+def pending_claims(project_id: int, current_engine_only: bool = False) -> list[int]:
+    """Testable claims without an experiment, best first. With `current_engine_only`, experiments created before the
+    project was last profiled (i.e. on an older engine) don't count, so their claims are tested again."""
     with session_scope() as session:
-        tried = set(session.scalars(select(Experiment.claim_id).where(Experiment.project_id == project_id)).all())
+        query = select(Experiment.claim_id).where(Experiment.project_id == project_id)
+        if current_engine_only:
+            profiled_at = session.scalar(select(Project.profiled_at).where(Project.id == project_id))
+            if profiled_at is not None:
+                query = query.where(Experiment.created_at >= profiled_at)
+        tried = set(session.scalars(query).all())
         rows = session.scalars(
             select(Match.claim_id)
             .where(Match.project_id == project_id, Match.testable_here.is_(True))
@@ -59,6 +66,7 @@ def run_batch(
     limit: Optional[int] = None,
     poll_s: float = 20.0,
     say: Callable[[str], None] = print,
+    current_engine_only: bool = False,
 ) -> list[dict]:
     done: list[dict] = []
     skipped: set[int] = set()
@@ -70,7 +78,7 @@ def run_batch(
             say(f"#{last['id']} settled: {last['status']} · verdict {last.get('verdict')}")
         if limit is not None and len(done) >= limit:
             break
-        claims = [c for c in pending_claims(project_id) if c not in skipped]
+        claims = [c for c in pending_claims(project_id, current_engine_only) if c not in skipped]
         if not claims:
             say("No testable claims left")
             break
