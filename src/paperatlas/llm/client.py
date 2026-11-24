@@ -238,10 +238,10 @@ def extract_json_object(text: str) -> str:
         raise LLMError("reply contained no JSON object")
     candidate = text[start : end + 1]
     try:
-        json.loads(candidate)
+        # strict=False accepts raw control characters (e.g. newlines) inside strings, which models emit
+        return json.dumps(json.loads(candidate, strict=False))
     except json.JSONDecodeError as exc:
         raise LLMError(f"invalid JSON: {exc}") from exc
-    return candidate
 
 
 def schema_instruction(schema: Optional[tuple]) -> str:

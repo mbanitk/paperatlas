@@ -323,3 +323,11 @@ def test_measurements_wait_for_other_apps_to_release_the_gpu(monkeypatch):
     assert result["quiet"] and result["background_gpu_pct"] < 15 and len(said) == 1
     monkeypatch.setattr(gpu, "gpu_utilization", lambda: None)
     assert gpu.wait_for_quiet_gpu() == {"checked": False}
+
+
+def test_json_extraction_accepts_raw_newlines_inside_strings():
+    import json
+
+    from paperatlas.llm.client import extract_json_object
+
+    assert json.loads(extract_json_object('{"a": "line one\nline two"}')) == {"a": "line one\nline two"}
