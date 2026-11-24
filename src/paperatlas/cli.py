@@ -265,7 +265,7 @@ def cmd_batch(args: argparse.Namespace) -> None:
         print(f"{datetime.now():%H:%M:%S} {message}", flush=True)
 
     run_batch(_project_id(args.project), limit=args.limit, poll_s=args.poll, say=say, current_engine_only=args.retest,
-              parallel=args.parallel)
+              parallel=args.parallel, min_likelihood=args.min_likelihood)
 
 
 def cmd_report(args: argparse.Namespace) -> None:
@@ -441,6 +441,10 @@ def build_parser() -> argparse.ArgumentParser:
     batch.add_argument(
         "--parallel", type=int, default=1,
         help="experiments in flight at once (builds run side by side; GPU benchmarks still take turns)",
+    )
+    batch.add_argument(
+        "--min-likelihood", choices=["likely", "marginal", "unknown"], default="unknown",
+        help="only claims the cost model rates at least this likely to gain here",
     )
     batch.add_argument(
         "--retest", action="store_true", help="also re-run claims whose experiments predate the last project re-profile"

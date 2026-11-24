@@ -144,6 +144,14 @@ class RooflineError(RuntimeError):
     pass
 
 
+def with_declared_facts(roofline: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any]:
+    """Add what lab.yaml declares about the baseline (`baseline_features`, `measured`) to a measured roofline."""
+    out = dict(roofline)
+    out["baseline_features"] = sorted(set(out.get("baseline_features") or []) | set(profile.get("baseline_features") or []))
+    out["measured"] = {**(profile.get("measured") or {}), **(out.get("measured") or {})}
+    return out
+
+
 def measure_roofline(project_id: int, report: Optional[Any] = None, model: str = "eval") -> dict[str, Any]:
     """Run the project's `commands.profile` (under the GPU lock) and store the roofline on the project."""
     import tempfile
@@ -175,6 +183,7 @@ def measure_roofline(project_id: int, report: Optional[Any] = None, model: str =
     roofline = json.loads(out.read_text(encoding="utf-8"))
     if roofline.get("kind") != "profile" or "decode" not in roofline:
         raise RooflineError("profile output does not follow the roofline contract (kind=profile, decode, forward_cost_ms)")
+    roofline = with_declared_facts(roofline, profile)
     with session_scope() as session:
         project = session.get(Project, project_id)
         project.roofline = roofline

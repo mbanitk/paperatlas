@@ -149,7 +149,13 @@ def predict(claim: dict[str, Any], roofline: Optional[dict[str, Any]], workloads
         else:
             draft_ms = float(draft.get("ms_per_token") or 0.25 * target_ms)
             source = f"draft model {draft.get('id') or ''} at {draft_ms:.1f} ms/token"
-        acceptance = _paper_acceptance(card, text) or DEFAULT_ACCEPTANCE
+        measured = (roofline.get("measured") or {}).get("draft_acceptance")
+        uses_draft_model = not SELF_DRAFT.search(text) and not HEAD_DRAFT.search(text)
+        if uses_draft_model and measured:
+            acceptance = float(measured)
+            reasons.append(f"measured acceptance of this engine's draft model: {acceptance:.2f} per token")
+        else:
+            acceptance = _paper_acceptance(card, text) or DEFAULT_ACCEPTANCE
         verify_ratio = (verify(5) or target_ms) / target_ms
         reasons += [
             f"one target step {target_ms:.1f} ms; verifying 5 tokens costs {verify_ratio:.2f}× a step",
@@ -169,6 +175,11 @@ def predict(claim: dict[str, Any], roofline: Optional[dict[str, Any]], workloads
 
     if category == "batching_scheduling":
         batch = {int(k): float(v) for k, v in (roofline.get("batch_decode_tokens_per_s") or {}).items() if v}
+        if "continuous_batching" in (roofline.get("baseline_features") or []):
+            reasons.append("the baseline server already batches concurrent requests; only the scheduling policy "
+                           "on top of it can add gains")
+            return _result("marginal", 0.0, 10.0, "better ordering/admission than the built-in batcher", reasons,
+                           roofline, "throughput_tokens_per_s")
         concurrent = any("concurrent" in w for w in workloads or [])
         if batch.get(1) and len(batch) > 1:
             top = max(batch)
@@ -190,12 +201,21 @@ def predict(claim: dict[str, Any], roofline: Optional[dict[str, Any]], workloads
         if kind == "overhead":
             reasons.append("decode is overhead-bound, so reducing KV/attention bytes barely changes speed; memory can still drop")
             return _result("marginal", 0.0, 4.0, "KV/attention memory traffic", reasons, roofline, "peak_memory_gb")
-        reasons.append("decode is bandwidth-bound: fewer KV/attention bytes per token can speed up long-context decoding")
-        return _result("likely" if paper_context >= 2000 else "marginal", 2.0, 15.0, "KV/attention memory traffic",
-                       reasons, roofline)
+        if kind == "bandwidth":
+            reasons.append("decode is bandwidth-bound: fewer KV/attention bytes per token can speed up long-context decoding")
+            return _result("likely" if paper_context >= 2000 else "marginal", 2.0, 15.0, "KV/attention memory traffic",
+                           reasons, roofline)
+        reasons.append("decode is only partly bandwidth-bound; KV/attention savings mostly show at long contexts")
+        return _result("marginal", 0.0, 8.0, "KV/attention memory traffic", reasons, roofline)
 
     if category == "quantization":
         quant = str((roofline.get("model") or {}).get("quantization") or "")
+        unsupported = re.search(r"\bfp[468]\b|e[2-5]m[0-3]|mxfp|nvfp|microscal|tensor core|fp8", text, re.I)
+        chip = str((roofline.get("hardware") or {}).get("chip") or "")
+        if unsupported and "apple" in chip.lower():
+            reasons.append(f"relies on low-precision number formats ({unsupported.group(0)}) that the Apple GPU has no "
+                           "native math for; emulating them costs more than it saves")
+            return _result("unlikely", -5.0, 1.0, "hardware support for the number format", reasons, roofline)
         if re.search(r"\b[234]\s*-?bit|int4|fp4|nf4", quant, re.I) and not re.search(r"kv|cache|activation", text, re.I):
             reasons.append(f"weights are already {quant}; further weight quantization saves little bandwidth")
             return _result("unlikely", -2.0, 1.5, "fewer weight bytes per token", reasons, roofline)

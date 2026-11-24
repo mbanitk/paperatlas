@@ -25,7 +25,10 @@ logger = logging.getLogger(__name__)
 SETTLED = ("awaiting_decision", "finalizing", "merged", "dropped", "rejected", "failed", "cancelled", "blocked")
 
 
-def pending_claims(project_id: int, current_engine_only: bool = False) -> list[int]:
+LIKELIHOOD_ORDER = ("likely", "marginal", "unknown", "unlikely")
+
+
+def pending_claims(project_id: int, current_engine_only: bool = False, min_likelihood: str = "unknown") -> list[int]:
     """Testable claims without an experiment, best first. With `current_engine_only`, experiments created before the
     project was last profiled (i.e. on an older engine) don't count, so their claims are tested again."""
     with session_scope() as session:
@@ -35,12 +38,17 @@ def pending_claims(project_id: int, current_engine_only: bool = False) -> list[i
             if profiled_at is not None:
                 query = query.where(Experiment.created_at >= profiled_at)
         tried = set(session.scalars(query).all())
-        rows = session.scalars(
-            select(Match.claim_id)
+        rows = session.execute(
+            select(Match.claim_id, Match.prediction)
             .where(Match.project_id == project_id, Match.testable_here.is_(True))
             .order_by(Match.score.desc())
         ).all()
-    return [claim_id for claim_id in rows if claim_id not in tried]
+    allowed = set(LIKELIHOOD_ORDER[: LIKELIHOOD_ORDER.index(min_likelihood) + 1])
+    return [
+        claim_id
+        for claim_id, prediction in rows
+        if claim_id not in tried and ((prediction or {}).get("likelihood") or "unknown") in allowed
+    ]
 
 
 def busy_experiments(project_id: int) -> list[tuple[int, str]]:
@@ -69,6 +77,7 @@ def run_batch(
     say: Callable[[str], None] = print,
     current_engine_only: bool = False,
     parallel: int = 1,
+    min_likelihood: str = "unknown",
 ) -> list[dict]:
     parallel = max(1, parallel)
     started: list[dict] = []
@@ -90,7 +99,7 @@ def run_batch(
         if room > 0 and can_start:
             in_flight_claims = {c["claim_id"] for c in started if c["id"] in busy_ids}
             claims = [
-                c for c in pending_claims(project_id, current_engine_only) if c not in skipped and c not in in_flight_claims
+                c for c in pending_claims(project_id, current_engine_only, min_likelihood) if c not in skipped and c not in in_flight_claims
             ]
             if not claims:
                 exhausted = True

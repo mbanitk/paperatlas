@@ -303,7 +303,7 @@ def test_batch_keeps_at_most_parallel_experiments_in_flight(monkeypatch):
 
     monkeypatch.setattr(batch, "busy_experiments", busy)
     # claim c becomes experiment 100 + c, so the claims still pending are those above the last one started
-    monkeypatch.setattr(batch, "pending_claims", lambda project_id, current: [c for c in range(1, 6) if 100 + c > state["next"]])
+    monkeypatch.setattr(batch, "pending_claims", lambda project_id, current, likelihood: [c for c in range(1, 6) if 100 + c > state["next"]])
     monkeypatch.setattr(batch.service, "create_experiments", create)
     monkeypatch.setattr(batch.service, "get_experiment", lambda i: {"id": i, "status": "awaiting_decision", "verdict": "partial"})
     monkeypatch.setattr(batch.time, "sleep", tick)
@@ -331,3 +331,19 @@ def test_json_extraction_accepts_raw_newlines_inside_strings():
     from paperatlas.llm.client import extract_json_object
 
     assert json.loads(extract_json_object('{"a": "line one\nline two"}')) == {"a": "line one\nline two"}
+
+
+def test_cost_model_credits_only_gains_on_top_of_the_baseline_and_this_hardware():
+    from paperatlas.lab.costmodel import predict
+
+    roofline = {**ROOFLINE_MLX, "hardware": {"chip": "Apple M5 Pro"}, "baseline_features": ["continuous_batching"],
+                "measured": {"draft_acceptance": 0.35},
+                "forward_cost_ms": {"1": 10.8, "2": 13.3, "4": 18.8, "8": 29.1, "16": 48.6}}
+    batching = predict({"category": "batching_scheduling", "technique": "continuous batching"}, roofline, ["concurrent_4"])
+    assert batching["likelihood"] == "marginal" and batching["predicted_gain_pct"]["high"] <= 10
+    fp6 = predict({"category": "quantization", "technique": "FP6 block encoding for activations"}, roofline)
+    assert fp6["likelihood"] == "unlikely"
+    draft = predict({"category": "speculative_decoding", "technique": "draft model proposes a block, target verifies"}, roofline)
+    assert draft["likelihood"] == "unlikely" and any("measured acceptance" in r for r in draft["reasons"])
+    lookup = predict({"category": "speculative_decoding", "technique": "prompt lookup n-gram drafting"}, roofline)
+    assert lookup["predicted_gain_pct"]["high"] > draft["predicted_gain_pct"]["high"]
