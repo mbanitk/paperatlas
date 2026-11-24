@@ -212,3 +212,21 @@ def test_planner_flag_collision_terminates_and_protocol_is_clamped():
     _normalize_protocol(draft)
     assert draft["paper_workload"]["max_new_tokens"] == 256 and draft["paper_workload"]["concurrency"] == 8
     assert len(draft["paper_workload"]["prompts"]) == 4 and draft["knobs"] == []
+
+
+def test_reviewer_can_set_the_protocol_at_gate_2():
+    spec = plan_experiment({"technique": "draft tokens", "name": "dloop"}, PROFILE, None, None)
+    edited = apply_overrides(
+        spec,
+        {
+            "paper_baseline": {"kind": "technique_mode", "description": "block drafting without DLoop"},
+            "paper_workload": {"matches": "GSM8K", "prompts": ["q"] * 9, "max_new_tokens": 200, "concurrency": 1},
+            "knobs": [{"name": "Block Size", "candidates": ["4", "6"]}],
+        },
+        PROFILE,
+    )
+    assert edited["paper_baseline"]["kind"] == "technique_mode"
+    assert len(edited["paper_workload"]["prompts"]) == 6 and edited["knobs"][0] == {
+        "name": "block_size", "meaning": "", "paper_value": None, "candidates": [4, 6]}
+    with pytest.raises(ValueError):
+        apply_overrides(spec, {"paper_baseline": {"kind": "something_else"}}, PROFILE)

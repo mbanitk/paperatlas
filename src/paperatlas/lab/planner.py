@@ -35,6 +35,13 @@ EDITABLE_FIELDS = (
     "model",
     "tune",
     "max_iterations",
+    # protocol v2 — the reviewer can correct how the paper is reproduced
+    "paper_baseline",
+    "paper_workload",
+    "mechanism",
+    "knobs",
+    "fidelity",
+    "lossless",
 )
 
 
@@ -92,6 +99,11 @@ def apply_overrides(spec: dict[str, Any], overrides: dict[str, Any], profile: di
         raise ValueError(f"Not editable: {sorted(unknown)}; editable fields are {list(EDITABLE_FIELDS)}")
     if "flag_name" in overrides and not re.fullmatch(r"[a-z][a-z0-9_]{2,40}", str(overrides["flag_name"])):
         raise ValueError("flag_name must be snake_case: 3-41 chars of a-z, 0-9 and _, starting with a letter")
+    if isinstance(overrides.get("paper_workload"), dict):
+        draft = {"paper_workload": dict(overrides["paper_workload"]), "knobs": overrides.get("knobs", spec.get("knobs") or []),
+                 "mechanism": overrides.get("mechanism", spec.get("mechanism") or [])}
+        _normalize_protocol(draft)
+        overrides = {**overrides, "paper_workload": draft["paper_workload"]}
     merged = ExperimentSpec.model_validate({**spec, **overrides})
     metrics = {m["name"]: m for m in profile.get("metrics") or []}
     workloads = _workload_names(profile)
@@ -102,6 +114,10 @@ def apply_overrides(spec: dict[str, Any], overrides: dict[str, Any], profile: di
     if not workloads and not SAFE_WORKLOAD.fullmatch(merged.workload):
         raise ValueError("workload must be letters, digits, '_', '.' or '-' (the profile lists no workloads)")
     merged.direction = _direction(metrics[merged.primary_metric])
+    if "knobs" in overrides and not merged.knobs:
+        merged.tune = False
+    if "lossless" in overrides:
+        merged.guardrails.min_output_agreement = 1.0 if merged.lossless else None
     return merged.model_dump()
 
 
