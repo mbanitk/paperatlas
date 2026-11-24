@@ -533,6 +533,7 @@ def backfill(
     workers: int = 4,
     maps: bool = True,
     report=lambda stage, message, data=None: logger.info("[%s] %s", stage, message),
+    all_claims: bool = False,
 ) -> dict[str, int]:
     llm = _require_llm(None)
     result = {"topics": 0, "papers": 0, "claims": 0, "maps": 0}
@@ -547,13 +548,15 @@ def backfill(
             map_query = map_query.where(Paper.concept_map.is_(None))
         map_ids = session.scalars(map_query).all() if maps else []
         claim_ids: list[int] = []
-        if project_id and claims_top:
-            claim_query = (
-                select(Match.claim_id)
-                .where(Match.project_id == project_id, Match.testable_here.is_(True))
-                .order_by(Match.score.desc())
-                .limit(claims_top)
-            )
+        if project_id and (claims_top or all_claims):
+            claim_query = select(Match.claim_id).where(Match.project_id == project_id)
+            if all_claims:
+                # every card (blocked ones are shown under "Include blocked"): testable first, best first
+                claim_query = claim_query.order_by(Match.testable_here.desc(), Match.score.desc())
+            else:
+                claim_query = (
+                    claim_query.where(Match.testable_here.is_(True)).order_by(Match.score.desc()).limit(claims_top)
+                )
             claim_ids = session.scalars(claim_query).all()
     from paperatlas.distill.concept_map import map_paper
 

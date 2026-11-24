@@ -279,7 +279,8 @@ def cmd_explain(args: argparse.Namespace) -> None:
 
     project_id = _project_id(args.project) if args.project else None
     result = backfill(
-        project_id, args.claims, not args.no_papers, not args.no_topics, args.force, args.workers, maps=not args.no_maps
+        project_id, args.claims, not args.no_papers, not args.no_topics, args.force, args.workers, maps=not args.no_maps,
+        all_claims=args.all_claims,
     )
     print(
         f"explained {result['topics']} topics, {result['papers']} papers, {result['claims']} claims; "
@@ -458,6 +459,7 @@ def build_parser() -> argparse.ArgumentParser:
     explain = r2e_sub.add_parser("explain", help="generate plain-language explainers + diagrams")
     explain.add_argument("--project", help="also explain the top claims for this project")
     explain.add_argument("--claims", type=int, default=25, help="top N recommendations to explain")
+    explain.add_argument("--all-claims", action="store_true", help="every claim matched to the project (all cards)")
     explain.add_argument("--no-papers", action="store_true")
     explain.add_argument("--no-topics", action="store_true")
     explain.add_argument("--no-maps", action="store_true", help="skip concept maps (links between a paper's concepts)")
