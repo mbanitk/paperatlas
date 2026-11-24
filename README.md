@@ -111,9 +111,11 @@ Without source keys, Semantic Scholar is rate limited and patents are skipped.
 ```bash
 python -m paperatlas.concepts.extraction.ingest --query "graph neural networks" --last-days 365 --max-results 50
 python -m paperatlas.concepts.extraction.ingest --arxiv 2106.09685
-python -m paperatlas.concepts.extraction.ingest --query "..." --no-db     # JSON files only
 python -m paperatlas.concepts.extraction.generate --limit 50               # same as `paperatlas r2e distill`
 ```
+
+Papers, claim cards and the LLM response cache (`research.llm_cache`) all live in PostgreSQL;
+`PAPERATLAS_DATA_DIR` only holds experiment worktrees, run logs/artifacts, reports and digests.
 
 ## Tests
 

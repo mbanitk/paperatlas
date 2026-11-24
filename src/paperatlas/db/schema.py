@@ -428,3 +428,16 @@ class Event(Base):
     message: Mapped[str] = mapped_column(Text)
     data: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB)
     created_at: Mapped[datetime] = _now()
+
+
+class LLMCacheEntry(Base):
+    """Cached LLM responses keyed by a hash of (model, prompts, schema)."""
+
+    __tablename__ = "llm_cache"
+    __table_args__ = {"schema": RESEARCH}
+
+    key: Mapped[str] = mapped_column(Text, primary_key=True)
+    model: Mapped[str] = mapped_column(Text)
+    schema_name: Mapped[Optional[str]] = mapped_column(Text)
+    value: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = _now()

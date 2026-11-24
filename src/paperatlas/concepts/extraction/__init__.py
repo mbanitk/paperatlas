@@ -1,11 +1,9 @@
 from .models import PaperAuthor, PaperIdentifier, PaperMetadata, PaperRecord
 from .sources import ArxivClient
-from .storage import JsonPaperStore
 
 __all__ = [
     "ArxivClient",
     "IngestionPipeline",
-    "JsonPaperStore",
     "PaperAuthor",
     "PaperIdentifier",
     "PaperMetadata",

@@ -60,3 +60,25 @@ def test_distill_stores_claim_cards_groups_duplicates_and_searches(db):
     assert hits[0].id == claims["Quantize KV cache entries to 2-bit integers"].id
     with get_engine(db).connect() as connection:
         assert connection.execute(text("SELECT count(*) FROM research.claim_groups")).scalar() == 1
+
+
+def test_llm_responses_are_cached_in_postgres(db, monkeypatch):
+    from paperatlas.db.schema import LLMCacheEntry
+    from paperatlas.llm.client import LLMCache, LLMClient, LLMConfig
+
+    calls = []
+
+    def fake_call(self, system_prompt, user_prompt, schema):
+        calls.append(user_prompt)
+        return '{"answer": 42}'
+
+    monkeypatch.setattr(LLMClient, "_call", fake_call)
+    schema = ("answer", {"type": "object"})
+    first = LLMClient(LLMConfig(api_key="k"), cache=LLMCache()).generate_json("sys", "q", *schema)
+    second = LLMClient(LLMConfig(api_key="k"), cache=LLMCache()).generate_json("sys", "q", *schema)
+    assert first == second == {"answer": 42}
+    assert calls == ["q"]
+    with session_scope() as session:
+        entry = session.scalars(select(LLMCacheEntry)).one()
+    assert (entry.model, entry.schema_name) == (LLMConfig.model, "answer")
+

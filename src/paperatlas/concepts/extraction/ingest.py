@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Ingest papers into local storage."
+        description="Ingest papers into PostgreSQL."
     )
     parser.add_argument(
         "--doi",
@@ -46,14 +46,9 @@ def main() -> None:
         "--database-url",
         help="PostgreSQL URL (default: PAPERATLAS_DATABASE_URL or postgresql+psycopg://localhost/paperatlas)",
     )
-    parser.add_argument(
-        "--no-db",
-        action="store_true",
-        help="Only write JSON files under data/papers (skip PostgreSQL)",
-    )
     args = parser.parse_args()
 
-    pipeline = IngestionPipeline(use_db=not args.no_db, database_url=args.database_url)
+    pipeline = IngestionPipeline(database_url=args.database_url)
     if args.query:
         from_date = args.from_date
         if args.last_days:
