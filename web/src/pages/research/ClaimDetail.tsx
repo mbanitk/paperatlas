@@ -9,7 +9,7 @@ import { ClaimExplain, ClaimFacts, claimSentence, ExpectedHere, PaperReports } f
 import { ArrowRightIcon, BookIcon, SparkIcon } from '../../components/Icons'
 import { ConceptMapGraph } from '../../components/ConceptMap'
 import { RelatedCard } from '../../components/Related'
-import { AnswerBlock, Card, Disclosure, ErrorState, Loading, MathText, PageHeader, PaperLink } from '../../components/ui'
+import { AnswerBlock, Card, ErrorState, Loading, MathText, PageHeader, PaperLink } from '../../components/ui'
 import { expectedMetricLabel, experimentVerb } from '../../lib/claims'
 import { formatCI, formatSigned, humanize, sanitizeText } from '../../lib/format'
 import { adoptionSemantics, claimCheckSemantics, gainSemantics, sentenceCase } from '../../lib/semantics'
@@ -162,7 +162,7 @@ export default function ClaimDetailPage() {
             }
           >
             {explainer ? (
-              <ClaimExplain claim={data} explainer={explainer} project={project} diagramOpen={false} />
+              <ClaimExplain claim={data} explainer={explainer} project={project} diagramOpen />
             ) : (
               <div className="space-y-2 text-sm text-muted">
                 <p>
@@ -179,14 +179,14 @@ export default function ClaimDetailPage() {
               <p className="text-sm text-muted">
                 A map of how the paper’s {paperDetail.data.concept_map.nodes.length} concepts depend on each other. This concept has a dashed ring.
               </p>
-              <Disclosure label="Show the concept map" className="mt-2">
+              <div className="mt-2">
                 <ConceptMapGraph
                   map={paperDetail.data.concept_map}
                   currentConceptId={paperDetail.data.concept_map.nodes.find((node) => node.claim_id === data.id)?.concept_id}
                   showBundles={false}
                   onSelect={(node) => node.claim_id && node.claim_id !== data.id && navigate(`/research/claims/${node.claim_id}`)}
                 />
-              </Disclosure>
+              </div>
             </Card>
           )}
           <Card title="Claim card (raw)">
