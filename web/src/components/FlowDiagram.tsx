@@ -1,32 +1,27 @@
-import { useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { autoUpdate, FloatingArrow, FloatingPortal, useFloating } from '@floating-ui/react'
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FocusEvent, type MouseEvent, type ReactNode } from 'react'
 import type { FlowDiagramData } from '../api/types'
-import { compareFlows, FULL_METRICS, layoutFlow, MINI_METRICS, VERTICAL_METRICS, wrapLabel, type FlowLayout, type LaidOutNode, type NodeStatus } from '../lib/flow'
-import { GLYPHS, type GlyphName } from './Icons'
+import { compareFlows, FLOW_TEXT, FULL_METRICS, layoutFlow, MINI_METRICS, VERTICAL_METRICS, type FlowLayout, type LaidOutEdge, type LaidOutNode, type NodeStatus } from '../lib/flow'
+import { MIN_DIAGRAM_SCALE } from '../lib/textMeasure'
+import { fitScale, useElementWidth } from '../lib/useElementWidth'
+import { ArrowRightIcon, GLYPHS, type GlyphName } from './Icons'
+import { floatingMiddleware } from './Tooltip'
 import { cx } from './ui'
 
-/** Subtle per-kind colours (fill, stroke) — GitHub Primer-like tints. */
+/**
+ * Per-kind label, kept for compatibility. Kinds are told apart by their glyph and shape (decisions are
+ * hexagons, inputs/outputs pills), not by colour: colour in a diagram means only "what the technique adds or
+ * changes" (info blue), so it can't be mistaken for an outcome (docs/ux-review.md §2.5).
+ */
 export const KIND_COLORS: Record<string, { fill: string; stroke: string; label: string }> = {
-  input: { fill: '#f6f8fa', stroke: '#8c959f', label: 'input' },
-  model: { fill: '#fbefff', stroke: '#a475f9', label: 'model' },
-  step: { fill: '#ddf4ff', stroke: '#54aeff', label: 'step' },
-  decision: { fill: '#fff8c5', stroke: '#d4a72c', label: 'decision' },
-  memory: { fill: '#d8f6f0', stroke: '#33b3ae', label: 'memory / cache' },
-  output: { fill: '#dafbe1', stroke: '#4ac26b', label: 'output' },
-  hardware: { fill: '#eaeef2', stroke: '#6e7781', label: 'hardware' },
-  data: { fill: '#fff1e5', stroke: '#fb8f44', label: 'data' },
-}
-const kindColor = (kind: string) => KIND_COLORS[kind] ?? KIND_COLORS.step
-
-/** Darker per-kind glyph colours (≥ 3:1 on the node tint). */
-const KIND_INK: Record<string, string> = {
-  input: '#59636e',
-  model: '#8250df',
-  step: '#0969da',
-  decision: '#9a6700',
-  memory: '#1b7c83',
-  output: '#1a7f37',
-  hardware: '#59636e',
-  data: '#bc4c00',
+  input: { fill: '#ffffff', stroke: '#8c959f', label: 'input' },
+  model: { fill: '#ffffff', stroke: '#8c959f', label: 'model' },
+  step: { fill: '#ffffff', stroke: '#8c959f', label: 'step' },
+  decision: { fill: '#ffffff', stroke: '#8c959f', label: 'decision' },
+  memory: { fill: '#ffffff', stroke: '#8c959f', label: 'memory / cache' },
+  output: { fill: '#ffffff', stroke: '#8c959f', label: 'output' },
+  hardware: { fill: '#ffffff', stroke: '#8c959f', label: 'hardware' },
+  data: { fill: '#ffffff', stroke: '#8c959f', label: 'data' },
 }
 const KIND_GLYPH: Record<string, GlyphName> = {
   input: 'input',
@@ -38,149 +33,260 @@ const KIND_GLYPH: Record<string, GlyphName> = {
   hardware: 'chip',
   data: 'table',
 }
-const ACCENT = '#0969da'
-const EDGE = '#6e7781'
-const LOOP = '#bf8700'
-const LOOP_INK = '#9a6700'
-const MUTED_INK = '#59636e'
 
-function Shape({ node, mini, status }: { node: LaidOutNode; mini: boolean; status: NodeStatus }) {
-  const color = kindColor(node.kind)
+/** Paint from the design tokens (index.css). Presentation attributes can't take var(), so these go in `style`. */
+const C = {
+  ink: 'var(--color-fg)',
+  muted: 'var(--color-muted)',
+  line: 'var(--color-line)',
+  lineMuted: 'var(--color-line-muted)',
+  edge: 'var(--color-neutral-emphasis)',
+  canvas: 'var(--color-canvas)',
+  canvasSubtle: 'var(--color-canvas-subtle)',
+  info: 'var(--color-info)',
+  infoFg: 'var(--color-info-fg)',
+  infoSubtle: 'var(--color-info-subtle)',
+  neutralSubtle: 'var(--color-neutral-subtle)',
+} as const
+const NODE_STROKE = '#8c959f'
+
+// ---- shared pieces (also used by ConceptMap) ------------------------------------------------------------
+
+/**
+ * Hover/focus tooltip for SVG marks, rendered in a portal with the foundation's floating middleware (flip,
+ * shift, header- and action-bar-aware). `bind(content)` gives the props for the mark; render `tooltip` once.
+ */
+export function useSvgTooltip() {
+  const [state, setState] = useState<{ content: ReactNode; element: Element } | null>(null)
+  const arrowRef = useRef<SVGSVGElement>(null)
+  const { refs, floatingStyles, context, middlewareData } = useFloating({
+    open: !!state,
+    placement: 'top',
+    strategy: 'fixed',
+    whileElementsMounted: autoUpdate,
+    middleware: floatingMiddleware(arrowRef),
+    elements: { reference: state?.element ?? null },
+  })
+  useEffect(() => {
+    if (!state) return
+    const onKey = (event: KeyboardEvent) => event.key === 'Escape' && setState(null)
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [state])
+  const show = (element: Element, content: ReactNode) => setState({ element, content })
+  const hide = () => setState(null)
+  const bind = (content: ReactNode) => ({
+    onMouseEnter: (event: MouseEvent<Element>) => show(event.currentTarget, content),
+    onMouseLeave: hide,
+    onFocus: (event: FocusEvent<Element>) => show(event.currentTarget, content),
+    onBlur: hide,
+  })
+  const tooltip = state ? (
+    <FloatingPortal>
+      <div
+        ref={refs.setFloating}
+        role="tooltip"
+        data-floating="tooltip"
+        style={{ ...floatingStyles, zIndex: 'var(--z-popover)', visibility: middlewareData.hide?.referenceHidden ? 'hidden' : undefined }}
+        className="pointer-events-none w-max overflow-auto rounded-md bg-fg px-2.5 py-1.5 text-xs font-medium break-words whitespace-pre-line text-white shadow-lg"
+      >
+        {state.content}
+        <FloatingArrow ref={arrowRef} context={context} width={10} height={5} fill="var(--color-fg)" />
+      </div>
+    </FloatingPortal>
+  ) : null
+  return { bind, show, hide, tooltip }
+}
+
+/**
+ * Box for a diagram drawn at its natural size (or slightly smaller, never below 11 px text). When it's still
+ * wider than the container it scrolls sideways, with a hint and keyboard access, instead of shrinking.
+ * `focusX` (px from the left of the content) is scrolled into the middle when the box scrolls.
+ */
+export function DiagramFrame({ contentWidth, available, children, className, focusX }: {
+  contentWidth: number
+  available: number | null
+  children: ReactNode
+  className?: string
+  focusX?: number | null
+}) {
+  const scrolls = !!available && contentWidth > available + 1
+  const scroller = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    const element = scroller.current
+    if (!scrolls || !element || focusX == null) return
+    element.scrollLeft = Math.max(0, focusX - element.clientWidth / 2)
+  }, [scrolls, focusX])
+  return (
+    <div className={cx('min-w-0', className)}>
+      {scrolls && (
+        <p className="mb-1 flex items-center gap-1 text-xs text-muted" aria-hidden="true">
+          Scroll sideways to see the whole diagram <ArrowRightIcon size={12} />
+        </p>
+      )}
+      <div
+        ref={scroller}
+        className={cx('relative max-w-full', scrolls ? 'overflow-x-auto pb-1' : 'overflow-visible')}
+        {...(scrolls ? { tabIndex: 0, role: 'region', 'aria-label': 'Diagram (scrolls sideways)' } : {})}
+      >
+        {children}
+      </div>
+    </div>
+  )
+}
+
+// ---- nodes, edges and labels -------------------------------------------------------------------------------
+
+function Shape({ node, mini }: { node: LaidOutNode; mini: boolean }) {
+  const status = node.status
   const emphasised = status === 'new' || status === 'changed'
-  const stroke = emphasised ? ACCENT : color.stroke
+  const style: CSSProperties = {
+    fill: emphasised ? C.infoSubtle : status === 'removed' ? C.canvasSubtle : C.canvas,
+    stroke: emphasised ? C.info : NODE_STROKE,
+  }
   const strokeWidth = emphasised ? (mini ? 1.6 : 2) : 1
   const dash = status === 'removed' ? '5 3' : undefined
   if (node.kind === 'decision') {
     const { x, y, width: w, height: h } = node
     const inset = mini ? 4 : 12
     const points = `${x + inset},${y} ${x + w - inset},${y} ${x + w},${y + h / 2} ${x + w - inset},${y + h} ${x + inset},${y + h} ${x},${y + h / 2}`
-    return <polygon points={points} fill={color.fill} stroke={stroke} strokeWidth={strokeWidth} strokeDasharray={dash} strokeLinejoin="round" />
+    return <polygon points={points} style={style} strokeWidth={strokeWidth} strokeDasharray={dash} strokeLinejoin="round" />
   }
-  const radius = mini ? 4 : node.kind === 'input' || node.kind === 'output' ? node.height / 2 : 10
-  return <rect x={node.x} y={node.y} width={node.width} height={node.height} rx={radius} fill={color.fill} stroke={stroke} strokeWidth={strokeWidth} strokeDasharray={dash} />
+  const radius = mini ? 4 : node.kind === 'input' || node.kind === 'output' ? Math.min(node.height / 2, 22) : 10
+  return <rect x={node.x} y={node.y} width={node.width} height={node.height} rx={radius} style={style} strokeWidth={strokeWidth} strokeDasharray={dash} />
 }
 
-const STATUS_BADGE: Partial<Record<NodeStatus, { text: string; fill: string; ink: string; stroke?: string; width: number }>> = {
-  new: { text: 'new', fill: ACCENT, ink: '#ffffff', width: 30 },
-  changed: { text: 'changed', fill: '#ffffff', ink: ACCENT, stroke: ACCENT, width: 50 },
-  removed: { text: 'removed', fill: '#eff2f5', ink: MUTED_INK, stroke: '#8c959f', width: 50 },
+const BADGE_STYLE: Partial<Record<NodeStatus, { fill: string; ink: string; stroke?: string }>> = {
+  new: { fill: C.info, ink: '#ffffff' },
+  changed: { fill: C.canvas, ink: C.infoFg, stroke: C.info },
+  removed: { fill: C.neutralSubtle, ink: C.muted, stroke: NODE_STROKE },
 }
 
-/** One node: tinted shape, per-kind glyph, a label wrapped to ≤ 3 lines and a status badge. */
-function Node({ node, status, mini }: { node: LaidOutNode; status: NodeStatus; mini: boolean }) {
-  const color = kindColor(node.kind)
-  const badge = STATUS_BADGE[status]
-  const removed = status === 'removed'
-  const isDecision = node.kind === 'decision'
-  const glyphX = node.x + (isDecision ? 20 : 12)
-  const textX = glyphX + 24
-  const maxChars = Math.max(8, Math.floor((node.x + node.width - (isDecision ? 14 : 8) - textX) / 6.3))
-  const lines = mini ? [] : wrapLabel(node.label, maxChars, 3)
-  const lineHeight = 13.5
-  const startY = node.y + node.height / 2 - ((lines.length - 1) * lineHeight) / 2 + 4.2
-  return (
-    <g opacity={removed ? 0.6 : 1}>
-      <title>{`${node.label} · ${color.label}${status === 'same' ? '' : ` · ${status}`}`}</title>
-      <Shape node={node} mini={mini} status={status} />
-      {!mini && (
+/** One node: shape, per-kind glyph, the label (wrapped by measured width) and a status pill in its top-right corner. */
+function Node({ node, mini, tooltip }: { node: LaidOutNode; mini: boolean; tooltip?: ReturnType<typeof useSvgTooltip> }) {
+  const badge = node.badge
+  const badgeStyle = BADGE_STYLE[node.status]
+  const removed = node.status === 'removed'
+  const content = (
+    <>
+      <Shape node={node} mini={mini} />
+      {!mini && node.glyph && (
         <>
-          <circle cx={glyphX + 9} cy={node.y + node.height / 2} r={11} fill="#ffffff" stroke={color.stroke} strokeOpacity={0.55} />
-          <g transform={`translate(${glyphX + 2} ${node.y + node.height / 2 - 7}) scale(0.875)`} color={KIND_INK[node.kind] ?? KIND_INK.step}>
+          <circle cx={node.glyph.x} cy={node.glyph.y} r={10.5} style={{ fill: C.canvas, stroke: C.line }} />
+          <g transform={`translate(${node.glyph.x - 7} ${node.glyph.y - 7}) scale(0.875)`} style={{ color: C.muted }}>
             <g fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
               {GLYPHS[KIND_GLYPH[node.kind] ?? 'step']}
             </g>
           </g>
-          <text x={textX} fontSize={11.5} fill="#1f2328" fontWeight={status === 'new' || status === 'changed' ? 600 : 500} textDecoration={removed ? 'line-through' : undefined}>
-            {lines.map((line, i) => (
-              <tspan key={i} x={textX} y={startY + i * lineHeight}>
-                {line}
-              </tspan>
-            ))}
-          </text>
         </>
       )}
-      {badge &&
-        (mini ? (
-          <circle cx={node.x + node.width - 1} cy={node.y + 1} r={2.6} fill={ACCENT} stroke="#fff" strokeWidth={0.8} />
-        ) : (
-          <g>
-            <rect x={node.x + node.width - badge.width - 6} y={node.y - 8} width={badge.width} height={15} rx={7.5} fill={badge.fill} stroke={badge.stroke} strokeWidth={badge.stroke ? 1 : 0} />
-            <text x={node.x + node.width - badge.width / 2 - 6} y={node.y + 3} textAnchor="middle" fontSize={9.5} fontWeight={700} fill={badge.ink}>
-              {badge.text}
-            </text>
-          </g>
-        ))}
-    </g>
+      {!mini && node.lines.length > 0 && (
+        <text x={node.textX} fontSize={FLOW_TEXT.fontSize} fontWeight={node.fontWeight} style={{ fill: removed ? C.muted : C.ink }}>
+          {node.lines.map((line, i) => (
+            <tspan key={i} x={node.textX} y={node.lineY[i]}>
+              {line}
+            </tspan>
+          ))}
+        </text>
+      )}
+      {badge && badgeStyle && (
+        <g>
+          <rect x={badge.x} y={badge.y} width={badge.width} height={badge.height} rx={badge.height / 2} style={{ fill: badgeStyle.fill, stroke: badgeStyle.stroke ?? 'none' }} strokeWidth={1} />
+          <text x={badge.x + badge.width / 2} y={badge.y + badge.height / 2 + 4.2} textAnchor="middle" fontSize={FLOW_TEXT.fontSize} fontWeight={600} style={{ fill: badgeStyle.ink }}>
+            {badge.text}
+          </text>
+        </g>
+      )}
+      {mini && node.status !== 'same' && <circle cx={node.x + node.width - 1} cy={node.y + 1} r={2.6} style={{ fill: C.info, stroke: C.canvas }} strokeWidth={0.8} />}
+    </>
   )
+  // A label cut to fit (rare: > 4 lines) shows in full in a tooltip, on hover and keyboard focus.
+  if (node.truncated && tooltip)
+    return (
+      <g tabIndex={0} aria-label={node.label} className="outline-none [&:focus-visible>*:first-child]:stroke-[var(--color-info)]" {...tooltip.bind(node.label)}>
+        {content}
+      </g>
+    )
+  return <g>{content}</g>
 }
 
 function Markers({ uid }: { uid: string }) {
   return (
     <defs>
       <marker id={`${uid}-a`} viewBox="0 0 8 8" refX="7.5" refY="4" markerWidth="8" markerHeight="8" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
-        <path d="M0,0.5 L8,4 L0,7.5 z" fill={EDGE} />
-      </marker>
-      <marker id={`${uid}-l`} viewBox="0 0 8 8" refX="7.5" refY="4" markerWidth="8" markerHeight="8" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
-        <path d="M0,0.5 L8,4 L0,7.5 z" fill={LOOP} />
+        <path d="M0,0.5 L8,4 L0,7.5 z" style={{ fill: C.edge }} />
       </marker>
     </defs>
   )
 }
 
-/** Edges, nodes and edge labels of one laid-out diagram (labels last so they sit on top). */
-function DiagramBody({ layout, uid, mini, statusOf, dimEdges = false }: {
+function EdgeLabel({ edge }: { edge: LaidOutEdge }) {
+  const box = edge.labelBox
+  if (!box) return null
+  const lineHeight = FLOW_TEXT.edgeLineHeight
+  const first = box.y + FLOW_TEXT.pillPadY + FLOW_TEXT.baseline - 0.6
+  return (
+    <g>
+      <rect x={box.x} y={box.y} width={box.width} height={box.height} rx={5} style={{ fill: C.canvas, stroke: C.lineMuted }} strokeWidth={1} />
+      <text textAnchor="middle" fontSize={FLOW_TEXT.fontSize} fontWeight={500} style={{ fill: C.muted }}>
+        {edge.labelLines.map((line, i) => (
+          <tspan key={i} x={box.x + box.width / 2} y={first + i * lineHeight}>
+            {line}
+          </tspan>
+        ))}
+      </text>
+    </g>
+  )
+}
+
+function Callout({ edge, offset = 0 }: { edge: LaidOutEdge; offset?: number }) {
+  if (!edge.calloutBox || !edge.callout) return null
+  const cx0 = edge.calloutBox.x + edge.calloutBox.width / 2
+  const cy0 = edge.calloutBox.y + edge.calloutBox.height / 2
+  return (
+    <g>
+      <circle cx={cx0} cy={cy0} r={edge.calloutBox.width / 2} style={{ fill: C.canvas, stroke: C.muted }} strokeWidth={1.2} />
+      <text x={cx0} y={cy0 + 4.2} textAnchor="middle" fontSize={FLOW_TEXT.fontSize} fontWeight={700} style={{ fill: C.ink }}>
+        {edge.callout + offset}
+      </text>
+    </g>
+  )
+}
+
+/** Edges, nodes, then edge labels and callouts (labels last so their pills sit over the lines). */
+function DiagramBody({ layout, uid, mini, calloutOffset = 0, dimEdges = false, tooltip }: {
   layout: FlowLayout
   uid: string
   mini: boolean
-  statusOf: (node: LaidOutNode) => NodeStatus
+  calloutOffset?: number
   dimEdges?: boolean
+  tooltip?: ReturnType<typeof useSvgTooltip>
 }) {
   return (
     <>
-      <g fill="none" opacity={dimEdges ? 0.75 : 1}>
-        {layout.edges.map((edge, index) => {
-          const loop = edge.route === 'loop'
-          return (
-            <path
-              key={index}
-              d={edge.path}
-              stroke={loop ? LOOP : EDGE}
-              strokeWidth={mini ? 0.9 : 1.5}
-              strokeDasharray={edge.style === 'skip' ? (mini ? '2 2' : '5 4') : undefined}
-              markerEnd={mini ? undefined : `url(#${uid}-${loop ? 'l' : 'a'})`}
-              opacity={mini ? 0.8 : 1}
-            />
-          )
-        })}
+      <g fill="none" opacity={dimEdges ? 0.8 : 1}>
+        {layout.edges.map((edge, index) => (
+          <path
+            key={index}
+            d={edge.path}
+            style={{ stroke: C.edge }}
+            strokeWidth={mini ? 0.9 : 1.5}
+            strokeDasharray={edge.style === 'skip' ? (mini ? '2 2' : '5 4') : undefined}
+            markerEnd={mini ? undefined : `url(#${uid}-a)`}
+            opacity={mini ? 0.8 : 1}
+          />
+        ))}
       </g>
       {layout.nodes.map((node) => (
-        <Node key={node.id} node={node} status={statusOf(node)} mini={mini} />
+        <Node key={node.id} node={node} mini={mini} tooltip={tooltip} />
       ))}
       {!mini &&
-        layout.edges
-          .filter((edge) => edge.labelLines.length)
-          .map((edge, index) => (
-            <text
-              key={`label-${index}`}
-              x={edge.labelX}
-              y={edge.labelY}
-              textAnchor={edge.labelAnchor}
-              transform={edge.labelRotate ? `rotate(${edge.labelRotate} ${edge.labelX} ${edge.labelY})` : undefined}
-              fontSize={10}
-              fontWeight={500}
-              fill={edge.route === 'loop' ? LOOP_INK : MUTED_INK}
-              stroke="#fff"
-              strokeWidth={4}
-              strokeLinejoin="round"
-              paintOrder="stroke"
-            >
-              {edge.labelLines.map((line, i) => (
-                <tspan key={i} x={edge.labelX} y={edge.labelY + i * 11}>
-                  {line}
-                </tspan>
-              ))}
-            </text>
-          ))}
+        layout.edges.map((edge, index) => (
+          <g key={`label-${index}`}>
+            <EdgeLabel edge={edge} />
+            <Callout edge={edge} offset={calloutOffset} />
+          </g>
+        ))}
     </>
   )
 }
@@ -194,151 +300,186 @@ function Swatch({ children, label }: { children: ReactNode; label: string }) {
   )
 }
 
-/** Legend under a diagram: only the marks that actually appear. */
-function Legend({ statuses, loops, skips, title }: { statuses: Set<NodeStatus>; loops: boolean; skips: boolean; title?: string }) {
-  if (!title && !statuses.size && !loops && !skips) return null
+/** Legend under a diagram: only the marks that actually appear, plus any edge labels drawn as callouts. */
+function Legend({ statuses, loops, skips, title, callouts = [] }: {
+  statuses: Set<NodeStatus>
+  loops: boolean
+  skips: boolean
+  title?: string
+  callouts?: { number: number; label: string }[]
+}) {
+  if (!title && !statuses.size && !loops && !skips && !callouts.length) return null
   return (
-    <figcaption className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11.5px] text-muted">
-      {title && <span className="font-medium text-fg">{title}</span>}
-      {statuses.has('new') && (
-        <Swatch label="new step">
-          <span className="rounded-full bg-accent px-1.5 text-[10px] leading-4 font-bold text-white" aria-hidden="true">
-            new
-          </span>
-        </Swatch>
-      )}
-      {statuses.has('changed') && (
-        <Swatch label="existing step, changed">
-          <span className="inline-block h-3 w-5 rounded-sm border-2 border-accent bg-canvas" aria-hidden="true" />
-        </Swatch>
-      )}
-      {statuses.has('removed') && (
-        <Swatch label="no longer needed">
-          <span className="inline-block h-3 w-5 rounded-sm border border-dashed border-subtle bg-canvas-inset" aria-hidden="true" />
-        </Swatch>
-      )}
-      {loops && (
-        <Swatch label="repeats (loop)">
-          <span className="inline-block h-0.5 w-5 rounded bg-attention-emphasis" aria-hidden="true" />
-        </Swatch>
-      )}
-      {skips && (
-        <Swatch label="sometimes skipped">
-          <span className="inline-block w-5 border-t-2 border-dashed border-muted" aria-hidden="true" />
-        </Swatch>
+    <figcaption className="mt-2 space-y-1 text-xs text-muted">
+      <span className="flex flex-wrap items-center gap-x-4 gap-y-1">
+        {title && <span className="font-medium text-fg">{title}</span>}
+        {statuses.has('new') && (
+          <Swatch label="New step">
+            <span className="rounded-full bg-info px-1.5 text-xs leading-4 font-semibold text-white" aria-hidden="true">
+              New
+            </span>
+          </Swatch>
+        )}
+        {statuses.has('changed') && (
+          <Swatch label="Existing step, changed">
+            <span className="inline-block h-3 w-5 rounded-sm border-2 border-info bg-info-subtle" aria-hidden="true" />
+          </Swatch>
+        )}
+        {statuses.has('removed') && (
+          <Swatch label="No longer needed">
+            <span className="inline-block h-3 w-5 rounded-sm border border-dashed border-muted bg-canvas-subtle" aria-hidden="true" />
+          </Swatch>
+        )}
+        {loops && (
+          <Swatch label="Repeats (loop back)">
+            <svg width="22" height="12" aria-hidden="true" className="text-muted">
+              <path d="M20 2 V6 Q20 10 16 10 H6 Q2 10 2 6 V3" fill="none" stroke="currentColor" strokeWidth="1.5" />
+              <path d="M2 1 L4.5 5 L-0.5 5 z" fill="currentColor" transform="translate(0.5 0)" />
+            </svg>
+          </Swatch>
+        )}
+        {skips && (
+          <Swatch label="Sometimes skipped">
+            <span className="inline-block w-5 border-t-2 border-dashed border-muted" aria-hidden="true" />
+          </Swatch>
+        )}
+      </span>
+      {callouts.length > 0 && (
+        <ol className="flex flex-wrap gap-x-4 gap-y-1" aria-label="Edge labels">
+          {callouts.map((callout) => (
+            <li key={callout.number} className="inline-flex items-center gap-1.5 text-fg">
+              <span className="inline-flex size-5 items-center justify-center rounded-full border border-muted text-xs font-bold" aria-hidden="true">
+                {callout.number}
+              </span>
+              <span className="sr-text">Arrow {callout.number}: </span>
+              {callout.label}
+            </li>
+          ))}
+        </ol>
       )}
     </figcaption>
   )
 }
 
-/** Scroll box that keeps labels readable: the SVG never shrinks below `minScale` of its natural size. */
-function ScrollBox({ width, height, children, labelledBy, minScale = 0.7 }: { width: number; height: number; children: ReactNode; labelledBy: string; minScale?: number }) {
+const statusesOf = (layouts: FlowLayout[]) => new Set(layouts.flatMap((layout) => layout.nodes.map((node) => node.status)).filter((status) => status !== 'same'))
+
+/** Text alternative: the steps in flow order, with what's new or changed, and the edge labels. */
+function describeFlow(layout: FlowLayout): string {
+  const steps = [...layout.nodes]
+    .sort((a, b) => a.layer - b.layer || a.row - b.row)
+    .map((node) => `${node.label}${node.status !== 'same' ? ` (${node.status})` : ''}`)
+    .join(' → ')
+  const labelled = layout.edges.filter((edge) => edge.label?.trim())
+  const byId = new Map(layout.nodes.map((node) => [node.id, node.label]))
+  const arrows = labelled.map((edge) => `${byId.get(edge.from)} to ${byId.get(edge.to)}: ${edge.label!.trim()}${edge.route === 'loop' ? ' (repeats)' : ''}`)
+  return arrows.length ? `${steps}. Arrows: ${arrows.join('; ')}.` : steps
+}
+
+function Svg({ layout, scale, uid, title, description, children }: { layout: FlowLayout; scale: number; uid: string; title: string; description: string; children: ReactNode }) {
   return (
-    <div className="-mx-1 overflow-x-auto px-1 pt-2 pb-1" tabIndex={0} role="group" aria-label="Diagram (scrolls sideways on small screens)">
-      <svg
-        viewBox={`0 0 ${width} ${height}`}
-        width="100%"
-        style={{ maxWidth: width, minWidth: Math.round(width * minScale), display: 'block' }}
-        role="img"
-        aria-labelledby={labelledBy}
-        className="h-auto overflow-visible"
-      >
-        {children}
-      </svg>
-    </div>
+    <svg
+      viewBox={`0 0 ${layout.width} ${layout.height}`}
+      width={Math.round(layout.width * scale)}
+      height={Math.round(layout.height * scale)}
+      role="img"
+      aria-labelledby={`${uid}-t ${uid}-d`}
+      className="block max-w-none overflow-visible"
+    >
+      <title id={`${uid}-t`}>{title}</title>
+      <desc id={`${uid}-d`}>{description}</desc>
+      <Markers uid={uid} />
+      {children}
+    </svg>
   )
 }
 
-/** Below this container width diagrams switch to a top-to-bottom layout. */
-const NARROW_WIDTH = 560
-
-/** True when the element is narrower than NARROW_WIDTH (tracked with a ResizeObserver). */
-function useNarrow<T extends HTMLElement>(): [React.RefObject<T | null>, boolean] {
-  const ref = useRef<T>(null)
-  const [narrow, setNarrow] = useState(false)
-  useLayoutEffect(() => {
-    const element = ref.current
-    if (!element) return
-    const update = () => setNarrow(element.getBoundingClientRect().width < NARROW_WIDTH)
-    update()
-    if (typeof ResizeObserver === 'undefined') return
-    const observer = new ResizeObserver(update)
-    observer.observe(element)
-    return () => observer.disconnect()
-  }, [])
-  return [ref, narrow]
-}
+// ---- FlowDiagram ------------------------------------------------------------------------------------
 
 export interface FlowDiagramProps {
   diagram: FlowDiagramData | null | undefined
   variant?: 'full' | 'mini'
   className?: string
-  /** Show the title and the "new" legend under a full diagram. */
+  /** Show the title and the legend under a full diagram. */
   showCaption?: boolean
 }
 
 /**
- * Left-to-right flow diagram (≤ 8 nodes): layered layout, per-kind tint and glyph, decisions as hexagons,
- * nodes the technique adds/changes with an accent border and a "new" tag, dashed skip edges and a curved
- * return arrow for loops. Scrolls horizontally on narrow screens instead of shrinking the text.
+ * Flow diagram (≤ 8 nodes): layered layout, per-kind glyph, decisions as hexagons, steps the technique adds
+ * with an accent fill and a "New" pill, dashed skip edges and loops that return outside the rows.
+ *
+ * Text is 12 px and never renders below 11 px: the diagram is drawn left to right when that fits the
+ * container, top to bottom (nodes sized to the container) when it doesn't, and scrolls sideways only as a last
+ * resort. Edge labels never overlap nodes, badges or each other.
  */
 export function FlowDiagram({ diagram, variant = 'full', className, showCaption = true }: FlowDiagramProps) {
   const mini = variant === 'mini'
-  const [ref, narrow] = useNarrow<HTMLElement>()
-  const vertical = !mini && narrow
-  const layout = useMemo(
-    () => layoutFlow(diagram, mini ? MINI_METRICS : vertical ? VERTICAL_METRICS : FULL_METRICS, { orientation: vertical ? 'vertical' : 'horizontal' }),
-    [diagram, mini, vertical],
-  )
+  const [ref, width] = useElementWidth<HTMLElement>()
   const uid = useId().replace(/[^a-zA-Z0-9_-]/g, '')
+  const tooltip = useSvgTooltip()
+  const horizontal = useMemo(() => layoutFlow(diagram, mini ? MINI_METRICS : FULL_METRICS), [diagram, mini])
+  const fitsHorizontally = mini || fitScale(horizontal.width, width, MIN_DIAGRAM_SCALE) !== null
+  const layout = useMemo(
+    () => (fitsHorizontally ? horizontal : layoutFlow(diagram, VERTICAL_METRICS, { orientation: 'vertical', availableWidth: width ?? undefined })),
+    [fitsHorizontally, horizontal, diagram, width],
+  )
 
   const title = diagram?.title?.trim() || 'How it works'
-  const order = [...layout.nodes].sort((a, b) => a.layer - b.layer || a.row - b.row)
-  const description = order.map((node) => `${node.label}${node.highlight ? ' (new)' : ''}`).join(' → ')
-  const statusOf = (node: LaidOutNode): NodeStatus => (node.highlight ? 'new' : 'same')
-  const content = (
-    <>
-      <title id={`${uid}-t`}>{title}</title>
-      <desc id={`${uid}-d`}>{description}</desc>
-      {!mini && <Markers uid={uid} />}
-      <DiagramBody layout={layout} uid={uid} mini={mini} statusOf={statusOf} />
-    </>
-  )
+  const description = describeFlow(layout)
 
   if (mini)
     return layout.nodes.length ? (
       <figure className={cx('m-0 min-w-0', className)}>
         <svg viewBox={`0 0 ${layout.width} ${layout.height}`} width="100%" style={{ maxWidth: layout.width * 1.5, display: 'block' }} role="img" aria-labelledby={`${uid}-t ${uid}-d`} className="h-auto overflow-visible">
-          {content}
+          <title id={`${uid}-t`}>{title}</title>
+          <desc id={`${uid}-d`}>{description}</desc>
+          <DiagramBody layout={layout} uid={uid} mini />
         </svg>
       </figure>
     ) : null
 
+  const scale = fitScale(layout.width, width, MIN_DIAGRAM_SCALE) ?? 1
   return (
-    <figure ref={ref} className={cx('m-0 min-w-0', className)} hidden={!layout.nodes.length}>
+    <figure ref={ref} className={cx('m-0 min-w-0 [contain:inline-size]', className)} hidden={!layout.nodes.length}>
       {layout.nodes.length > 0 && (
-        <ScrollBox width={layout.width} height={layout.height} labelledBy={`${uid}-t ${uid}-d`} minScale={vertical ? 0.72 : 0.7}>
-          {content}
-        </ScrollBox>
+        <DiagramFrame contentWidth={layout.width * scale} available={width} className="pt-1">
+          <Svg layout={layout} scale={scale} uid={uid} title={title} description={description}>
+            <DiagramBody layout={layout} uid={uid} mini={false} tooltip={tooltip} />
+          </Svg>
+        </DiagramFrame>
       )}
       {showCaption && layout.nodes.length > 0 && (
         <Legend
           title={diagram?.title}
-          statuses={new Set(layout.nodes.filter((node) => node.highlight).map(() => 'new' as const))}
+          statuses={statusesOf([layout])}
           loops={layout.edges.some((edge) => edge.route === 'loop')}
           skips={layout.edges.some((edge) => edge.style === 'skip')}
+          callouts={layout.callouts}
         />
       )}
+      {tooltip.tooltip}
     </figure>
   )
 }
 
-const LANE_HEADER = 30
-const LANE_GAP = 22
+// ---- FlowComparisonDiagram -------------------------------------------------------------------------------
+
+function LaneHeader({ label, caption, tone }: { label: string; caption?: string; tone: 'neutral' | 'info' }) {
+  return (
+    <div className="mb-1 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-xs">
+      <span className={cx('rounded-full px-2 py-0.5 font-semibold', tone === 'info' ? 'bg-info-subtle text-info-fg' : 'bg-neutral-subtle text-fg')}>{label}</span>
+      {caption && <span className="text-muted">{caption}</span>}
+    </div>
+  )
+}
+
+const LANE_COLUMN_GAP = 16
 
 /**
- * "Today" vs "With <technique>": both flows on one column grid so shared steps line up. New steps get a
- * "new" badge, changed ones an accent border, steps the technique drops are ghosted.
+ * "Usual approach" vs "With <technique>": both flows on one grid so shared steps line up. New steps get a
+ * "New" pill, changed ones an accent fill, steps the technique drops are dashed.
+ *
+ * Wide containers stack the two left-to-right lanes; medium ones put two top-to-bottom lanes side by side
+ * (rows aligned); narrow ones show one lane at a time with a switch. Text never renders below 11 px.
  */
 export function FlowComparisonDiagram({ before, after, techniqueLabel, className }: {
   before: FlowDiagramData
@@ -346,55 +487,103 @@ export function FlowComparisonDiagram({ before, after, techniqueLabel, className
   techniqueLabel: string
   className?: string
 }) {
-  const comparison = useMemo(() => compareFlows(before, after), [before, after])
   const uid = useId().replace(/[^a-zA-Z0-9_-]/g, '')
-  const [ref, narrow] = useNarrow<HTMLElement>()
+  const [ref, width] = useElementWidth<HTMLElement>()
   const [lane, setLane] = useState<'today' | 'next'>('next')
-  const verticalLane = useMemo(
-    () => (narrow ? layoutFlow(lane === 'today' ? before : after, VERTICAL_METRICS, { orientation: 'vertical' }) : null),
-    [narrow, lane, before, after],
+  const tooltip = useSvgTooltip()
+
+  const stacked = useMemo(() => compareFlows(before, after), [before, after])
+  const stackedScale = fitScale(Math.max(stacked.before.width, stacked.after.width), width, MIN_DIAGRAM_SCALE)
+  const laneWidth = width ? Math.floor((width - LANE_COLUMN_GAP) / 2) : null
+  const sideBySide = useMemo(
+    () => (stackedScale === null && laneWidth ? compareFlows(before, after, VERTICAL_METRICS, 'vertical', { availableWidth: laneWidth }) : null),
+    [stackedScale, laneWidth, before, after],
   )
-  const { before: today, after: next } = comparison
+  const sideScale = sideBySide ? fitScale(Math.max(sideBySide.before.width, sideBySide.after.width), laneWidth, MIN_DIAGRAM_SCALE) : null
+  const single = useMemo(
+    () => (stackedScale === null && sideScale === null && width ? compareFlows(before, after, VERTICAL_METRICS, 'vertical', { availableWidth: width }) : null),
+    [stackedScale, sideScale, width, before, after],
+  )
+
+  const { before: today, after: next } = stacked
   if (!today.nodes.length || !next.nodes.length) return null
 
-  const width = Math.max(today.width, next.width)
-  const secondTop = LANE_HEADER + today.height + LANE_GAP
-  const height = secondTop + LANE_HEADER + next.height
-  const describe = (layout: FlowLayout, statuses: Map<string, NodeStatus>) =>
-    [...layout.nodes]
-      .sort((a, b) => a.layer - b.layer || a.row - b.row)
-      .map((node) => `${node.label}${statuses.get(node.id) && statuses.get(node.id) !== 'same' ? ` (${statuses.get(node.id)})` : ''}`)
-      .join(' → ')
   const afterTitle = `With ${techniqueLabel}`
-  const statuses = new Set<NodeStatus>([...comparison.afterStatus.values(), ...comparison.beforeStatus.values()].filter((status) => status !== 'same'))
-  const allEdges = [...today.edges, ...next.edges]
-
-  const laneHeader = (y: number, label: string, tone: 'muted' | 'accent', caption?: string) => (
-    <g>
-      <rect x={0} y={y + 3} width={label.length * 6.9 + 22} height={21} rx={10.5} fill={tone === 'accent' ? '#ddf4ff' : '#eff2f5'} />
-      <text x={11} y={y + 17.5} fontSize={11.5} fontWeight={700} fill={tone === 'accent' ? '#0757b8' : MUTED_INK}>
-        {label}
-      </text>
-      {caption && (
-        <text x={label.length * 6.9 + 32} y={y + 17.5} fontSize={11} fill={MUTED_INK}>
-          {caption}
-        </text>
-      )}
-    </g>
-  )
-
-  const afterTitleText = after.title?.trim() && after.title.trim() !== techniqueLabel ? after.title.trim() : undefined
-
-  if (narrow && verticalLane) {
-    const statusMap = lane === 'today' ? comparison.beforeStatus : comparison.afterStatus
-    const laneStatus = (node: LaidOutNode): NodeStatus => {
-      const status = statusMap.get(node.id) ?? 'same'
-      return lane === 'today' ? (status === 'removed' ? 'removed' : 'same') : status
-    }
-    const laneLabel = lane === 'today' ? 'Usual approach' : afterTitle
+  const beforeCaption = before.title?.trim() || undefined
+  const afterCaption = after.title?.trim() && after.title.trim() !== techniqueLabel ? after.title.trim() : undefined
+  const layoutsFor = (comparison: typeof stacked) => [comparison.before, comparison.after]
+  const legend = (comparison: typeof stacked) => {
+    const layouts = layoutsFor(comparison)
+    const callouts = [...comparison.before.callouts, ...comparison.after.callouts.map((callout) => ({ ...callout, number: callout.number + comparison.before.callouts.length }))]
     return (
-      <figure ref={ref} className={cx('m-0 min-w-0', className)}>
-        <div className="mb-1 inline-flex max-w-full rounded-md border border-line bg-canvas-subtle p-0.5 text-xs font-medium" role="group" aria-label="Which flow to show">
+      <Legend
+        statuses={statusesOf(layouts)}
+        loops={layouts.some((layout) => layout.edges.some((edge) => edge.route === 'loop'))}
+        skips={layouts.some((layout) => layout.edges.some((edge) => edge.style === 'skip'))}
+        callouts={callouts}
+      />
+    )
+  }
+  const svgFor = (comparison: typeof stacked, which: 'today' | 'next', scale: number) => {
+    const layout = which === 'today' ? comparison.before : comparison.after
+    return (
+      <Svg
+        layout={layout}
+        scale={scale}
+        uid={`${uid}-${which}`}
+        title={which === 'today' ? `Usual approach${beforeCaption ? `: ${beforeCaption}` : ''}` : `${afterTitle}${afterCaption ? `: ${afterCaption}` : ''}`}
+        description={describeFlow(layout)}
+      >
+        <DiagramBody
+          layout={layout}
+          uid={`${uid}-${which}`}
+          mini={false}
+          dimEdges={which === 'today'}
+          calloutOffset={which === 'next' ? comparison.before.callouts.length : 0}
+          tooltip={tooltip}
+        />
+      </Svg>
+    )
+  }
+
+  let body: ReactNode
+  if (stackedScale !== null || !width) {
+    const scale = stackedScale ?? 1
+    body = (
+      <>
+        <DiagramFrame contentWidth={Math.max(today.width, next.width) * scale} available={width}>
+          <div className="space-y-3">
+            <div>
+              <LaneHeader label="Usual approach" caption={beforeCaption} tone="neutral" />
+              {svgFor(stacked, 'today', scale)}
+            </div>
+            <div className="border-t border-dashed border-line pt-3">
+              <LaneHeader label={afterTitle} caption={afterCaption} tone="info" />
+              {svgFor(stacked, 'next', scale)}
+            </div>
+          </div>
+        </DiagramFrame>
+        {legend(stacked)}
+      </>
+    )
+  } else if (sideBySide && sideScale !== null) {
+    body = (
+      <>
+        <div className="grid grid-cols-2 gap-x-4">
+          <LaneHeader label="Usual approach" caption={beforeCaption} tone="neutral" />
+          <LaneHeader label={afterTitle} caption={afterCaption} tone="info" />
+          <div className="min-w-0">{svgFor(sideBySide, 'today', sideScale)}</div>
+          <div className="min-w-0 border-l border-dashed border-line pl-3">{svgFor(sideBySide, 'next', sideScale)}</div>
+        </div>
+        {legend(sideBySide)}
+      </>
+    )
+  } else if (single) {
+    const layout = lane === 'today' ? single.before : single.after
+    const scale = fitScale(layout.width, width, MIN_DIAGRAM_SCALE) ?? 1
+    body = (
+      <>
+        <div className="mb-2 flex w-full gap-0.5 rounded-md border border-line bg-canvas-subtle p-0.5 text-xs font-medium" role="group" aria-label="Which flow to show">
           {(
             [
               ['today', 'Usual approach'],
@@ -405,42 +594,30 @@ export function FlowComparisonDiagram({ before, after, techniqueLabel, className
               key={value}
               type="button"
               aria-pressed={lane === value}
-              title={label}
               onClick={() => setLane(value)}
-              className={cx('truncate rounded px-2.5 py-1', value === 'today' ? 'shrink-0' : 'min-w-0', lane === value ? 'bg-canvas text-fg shadow-sm ring-1 ring-line' : 'text-muted hover:text-fg')}
+              className={cx(
+                'min-h-8 min-w-0 rounded px-2.5 py-1 text-left break-words whitespace-normal',
+                value === 'today' ? 'shrink-0' : 'flex-1',
+                lane === value ? 'bg-canvas text-fg shadow-sm ring-1 ring-line' : 'text-muted hover:text-fg',
+              )}
             >
               {label}
             </button>
           ))}
         </div>
-        <ScrollBox width={verticalLane.width} height={verticalLane.height} labelledBy={`${uid}-t ${uid}-d`} minScale={0.72}>
-          <title id={`${uid}-t`}>{laneLabel}</title>
-          <desc id={`${uid}-d`}>{describe(verticalLane, statusMap)}</desc>
-          <Markers uid={uid} />
-          <DiagramBody layout={verticalLane} uid={uid} mini={false} statusOf={laneStatus} />
-        </ScrollBox>
-        <Legend statuses={statuses} loops={allEdges.some((edge) => edge.route === 'loop')} skips={allEdges.some((edge) => edge.style === 'skip')} />
-      </figure>
+        {(lane === 'today' ? beforeCaption : afterCaption) && <p className="mb-1 text-xs text-muted">{lane === 'today' ? beforeCaption : afterCaption}</p>}
+        <DiagramFrame contentWidth={layout.width * scale} available={width}>
+          {svgFor(single, lane, scale)}
+        </DiagramFrame>
+        {legend(single)}
+      </>
     )
   }
 
   return (
-    <figure ref={ref} className={cx('m-0 min-w-0', className)}>
-      <ScrollBox width={width} height={height} labelledBy={`${uid}-t ${uid}-d`}>
-        <title id={`${uid}-t`}>{`How the flow changes: today vs ${afterTitle.toLowerCase()}`}</title>
-        <desc id={`${uid}-d`}>{`Today: ${describe(today, comparison.beforeStatus)}. ${afterTitle}: ${describe(next, comparison.afterStatus)}.`}</desc>
-        <Markers uid={uid} />
-        {laneHeader(0, 'Usual approach', 'muted', before.title?.trim() || undefined)}
-        <g transform={`translate(0 ${LANE_HEADER})`}>
-          <DiagramBody layout={today} uid={uid} mini={false} statusOf={(node) => (comparison.beforeStatus.get(node.id) === 'removed' ? 'removed' : 'same')} dimEdges />
-        </g>
-        <line x1={0} x2={width} y1={LANE_HEADER + today.height + LANE_GAP / 2} y2={LANE_HEADER + today.height + LANE_GAP / 2} stroke="#d1d9e0" strokeDasharray="3 4" />
-        {laneHeader(secondTop, afterTitle, 'accent', afterTitleText)}
-        <g transform={`translate(0 ${secondTop + LANE_HEADER})`}>
-          <DiagramBody layout={next} uid={uid} mini={false} statusOf={(node) => comparison.afterStatus.get(node.id) ?? 'same'} />
-        </g>
-      </ScrollBox>
-      <Legend statuses={statuses} loops={allEdges.some((edge) => edge.route === 'loop')} skips={allEdges.some((edge) => edge.style === 'skip')} />
+    <figure ref={ref} className={cx('m-0 min-w-0 [contain:inline-size]', className)} aria-label={`How the flow changes: usual approach vs ${afterTitle.toLowerCase()}`}>
+      {body}
+      {tooltip.tooltip}
     </figure>
   )
 }

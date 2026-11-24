@@ -1,5 +1,7 @@
 import type { ClaimRelated, ConceptBundle, ConceptLinkData, ConceptMap, ConceptNode, DiagramEdge, DiagramNode } from '../api/types'
 import { assignLayers } from './flow'
+import { line, pathD, roundedPolyline, sCurve, type Cubic, type Rect } from './geometry'
+import { DIAGRAM_FONT_SIZE, DIAGRAM_LINE_HEIGHT, wrapText } from './textMeasure'
 
 // ---- relation vocabulary ------------------------------------------------------------------
 
@@ -111,14 +113,18 @@ export interface ConceptMapMetrics {
   padY: number
 }
 
+/** Minimum node height; all nodes grow together to fit their (≤ 4-line, 12 px) names. */
 export const CONCEPT_METRICS: ConceptMapMetrics = {
-  nodeWidth: 138,
+  nodeWidth: 150,
   nodeHeight: 48,
-  gapX: 50,
-  gapY: 16,
-  padX: 12,
-  padY: 14,
+  gapX: 56,
+  gapY: 26,
+  padX: 16,
+  padY: 16,
 }
+
+/** Concept-map type: 12 px names, 15 px lines, 14 px side padding (clear of the order badge). */
+export const CONCEPT_TEXT = { fontSize: DIAGRAM_FONT_SIZE, lineHeight: DIAGRAM_LINE_HEIGHT, baseline: 11.2, padX: 14 } as const
 
 export interface PlacedConcept extends ConceptNode {
   column: number
@@ -127,6 +133,11 @@ export interface PlacedConcept extends ConceptNode {
   y: number
   width: number
   height: number
+  /** Name lines (measured wrap, ≤ 4) and their baselines; `truncated` when the name was cut. */
+  lines: string[]
+  lineY: number[]
+  truncated: boolean
+  textBox: Rect | null
 }
 
 export interface PlacedLink extends ConceptLinkData {
@@ -136,6 +147,7 @@ export interface PlacedLink extends ConceptLinkData {
   /** Which drawn end carries the arrowhead (none for symmetric relations). */
   arrow: 'start' | 'end' | null
   path: string
+  segments: Cubic[]
   sameColumn: boolean
 }
 
@@ -163,6 +175,10 @@ export function flowEdge(link: ConceptLinkData): { from: number; to: number } | 
  * Left-to-right layout of a paper's concept map: longest-path columns over the "needs / extends / measured by"
  * edges (cycles broken), evaluation & limitation concepts in a final column, and rows in reading order.
  * Concepts without directed links stay in the column of the previous concept in reading order.
+ *
+ * Names are measured and wrapped (12 px, ≤ 4 lines; every node gets the same height). Links between adjacent
+ * columns are S-curves in the gap; longer links run through the free gaps of the columns they cross, so they
+ * never pass behind a node; links within a column bulge into the gap on its right.
  */
 export function layoutConceptMap(map: Pick<ConceptMap, 'nodes' | 'links'> | null | undefined, metrics: ConceptMapMetrics = CONCEPT_METRICS): ConceptMapLayout {
   const nodes = dedupeNodes(map?.nodes ?? [])
@@ -214,30 +230,57 @@ export function layoutConceptMap(map: Pick<ConceptMap, 'nodes' | 'links'> | null
   for (const node of nodes) groups[column.get(node.concept_id)!].push(node)
   for (const group of groups) group.sort((a, b) => orderOf.get(a.concept_id)! - orderOf.get(b.concept_id)!)
 
-  const { nodeWidth: w, nodeHeight: h, gapX, gapY, padX, padY } = metrics
+  const { nodeWidth: w, gapX, gapY, padX, padY } = metrics
+  const textWidth = w - 2 * CONCEPT_TEXT.padX
+  const names = new Map(
+    nodes.map((node) => [node.concept_id, wrapText(shortName(node.name, 96), textWidth, { weight: node.role === 'core' ? 600 : 500, maxLines: 4 })]),
+  )
+  const h = Math.max(metrics.nodeHeight, ...[...names.values()].map((name) => name.lines.length * CONCEPT_TEXT.lineHeight + 18))
   const maxRows = Math.max(...groups.map((group) => group.length))
   const hasSameColumn = links.some((link) => column.get(link.source) === column.get(link.target))
-  const sideRoom = hasSameColumn ? 22 : 0
+  const sideRoom = hasSameColumn ? 26 : 0
   const bodyHeight = maxRows * h + (maxRows - 1) * gapY
-  const width = padX * 2 + columns * w + (columns - 1) * gapX + sideRoom
-  const height = padY * 2 + bodyHeight
   const midY = padY + bodyHeight / 2
 
   const placed = new Map<number, PlacedConcept>()
   groups.forEach((group, col) => {
     group.forEach((node, index) => {
       const row = index - (group.length - 1) / 2
+      const x = padX + col * (w + gapX)
+      const y = midY + row * (h + gapY) - h / 2
+      const name = names.get(node.concept_id)!
+      const blockTop = y + (h - name.lines.length * CONCEPT_TEXT.lineHeight) / 2
       placed.set(node.concept_id, {
         ...node,
         column: col,
         row,
-        x: padX + col * (w + gapX),
-        y: midY + row * (h + gapY) - h / 2,
+        x,
+        y,
         width: w,
         height: h,
+        lines: name.lines,
+        lineY: name.lines.map((_, i) => blockTop + i * CONCEPT_TEXT.lineHeight + CONCEPT_TEXT.baseline),
+        truncated: name.truncated || shortName(node.name, 96) !== node.name,
+        textBox: name.lines.length ? { x: x + w / 2 - name.width / 2, y: blockTop, width: name.width, height: name.lines.length * CONCEPT_TEXT.lineHeight } : null,
       })
     })
   })
+
+  const columnNodes = (col: number) => [...placed.values()].filter((node) => node.column === col).sort((a, b) => a.y - b.y)
+  const channelUse = new Map<string, number>()
+  /** A y in column `col` that clears its nodes, as close to `ideal` as possible. */
+  const channel = (col: number, ideal: number) => {
+    const inColumn = columnNodes(col)
+    if (!inColumn.some((node) => ideal > node.y - 8 && ideal < node.y + h + 8)) return ideal
+    const choices = [inColumn[0].y - 15, inColumn[inColumn.length - 1].y + h + 15]
+    for (let i = 0; i < inColumn.length - 1; i++) choices.push((inColumn[i].y + h + inColumn[i + 1].y) / 2)
+    const best = choices.sort((p, q) => Math.abs(p - ideal) - Math.abs(q - ideal))[0]
+    const key = `${col}:${Math.round(best)}`
+    const used = channelUse.get(key) ?? 0
+    channelUse.set(key, used + 1)
+    return best + (used ? (used % 2 ? 1 : -1) * 6 * Math.ceil(used / 2) : 0)
+  }
+  const sameColumnUse = new Map<number, number>()
 
   const placedLinks: PlacedLink[] = links.map((link) => {
     const edge = flowEdge(link)
@@ -246,36 +289,71 @@ export function layoutConceptMap(map: Pick<ConceptMap, 'nodes' | 'links'> | null
     const [left, right] = a.column < b.column || (a.column === b.column && a.y <= b.y) ? [a, b] : [b, a]
     const arrow: PlacedLink['arrow'] = edge ? (edge.to === right.concept_id ? 'end' : 'start') : null
     const sameColumn = left.column === right.column
-    let path: string
+    let segments: Cubic[]
     if (sameColumn) {
       const x = left.x + w
-      const y1 = left.y + h / 2
-      const y2 = right.y + h / 2
-      const bulge = 16 + Math.min(10, Math.abs(right.row - left.row) * 4)
-      path = `M ${x} ${y1} C ${x + bulge} ${y1}, ${x + bulge} ${y2}, ${x} ${y2}`
+      const nth = sameColumnUse.get(left.column) ?? 0
+      sameColumnUse.set(left.column, nth + 1)
+      const bulge = Math.min(gapX - 12, 14 + Math.min(8, Math.abs(right.row - left.row) * 4) + nth * 6)
+      segments = roundedPolyline(
+        [
+          { x, y: left.y + h / 2 },
+          { x: x + bulge, y: left.y + h / 2 },
+          { x: x + bulge, y: right.y + h / 2 },
+          { x, y: right.y + h / 2 },
+        ],
+        8,
+      )
     } else {
-      const x1 = left.x + w
-      const y1 = left.y + h / 2
-      const x2 = right.x
-      const y2 = right.y + h / 2
-      const dx = Math.max(16, (x2 - x1) / 2)
-      path = `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`
+      segments = []
+      let cursor = { x: left.x + w, y: left.y + h / 2 }
+      const end = { x: right.x, y: right.y + h / 2 }
+      for (let col = left.column + 1; col < right.column; col++) {
+        const ideal = cursor.y + ((end.y - cursor.y) * 1) / (right.column - col + 1)
+        const y = channel(col, ideal)
+        const entry = { x: padX + col * (w + gapX), y }
+        const exit = { x: entry.x + w, y }
+        segments.push(sCurve(cursor, entry, 'x'), line(entry, exit))
+        cursor = exit
+      }
+      segments.push(sCurve(cursor, end, 'x'))
     }
     return {
       ...link,
       from: left.concept_id,
       to: right.concept_id,
       arrow,
-      path,
+      path: pathD(segments),
+      segments,
       sameColumn,
     }
   })
 
+  // Channels above or below every node can extend the canvas: fit the height (and shift) to the content.
+  const ys = placedLinks.flatMap((link) => link.segments.flatMap((segment) => [segment.p0.y, segment.p3.y]))
+  const contentTop = Math.min(padY, ...ys.map((y) => y - 6))
+  const contentBottom = Math.max(padY + bodyHeight, ...ys.map((y) => y + 6))
+  const shift = padY - contentTop
+  const shiftedNodes = [...placed.values()].map((node) =>
+    shift ? { ...node, y: node.y + shift, lineY: node.lineY.map((y) => y + shift), textBox: node.textBox ? { ...node.textBox, y: node.textBox.y + shift } : null } : node,
+  )
+  const shiftedLinks = shift
+    ? placedLinks.map((link) => {
+        const segments = link.segments.map((segment) => ({
+          p0: { x: segment.p0.x, y: segment.p0.y + shift },
+          c1: { x: segment.c1.x, y: segment.c1.y + shift },
+          c2: { x: segment.c2.x, y: segment.c2.y + shift },
+          p3: { x: segment.p3.x, y: segment.p3.y + shift },
+        }))
+        return { ...link, segments, path: pathD(segments) }
+      })
+    : placedLinks
+
   return {
-    nodes: [...placed.values()],
-    links: placedLinks,
-    width,
-    height,
+    nodes: shiftedNodes,
+    links: shiftedLinks,
+    width: padX * 2 + columns * w + (columns - 1) * gapX + sideRoom,
+    height: Math.ceil(contentBottom + shift + padY),
     columns,
   }
 }
