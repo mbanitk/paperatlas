@@ -1,6 +1,7 @@
 import { useId, useMemo, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { useGenerateConceptMap } from '../api/queries'
 import type { ConceptBundle, ConceptMap as ConceptMapData, ConceptNode } from '../api/types'
+import { formatMath } from '../lib/format'
 import { CONCEPT_TEXT, layoutConceptMap, neighbours, readingPathParts, relationInfo, roleLabel, shortEffect, shortName, type PlacedConcept } from '../lib/conceptMap'
 import { MIN_DIAGRAM_SCALE } from '../lib/textMeasure'
 import { fitScale, useElementWidth } from '../lib/useElementWidth'
@@ -88,11 +89,11 @@ export function ConceptMapGraph({ map, currentConceptId, onSelect, showBundles =
   const linkActive = (source: number, target: number) =>
     !focusSet ? true : active && 'node' in active ? source === active.node || target === active.node : focusSet.has(source) && focusSet.has(target)
 
-  const name = (id: number) => byId.get(id)?.name ?? `concept ${id}`
+  const name = (id: number) => formatMath(byId.get(id)?.name) || `concept ${id}`
   const relations = Object.keys(RELATION_STYLES).filter((relation) => layout.links.some((link) => link.relation === relation))
   const roles = Object.keys(ROLE_STYLES).filter((role) => layout.nodes.some((node) => node.role === role))
   const readingOrder = [...layout.nodes].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
-  const description = readingOrder.map((node) => `${node.order ?? ''}. ${node.name}${node.role ? ` (${roleLabel(node.role)})` : ''}`).join('; ')
+  const description = readingOrder.map((node) => `${node.order ?? ''}. ${formatMath(node.name)}${node.role ? ` (${roleLabel(node.role)})` : ''}`).join('; ')
   const canOpen = (node: ConceptNode) => !!onSelect && !!node.claim_id && node.concept_id !== currentConceptId
 
   const activate = (node: PlacedConcept) => {
@@ -161,7 +162,7 @@ export function ConceptMapGraph({ map, currentConceptId, onSelect, showBundles =
           dimmed={focusSet ? !focusSet.has(node.concept_id) : false}
           current={node.concept_id === currentConceptId}
           selected={node.concept_id === selected}
-          label={`${node.order ?? ''}. ${node.name}${node.role ? `, ${roleLabel(node.role)}` : ''}${node.testable_here ? ', testable here' : ''}${canOpen(node) ? '. Select twice to open its claim card' : ''}`}
+          label={`${node.order ?? ''}. ${formatMath(node.name)}${node.role ? `, ${roleLabel(node.role)}` : ''}${node.testable_here ? ', testable here' : ''}${canOpen(node) ? '. Select twice to open its claim card' : ''}`}
           onEnter={() => setHovered({ node: node.concept_id })}
           onFocus={() => setHovered({ node: node.concept_id })}
           onBlur={() => setHovered(null)}
@@ -343,9 +344,9 @@ function OrderBadge({ node, className }: { node: Pick<ConceptNode, 'order' | 'ro
 function NamedBadge({ node, className }: { node: Pick<ConceptNode, 'order' | 'role' | 'name'>; className?: string }) {
   if (node.order == null) return null
   return (
-    <Tooltip content={node.name} className="inline-flex rounded-full">
+    <Tooltip content={formatMath(node.name)} className="inline-flex rounded-full">
       <OrderBadge node={node} className={className} />
-      <span className="sr-text">{`${node.order}. ${node.name}`}</span>
+      <span className="sr-text">{`${node.order}. ${formatMath(node.name)}`}</span>
     </Tooltip>
   )
 }
@@ -363,7 +364,7 @@ function NodeDetails({ map, node, currentConceptId, onOpen, onClear }: {
     <div className="space-y-1">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <OrderBadge node={node} />
-        <span className="font-semibold text-fg">{node.name}</span>
+        <span className="font-semibold text-fg">{formatMath(node.name)}</span>
         {node.role && <span className="text-xs text-muted">{roleLabel(node.role)}</span>}
         {node.testable_here && (
           <span className="inline-flex items-center gap-0.5 text-xs text-positive">
@@ -387,7 +388,7 @@ function NodeDetails({ map, node, currentConceptId, onOpen, onClear }: {
         <ul className="space-y-0.5">
           {links.map((item, index) => (
             <li key={index}>
-              <span className="font-medium text-fg">{item.phrase}</span> <OrderBadge node={item.node} className="mx-0.5 align-[-4px]" /> {shortName(item.node.name, 48)}
+              <span className="font-medium text-fg">{item.phrase}</span> <OrderBadge node={item.node} className="mx-0.5 align-[-4px]" /> {shortName(formatMath(item.node.name), 48)}
               {item.why && <span className="text-muted">: {item.why}</span>}
             </li>
           ))}
@@ -440,7 +441,7 @@ function ConceptList({ map, nodes, currentConceptId, onOpen }: { map: ConceptMap
           <li key={node.concept_id} className={cx('rounded-md border px-3 py-2 text-sm', current ? 'border-info bg-info-subtle/40' : 'border-line-muted')}>
             <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
               <OrderBadge node={node} />
-              <span className="font-semibold text-fg">{node.name}</span>
+              <span className="font-semibold text-fg">{formatMath(node.name)}</span>
               {node.role && <span className="text-xs text-muted">{roleLabel(node.role)}</span>}
               {node.testable_here && (
                 <span className="inline-flex items-center gap-0.5 text-xs text-positive">
@@ -457,7 +458,7 @@ function ConceptList({ map, nodes, currentConceptId, onOpen }: { map: ConceptMap
                     <dt className="font-medium text-fg">{phrase}:</dt>
                     {others.map((other) => (
                       <dd key={other.concept_id} className="inline-flex items-center gap-1 text-muted">
-                        <OrderBadge node={other} /> {shortName(other.name, 40)}
+                        <OrderBadge node={other} /> {shortName(formatMath(other.name), 40)}
                       </dd>
                     ))}
                   </div>
@@ -535,7 +536,7 @@ function BundleRow({ bundle, active, onActivate, onDeactivate }: { bundle: Conce
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         {bundle.is_headline_result && <span className="rounded-full bg-neutral-subtle px-2 py-0.5 text-xs font-semibold text-fg">Headline result</span>}
         <span className="font-medium text-fg">{bundle.name}</span>
-        <span className="inline-flex flex-wrap items-center gap-0.5" aria-label={`Combines ${members.map((member) => member.name).join(', ')}`}>
+        <span className="inline-flex flex-wrap items-center gap-0.5" aria-label={`Combines ${members.map((member) => formatMath(member.name)).join(', ')}`}>
           {members.map((member, index) => (
             <span key={member.concept_id} className="inline-flex items-center gap-0.5">
               {index > 0 && (

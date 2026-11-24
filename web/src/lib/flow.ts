@@ -18,6 +18,7 @@ import {
   type Point,
   type Rect,
 } from './geometry'
+import { formatMath } from './format'
 import { DIAGRAM_FONT_SIZE, DIAGRAM_LINE_HEIGHT, measureText, wrapText } from './textMeasure'
 
 /** Geometry of one diagram variant. */
@@ -304,7 +305,7 @@ export function layoutFlow(diagram: FlowDiagramData | null | undefined, metrics:
     const padLeft = (glyph ? 36 : 10) + inset
     const textWidth = nodeWidth - padLeft - 10 - inset
     const weight = status === 'new' || status === 'changed' ? 600 : 500
-    const wrapped = mini ? { lines: [], width: 0, truncated: false } : wrapText(node.label ?? '', textWidth, { weight, maxLines: 4 })
+    const wrapped = mini ? { lines: [], width: 0, truncated: false } : wrapText(formatMath(node.label ?? ''), textWidth, { weight, maxLines: 4 })
     const badgeText = mini ? null : (BADGE_TEXT[status] ?? null)
     const badgeWidth = badgeText ? measureText(badgeText, FLOW_TEXT.fontSize, 600) + 2 * FLOW_TEXT.badgePadX : 0
     texts.set(node.id, { node, status, decision, padLeft, weight, lines: wrapped.lines, width: wrapped.width, truncated: wrapped.truncated, badgeText, badgeWidth })
@@ -318,7 +319,7 @@ export function layoutFlow(diagram: FlowDiagramData | null | undefined, metrics:
   const labels = new Map<DiagramEdge, { lines: string[]; width: number; height: number }>()
   if (!mini)
     for (const edge of edges) {
-      const text = edge.label?.trim()
+      const text = formatMath(edge.label?.trim())
       if (!text) continue
       const wrapped = wrapText(text, labelMax, { weight: 500, maxLines: 4 })
       labels.set(edge, {
@@ -580,7 +581,7 @@ function buildLayout(input: BuildInput): FlowLayout {
     const size = FLOW_TEXT.calloutSize
     const candidates = pathLabelCandidates(samples.get(edge)!, size, size, { offset: 2 })
     const spot = placeLabels([{ key: 0, candidates }], taken, { bounds }).get(0) ?? candidates[0]
-    callouts.push({ number: callouts.length + 1, label: edge.label!.trim() })
+    callouts.push({ number: callouts.length + 1, label: formatMath(edge.label!.trim()) })
     calloutBoxes.set(edge, spot)
     taken.push(inflate(spot, 3))
   }

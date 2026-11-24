@@ -1,6 +1,7 @@
 import { autoUpdate, FloatingArrow, FloatingPortal, useFloating } from '@floating-ui/react'
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FocusEvent, type MouseEvent, type ReactNode } from 'react'
 import type { FlowDiagramData } from '../api/types'
+import { formatMath } from '../lib/format'
 import { compareFlows, FLOW_TEXT, FULL_METRICS, layoutFlow, MINI_METRICS, VERTICAL_METRICS, type FlowLayout, type LaidOutEdge, type LaidOutNode, type NodeStatus } from '../lib/flow'
 import { MIN_DIAGRAM_SCALE } from '../lib/textMeasure'
 import { fitScale, useElementWidth } from '../lib/useElementWidth'
@@ -167,8 +168,12 @@ function Node({ node, mini, tooltip }: { node: LaidOutNode; mini: boolean; toolt
   const badge = node.badge
   const badgeStyle = BADGE_STYLE[node.status]
   const removed = node.status === 'removed'
+  const focusable = !!(node.truncated && tooltip)
   const content = (
     <>
+      {focusable && (
+        <rect className="ring" x={node.x - 4} y={node.y - 4} width={node.width + 8} height={node.height + 8} rx={12} fill="none" style={{ stroke: C.info }} strokeWidth={2} opacity={0} />
+      )}
       <Shape node={node} mini={mini} />
       {!mini && node.glyph && (
         <>
@@ -201,9 +206,9 @@ function Node({ node, mini, tooltip }: { node: LaidOutNode; mini: boolean; toolt
     </>
   )
   // A label cut to fit (rare: > 4 lines) shows in full in a tooltip, on hover and keyboard focus.
-  if (node.truncated && tooltip)
+  if (focusable && tooltip)
     return (
-      <g tabIndex={0} aria-label={node.label} className="outline-none [&:focus-visible>*:first-child]:stroke-[var(--color-info)]" {...tooltip.bind(node.label)}>
+      <g tabIndex={0} aria-label={formatMath(node.label)} className="outline-none [&:focus-visible>rect.ring]:opacity-100" {...tooltip.bind(formatMath(node.label))}>
         {content}
       </g>
     )
@@ -367,11 +372,11 @@ const statusesOf = (layouts: FlowLayout[]) => new Set(layouts.flatMap((layout) =
 function describeFlow(layout: FlowLayout): string {
   const steps = [...layout.nodes]
     .sort((a, b) => a.layer - b.layer || a.row - b.row)
-    .map((node) => `${node.label}${node.status !== 'same' ? ` (${node.status})` : ''}`)
+    .map((node) => `${formatMath(node.label)}${node.status !== 'same' ? ` (${node.status})` : ''}`)
     .join(' → ')
   const labelled = layout.edges.filter((edge) => edge.label?.trim())
-  const byId = new Map(layout.nodes.map((node) => [node.id, node.label]))
-  const arrows = labelled.map((edge) => `${byId.get(edge.from)} to ${byId.get(edge.to)}: ${edge.label!.trim()}${edge.route === 'loop' ? ' (repeats)' : ''}`)
+  const byId = new Map(layout.nodes.map((node) => [node.id, formatMath(node.label)]))
+  const arrows = labelled.map((edge) => `${byId.get(edge.from)} to ${byId.get(edge.to)}: ${formatMath(edge.label!.trim())}${edge.route === 'loop' ? ' (repeats)' : ''}`)
   return arrows.length ? `${steps}. Arrows: ${arrows.join('; ')}.` : steps
 }
 
@@ -423,7 +428,7 @@ export function FlowDiagram({ diagram, variant = 'full', className, showCaption 
     [fitsHorizontally, horizontal, diagram, width],
   )
 
-  const title = diagram?.title?.trim() || 'How it works'
+  const title = formatMath(diagram?.title?.trim()) || 'How it works'
   const description = describeFlow(layout)
 
   if (mini)
@@ -449,7 +454,7 @@ export function FlowDiagram({ diagram, variant = 'full', className, showCaption 
       )}
       {showCaption && layout.nodes.length > 0 && (
         <Legend
-          title={diagram?.title}
+          title={diagram?.title ? formatMath(diagram.title) : undefined}
           statuses={statusesOf([layout])}
           loops={layout.edges.some((edge) => edge.route === 'loop')}
           skips={layout.edges.some((edge) => edge.style === 'skip')}
@@ -472,7 +477,8 @@ function LaneHeader({ label, caption, tone }: { label: string; caption?: string;
   )
 }
 
-const LANE_COLUMN_GAP = 16
+/** Gap between side-by-side lanes; the dashed divider sits in it, so neither lane loses width. */
+const LANE_COLUMN_GAP = 24
 
 /**
  * "Usual approach" vs "With <technique>": both flows on one grid so shared steps line up. New steps get a
@@ -508,9 +514,9 @@ export function FlowComparisonDiagram({ before, after, techniqueLabel, className
   const { before: today, after: next } = stacked
   if (!today.nodes.length || !next.nodes.length) return null
 
-  const afterTitle = `With ${techniqueLabel}`
-  const beforeCaption = before.title?.trim() || undefined
-  const afterCaption = after.title?.trim() && after.title.trim() !== techniqueLabel ? after.title.trim() : undefined
+  const afterTitle = `With ${formatMath(techniqueLabel)}`
+  const beforeCaption = formatMath(before.title?.trim()) || undefined
+  const afterCaption = after.title?.trim() && after.title.trim() !== techniqueLabel ? formatMath(after.title.trim()) : undefined
   const layoutsFor = (comparison: typeof stacked) => [comparison.before, comparison.after]
   const legend = (comparison: typeof stacked) => {
     const layouts = layoutsFor(comparison)
@@ -569,11 +575,12 @@ export function FlowComparisonDiagram({ before, after, techniqueLabel, className
   } else if (sideBySide && sideScale !== null) {
     body = (
       <>
-        <div className="grid grid-cols-2 gap-x-4">
+        <div className="relative grid grid-cols-2 gap-x-6">
+          <div className="pointer-events-none absolute inset-y-0 left-1/2 border-l border-dashed border-line" aria-hidden="true" />
           <LaneHeader label="Usual approach" caption={beforeCaption} tone="neutral" />
           <LaneHeader label={afterTitle} caption={afterCaption} tone="info" />
           <div className="min-w-0">{svgFor(sideBySide, 'today', sideScale)}</div>
-          <div className="min-w-0 border-l border-dashed border-line pl-3">{svgFor(sideBySide, 'next', sideScale)}</div>
+          <div className="min-w-0">{svgFor(sideBySide, 'next', sideScale)}</div>
         </div>
         {legend(sideBySide)}
       </>

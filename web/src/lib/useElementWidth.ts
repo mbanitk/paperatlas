@@ -1,14 +1,15 @@
-import { useLayoutEffect, useRef, useState, type RefObject } from 'react'
+import { useCallback, useLayoutEffect, useState } from 'react'
 
 /**
  * Content-box width of an element, tracked with a ResizeObserver and rounded to `step` px (so a resize
- * doesn't re-layout a diagram on every pixel). Null until the first measurement, which happens before paint.
+ * doesn't re-layout a diagram on every pixel). Null until the element is measured, which happens before
+ * paint. Returns a callback ref, so an element that mounts later (after data arrives) is measured too.
  */
-export function useElementWidth<T extends HTMLElement>(step = 4): [RefObject<T | null>, number | null] {
-  const ref = useRef<T>(null)
+export function useElementWidth<T extends HTMLElement>(step = 4): [(element: T | null) => void, number | null] {
+  const [element, setElement] = useState<T | null>(null)
   const [width, setWidth] = useState<number | null>(null)
+  const ref = useCallback((node: T | null) => setElement(node), [])
   useLayoutEffect(() => {
-    const element = ref.current
     if (!element) return
     const update = () => {
       const styles = getComputedStyle(element)
@@ -20,7 +21,7 @@ export function useElementWidth<T extends HTMLElement>(step = 4): [RefObject<T |
     const observer = new ResizeObserver(update)
     observer.observe(element)
     return () => observer.disconnect()
-  }, [step])
+  }, [element, step])
   return [ref, width]
 }
 

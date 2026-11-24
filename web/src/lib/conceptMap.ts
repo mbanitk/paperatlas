@@ -1,5 +1,6 @@
 import type { ClaimRelated, ConceptBundle, ConceptLinkData, ConceptMap, ConceptNode, DiagramEdge, DiagramNode } from '../api/types'
 import { assignLayers } from './flow'
+import { formatMath } from './format'
 import { line, pathD, roundedPolyline, sCurve, type Cubic, type Rect } from './geometry'
 import { DIAGRAM_FONT_SIZE, DIAGRAM_LINE_HEIGHT, wrapText } from './textMeasure'
 
@@ -233,7 +234,7 @@ export function layoutConceptMap(map: Pick<ConceptMap, 'nodes' | 'links'> | null
   const { nodeWidth: w, gapX, gapY, padX, padY } = metrics
   const textWidth = w - 2 * CONCEPT_TEXT.padX
   const names = new Map(
-    nodes.map((node) => [node.concept_id, wrapText(shortName(node.name, 96), textWidth, { weight: node.role === 'core' ? 600 : 500, maxLines: 4 })]),
+    nodes.map((node) => [node.concept_id, wrapText(shortName(formatMath(node.name), 96), textWidth, { weight: node.role === 'core' ? 600 : 500, maxLines: 4 })]),
   )
   const h = Math.max(metrics.nodeHeight, ...[...names.values()].map((name) => name.lines.length * CONCEPT_TEXT.lineHeight + 18))
   const maxRows = Math.max(...groups.map((group) => group.length))
@@ -260,7 +261,7 @@ export function layoutConceptMap(map: Pick<ConceptMap, 'nodes' | 'links'> | null
         height: h,
         lines: name.lines,
         lineY: name.lines.map((_, i) => blockTop + i * CONCEPT_TEXT.lineHeight + CONCEPT_TEXT.baseline),
-        truncated: name.truncated || shortName(node.name, 96) !== node.name,
+        truncated: name.truncated || shortName(formatMath(node.name), 96) !== formatMath(node.name),
         textBox: name.lines.length ? { x: x + w / 2 - name.width / 2, y: blockTop, width: name.width, height: name.lines.length * CONCEPT_TEXT.lineHeight } : null,
       })
     })

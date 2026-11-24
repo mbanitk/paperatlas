@@ -235,6 +235,12 @@ describe('layoutFlow', () => {
     expect(broken.nodes.map((n) => n.id)).toEqual(['a', 'b'])
     expect(broken.edges).toHaveLength(1)
   })
+
+  it('renders LaTeX in labels as plain text, never raw markup', () => {
+    const layout = layoutFlow({ nodes: [{ id: 'a', label: 'Apply 4^{-b} penalty', kind: 'step', highlight: false }, node('b')], edges: [{ from: 'a', to: 'b', label: 'x_{t} codes', style: 'normal' }] })
+    expect(layout.nodes[0].lines.join(' ')).toBe('Apply 4⁻ᵇ penalty')
+    expect(layout.edges[0].labelLines.join(' ')).toBe('xₜ codes')
+  })
 })
 
 describe('compareFlows', () => {
