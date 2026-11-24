@@ -17,10 +17,12 @@ import random
 import sys
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from seed_concept_maps import EXTRA_CONCEPTS, apply_concept_maps  # noqa: E402
+import seed_protocol  # noqa: E402
 from seed_explainers import BACKGROUND_PAPERS, CLAIM_EXPLAINERS, PAPER_EXPLAINERS, TOPIC_EXPLAINERS  # noqa: E402
 
 MARKER = ".seed_demo"
@@ -100,6 +102,23 @@ PROFILE: dict[str, Any] = {
         "remote": None,
         "readme_excerpt": "inference-lab — a small, hackable LLM inference server for Apple silicon.",
     },
+}
+
+
+# Engine roofline (`commands.profile`, lab/profiler.measure_roofline): the PyTorch MPS engine decodes at ~26% of the
+# memory-bandwidth limit (overhead-bound) and a 0.6B draft token costs about half a 30B step.
+ROOFLINE: dict[str, Any] = {
+    "kind": "profile",
+    "model": {"profile": "eval", "id": "Qwen/Qwen3-30B-A3B-Instruct-2507", "quantization": "4-bit (group 64)",
+              "active_params_b": 3.3, "total_params_b": 30.5, "bytes_per_token_gb": 3.3},
+    "hardware": {"chip": "Apple M5 Pro", "peak_bandwidth_gbs": 307, "memory_gb": 64},
+    "decode": {"tokens_per_s": 24.1, "ms_per_token": 41.5, "achieved_bandwidth_gbs": 79.5, "bandwidth_utilization": 0.26},
+    "forward_cost_ms": {"1": 41.5, "2": 42.9, "4": 45.8, "8": 52.6, "16": 66.4},
+    "batch_decode_tokens_per_s": {"1": 24.1, "2": 43.6, "4": 74.9, "8": 112.3},
+    "prefill_tokens_per_s": 612.0,
+    "draft": {"profile": "smoke", "id": "Qwen/Qwen3-0.6B", "ms_per_token": 19.8},
+    "environment": {"chip": "Apple M5 Pro", "macos": "26.1", "python": "3.12.8", "torch": "2.9.1", "engine": "pytorch-mps",
+                    "on_ac_power": True, "thermal_warning": False},
 }
 
 
@@ -714,7 +733,7 @@ PAPERS: list[dict[str, Any]] = [
                 "card": {
                     "testable": True, "category": "speculative_decoding",
                     "technique": "Set the speculative draft length per step with a controller driven by an exponential moving average of the acceptance rate, and stop drafting early when draft confidence falls below a threshold.",
-                    "change_required": "In the speculative decoder, replace the fixed num_draft_tokens with an EMA-based controller (bounds 1–8) and add a confidence early-exit to the draft loop.",
+                    "change_required": "In the speculative decoder, replace the fixed num_draft_tokens with an EMA-based controller (bounds 1–8) and stop the draft loop when draft confidence drops.",
                     "effects": [effect("tokens per second", 20, "%", "increase", "fixed draft length 5", "claim 12, example embodiment")],
                     "paper_setup": setup("GPU accelerator (unspecified)", "unspecified transformer LLM", "unspecified", "1", "unspecified", "unspecified"),
                     "prerequisites": ["Draft-model speculative decoding"], "effort": "low",
@@ -760,7 +779,7 @@ for _paper in PAPERS:
     _paper["concepts"].extend(EXTRA_CONCEPTS.get(_paper["paper_id"], []))
 
 ALREADY_TESTED = {"c_radix", "c_split_k", "c_prompt_lookup", "c_chunked_prefill", "c_kivi", "c_lookahead", "c_draft_len",
-                  "c_tree_mask", "c_dyn_tree", "c_split_heuristic", "c_awq"}
+                  "c_tree_mask", "c_dyn_tree", "c_split_heuristic", "c_awq", "c_batched_verify", "c_adaptive_ngram", "c_lookahead_tuning"}
 
 
 # ---- experiments ---------------------------------------------------------------------------
@@ -846,6 +865,7 @@ class Seeder:
         self.skipped_artifacts: list[int] = []
         self.experiments = 0
         self.links = 0
+        self.predictions: dict[str, Optional[dict[str, Any]]] = {}
 
     # events / jobs are buffered and inserted in time order so ids follow time (SSE cursors rely on it)
     def event(self, at: datetime, stage: str, message: str, data: Optional[dict] = None, *, experiment_id: Optional[int] = None,
@@ -990,17 +1010,35 @@ class Seeder:
         from paperatlas.db.schema import Project
 
         with session_scope() as session:
+            measured = ago(hours=3)
             project = Project(name="inference-lab", repo_path=PROFILE["repo"]["path"], profile=PROFILE,
-                              profiled_at=ago(days=1, hours=2), created_at=ago(days=8))
+                              profiled_at=ago(days=1, hours=2), created_at=ago(days=8), roofline=ROOFLINE, roofline_at=measured)
             session.add(project)
             session.flush()
-            return project.id
+            project_id = project.id
+        from paperatlas.lab.costmodel import summarize
+
+        job = "roofline"
+        start = measured - timedelta(minutes=6)
+        self.job(job, "project.roofline", {"project_id": project_id, "model": "eval", "rematch": True}, start, finished=measured + timedelta(minutes=2),
+                 result={"decode": ROOFLINE["decode"], "forward_cost_ms": ROOFLINE["forward_cost_ms"]})
+        self.event(start + timedelta(seconds=3), "roofline", "Profiling inference-lab (eval) to measure where decode time goes",
+                   {"command": "uv run python -m inference_lab.bench.profile --model eval --out roofline.json"}, job=job)
+        for i, line in enumerate(["decode: 24.1 tok/s (41.5 ms/token)", "forward cost: 1→41.5 ms, 4→45.8 ms, 16→66.4 ms",
+                                  "batched decode: batch 8 → 112.3 tok/s", "draft Qwen/Qwen3-0.6B: 19.8 ms/token"]):
+            self.event(start + timedelta(minutes=1 + i), "roofline", line, job=job)
+        self.event(measured, "roofline", f"Roofline: {summarize(ROOFLINE)}", {"roofline": ROOFLINE}, job=job)
+        self.event(measured + timedelta(minutes=2), "match", "Re-ranked claims with the cost model", job=job)
+        return project_id
 
     def seed_matches(self, project_id: int) -> None:
         """Mirror of paperatlas.lab.matcher scoring (similarity is fixed per claim since embeddings stay NULL)."""
         from paperatlas.db.engine import session_scope
         from paperatlas.db.schema import Match
+        from paperatlas.lab.costmodel import blocker as costmodel_blocker
+        from paperatlas.lab.costmodel import predict, score_factor
 
+        workloads = [w["name"] for w in PROFILE["workloads"]]
         prior = {"kv_cache": 1.0, "speculative_decoding": 1.0, "batching_scheduling": 0.9, "memory_management": 0.9,
                  "quantization": 0.85, "attention_kernels": 0.8, "observability": 0.7, "evaluation_quality": 0.6,
                  "disaggregated_serving": 0.2, "parallelism_communication": 0.2}
@@ -1023,11 +1061,16 @@ class Seeder:
                     blockers.append("no measurable claim")
                 if not info["target_metric"] and not blockers:
                     blockers.append("no matching benchmark metric")
+                prediction = predict({"category": card.category, "technique": card.technique, "change_required": card.change_required,
+                                      "card": card.model_dump(mode="json")}, ROOFLINE, workloads)
+                self.predictions[key] = prediction
+                if (cost_blocker := costmodel_blocker(prediction)) and not blockers:
+                    blockers.append(cost_blocker)
                 fit = 0.5 * prior.get(card.category, 0.3) + 0.5 * info["similarity"]
                 gain_pct = card.claimed_gain_pct()
                 gain = min(gain_pct, 100.0) / 100.0 if gain_pct is not None else 0.15
                 cost = effort_cost[card.effort]
-                score = fit * (0.4 + gain) / cost
+                score = fit * (0.4 + gain) / cost * score_factor(prediction)
                 if key in ALREADY_TESTED:
                     score *= 0.3
                 if blockers:
@@ -1037,7 +1080,7 @@ class Seeder:
                 session.add(Match(
                     project_id=project_id, claim_id=self.claims[key], fit=round(fit, 4), gain=round(gain, 4),
                     effort_cost=cost, score=round(score, 5), testable_here=not blockers, blockers=blockers,
-                    target_metric=info["target_metric"], rationale=info["rationale"], created_at=ago(hours=1), **extra,
+                    target_metric=info["target_metric"], rationale=info["rationale"], prediction=prediction, created_at=ago(hours=1), **extra,
                 ))
 
     # -- triage + experiments --
@@ -1068,13 +1111,18 @@ class Seeder:
             self.triage_events(triage_id, created, opts)
 
         self.exp_merged(project_id)
-        self.exp_failed(project_id)
+        failed = self.exp_failed(project_id)
         self.exp_awaiting_decision(project_id, triage_ids[0])
         self.exp_running(project_id, triage_ids[0])
         self.exp_building(project_id)
         self.exp_awaiting_approval(project_id, triage_ids[1], "c_lookahead", ago(hours=5, minutes=4))
-        self.exp_awaiting_approval(project_id, triage_ids[1], "c_draft_len", ago(hours=5, minutes=3))
         self.exp_chain_and_bundle(project_id, triage_ids[2], failed_prerequisite=2)
+        kit = SimpleNamespace(ago=ago, spec_for=spec_for, make_results=make_results, profile=PROFILE)
+        seed_protocol.exp_v2_gate2(self, kit, project_id, triage_ids[2])
+        seed_protocol.exp_v2_gate3(self, kit, project_id, triage_ids[1])
+        seed_protocol.exp_v2_tuning(self, kit, project_id)
+        seed_protocol.exp_v2_kept(self, kit, project_id, triage_ids[1])
+        self.exp_rerun(project_id, failed, "engine ported to MLX: the split-K kernel can use mx.fast with fp32 accumulation")
 
     def triage_events(self, triage_id: int, start: datetime, opts: dict) -> None:
         t = start
@@ -1096,14 +1144,18 @@ class Seeder:
         self.event(t + timedelta(minutes=14), "pick", "10 recommendations ready — pick 1–2 claims to test (Gate 1)", triage_id=triage_id, job=job)
 
     def _experiment(self, project_id: int, key: str, status: str, created: datetime, updated: datetime, *, triage_id: Optional[int] = None,
-                    spec: Optional[dict] = None, branch: Optional[str] = None, build: Optional[dict] = None, error: Optional[str] = None) -> int:
+                    spec: Optional[dict] = None, branch: Optional[str] = None, build: Optional[dict] = None, error: Optional[str] = None,
+                    thread_id: Optional[str] = None) -> int:
         from paperatlas.db.engine import session_scope
         from paperatlas.db.schema import Experiment
 
+        if spec and "prediction" in spec and spec["prediction"] is None:
+            # the planner copies the match's cost-model prediction into the spec (shown at Gate 2 and Gate 3)
+            spec = {**spec, "prediction": self.predictions.get(key)}
         with session_scope() as session:
             experiment = Experiment(
                 project_id=project_id, claim_id=self.claims[key], triage_id=triage_id,
-                thread_id=f"exp-demo-{key}", status=status, spec=spec or {}, flag_name=(spec or {}).get("flag_name"),
+                thread_id=thread_id or f"exp-demo-{key}", status=status, spec=spec or {}, flag_name=(spec or {}).get("flag_name"),
                 branch=branch, build=build or {}, error=error, created_at=created, updated_at=updated,
             )
             session.add(experiment)
@@ -1515,19 +1567,33 @@ class Seeder:
                 "a small tree is the safe first step before the dynamic tree (chained experiment).",
             )
         else:
-            spec = spec_for(
-                hypothesis="An acceptance-rate–driven draft length controller improves decode_tokens_per_s on short_chat by at least 5% over the fixed draft length.",
-                flag_name="adaptive_draft_length", technique_summary=self.claim_rows[key]["card"].technique,
-                implementation_notes="Extend speculative_draft: replace num_draft_tokens=5 with an EMA controller (alpha 0.2, bounds 1–8) and stop drafting when the "
-                "drafter's top-1 probability < 0.35. Flag off: fixed 5-token drafts as today.",
-                primary_metric="decode_tokens_per_s", direction="higher_is_better", secondary_metrics=["itl_ms", "e2e_latency_ms"],
-                workload="short_chat", model="eval", rounds=10, warmup=1, success_threshold_pct=5.0, claimed_gain_pct=20.0, lossless=True,
-                guardrails={"max_exact_match_drop": 0.02, "min_output_agreement": 0.95, "max_peak_memory_increase_pct": 15.0},
-                paper_vs_project="The patent gives an example embodiment without hardware details; the project already uses a 0.6B drafter on MPS where drafting is cheap, which limits the upside.",
-            )
+            raise ValueError(f"no Gate 2 fixture for {key}")
         eid = self._experiment(project_id, key, "awaiting_approval", created, created + timedelta(minutes=2), triage_id=triage_id, spec=spec)
         self._artifacts(eid)
         self._plan_events(eid, created, spec, triage_id, None)
+        return eid
+
+    def exp_rerun(self, project_id: int, old_id: int, comment: str) -> int:
+        """Re-run (service.rerun_experiment, replan=false): same claim and spec on the current code, waiting at Gate 2."""
+        from paperatlas.db.engine import session_scope
+        from paperatlas.db.schema import Experiment
+
+        with session_scope() as session:
+            old = session.get(Experiment, old_id)
+            key = next(k for k, claim_id in self.claims.items() if claim_id == old.claim_id)
+            spec = {**{k: v for k, v in (old.spec or {}).items() if k != "prediction"}, "prediction": None}
+            triage_id = old.triage_id
+        created = ago(minutes=30)
+        eid = self._experiment(project_id, key, "awaiting_approval", created, created + timedelta(seconds=20), triage_id=triage_id, spec=spec,
+                               thread_id=f"exp-demo-{key}-rerun")
+        self._set(eid, rerun_of_experiment_id=old_id)
+        self._artifacts(eid)
+        job = f"run-{eid}"
+        self.job(job, "experiment.run", {"experiment_id": eid}, created, finished=created + timedelta(seconds=20), experiment_id=eid)
+        self.event(created, "plan", f"Re-run of #{old_id}: reusing its spec (review it at Gate 2) — {comment}", experiment_id=eid)
+        self.event(created, "plan", f"Re-run started as #{eid} — {comment}", experiment_id=old_id)
+        self.event(created + timedelta(seconds=15), "approve", f"Spec copied from #{old_id} — waiting for approval (Gate 2)", {"spec": spec},
+                   experiment_id=eid, job=job)
         return eid
 
     def exp_chain_and_bundle(self, project_id: int, triage_id: int, failed_prerequisite: int) -> None:

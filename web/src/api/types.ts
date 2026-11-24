@@ -9,6 +9,7 @@ export type ExperimentStatus =
   | 'approving'
   | 'building'
   | 'smoke_testing'
+  | 'tuning'
   | 'waiting_gpu'
   | 'running'
   | 'judging'
@@ -21,7 +22,7 @@ export type ExperimentStatus =
   | 'failed'
   | 'cancelled'
 
-export type StageName = 'plan' | 'approve' | 'build' | 'smoke' | 'run' | 'judge' | 'decide'
+export type StageName = 'plan' | 'approve' | 'build' | 'smoke' | 'tune' | 'run' | 'judge' | 'decide'
 export type StageState =
   | 'done'
   | 'active'
@@ -115,7 +116,21 @@ export interface ClaimExplainer {
   diagram?: FlowDiagramData | null
   generated_at?: string | null
   model?: string | null
+  /** 2 = plain-language layer below is present (primer, headline result, before/after, paper vs here). */
+  version?: number
+  primer?: { concept?: string; analogy?: string } | null
+  headline_result?: { value?: string; metric?: string; versus?: string; direction?: 'up' | 'down' | 'none' | string } | null
+  today_vs_paper?: { today?: string; with_paper?: string } | null
+  paper_vs_here?: { aspect: ComparisonAspect | string; paper?: string; here?: string; effect?: string }[]
+  what_we_do_differently?: string[]
+  key_numbers?: { value: string; label: string; meaning?: string }[]
+  theme?: ClaimTheme | string | null
+  /** The standard flow without the technique; shares node ids with `diagram`. */
+  diagram_before?: FlowDiagramData | null
 }
+
+export type ClaimTheme = 'speed' | 'latency' | 'throughput' | 'memory' | 'quality' | 'cost' | 'reliability'
+export type ComparisonAspect = 'hardware' | 'model' | 'runtime' | 'workload' | 'baseline' | 'draft_model' | 'batch' | 'context' | 'other'
 
 export interface PaperExplainer {
   tldr?: string
@@ -271,6 +286,53 @@ export interface TopicRef {
   name: string
 }
 
+// ---- roofline + cost-model predictions (lab/profiler.measure_roofline, lab/costmodel.predict) -----------
+
+/** The engine's measured roofline (project `commands.profile`). Every field may be missing. */
+export interface Roofline {
+  kind?: 'profile' | string
+  model?: {
+    profile?: string
+    id?: string
+    quantization?: string
+    active_params_b?: number
+    total_params_b?: number
+    bytes_per_token_gb?: number
+  } | null
+  hardware?: { chip?: string; peak_bandwidth_gbs?: number; memory_gb?: number } | null
+  decode?: {
+    tokens_per_s?: number
+    ms_per_token?: number
+    achieved_bandwidth_gbs?: number
+    /** 0–1 */
+    bandwidth_utilization?: number
+  } | null
+  /** Cost of one forward pass that appends N tokens (the verification cost curve), keyed by N. */
+  forward_cost_ms?: Record<string, number> | null
+  batch_decode_tokens_per_s?: Record<string, number> | null
+  prefill_tokens_per_s?: number | null
+  draft?: { profile?: string; id?: string; ms_per_token?: number } | null
+  environment?: Record<string, unknown> | null
+  [extra: string]: unknown
+}
+
+export type Likelihood = 'likely' | 'marginal' | 'unlikely' | 'unknown'
+export type Bottleneck = 'bandwidth' | 'overhead' | 'mixed' | 'unknown'
+
+/** What a claim is predicted to gain on this engine, before building it. */
+export interface Prediction {
+  likelihood: Likelihood | string
+  predicted_gain_pct: { low: number; high: number } | null
+  metric?: string | null
+  relies_on?: string | null
+  bottleneck?: Bottleneck | string | null
+  reasons?: string[]
+  best_block_size?: number | null
+  acceptance?: number | null
+  note?: string | null
+  [extra: string]: unknown
+}
+
 export interface Recommendation extends Claim {
   rank: number
   project_id: number
@@ -285,6 +347,7 @@ export interface Recommendation extends Claim {
   topics: TopicRef[]
   experiment_id: number | null
   experiment_status: ExperimentStatus | null
+  prediction?: Prediction | null
 }
 
 export interface Paged<T> {
@@ -398,6 +461,9 @@ export interface Project {
   techniques: { name: string; description?: string; hooks?: string[] }[] | null
   repo: { path?: string; branch?: string; sha?: string; remote?: string | null } | null
   profiled_at: string | null
+  /** null until `POST /projects/{id}/roofline` has measured it */
+  roofline?: Roofline | null
+  roofline_at?: string | null
 }
 
 export type TriageStatus =
@@ -499,6 +565,8 @@ export interface ExperimentSummary {
   mode?: ExperimentMode | string | null
   bundle_claim_ids?: number[]
   depends_on_experiment_id?: number | null
+  /** set on a re-run: the experiment it repeats (same claim, current code) */
+  rerun_of_experiment_id?: number | null
 }
 
 export interface Guardrails {
@@ -528,9 +596,161 @@ export interface ExperimentSpec {
   build_timeout_s: number
   smoke_timeout_s: number
   eval_timeout_s: number
+  // protocol v2 (lab/protocol.py) — older specs may lack these
+  protocol_version?: number
+  paper_baseline?: PaperBaseline
+  paper_workload?: PaperWorkload | null
+  mechanism?: MechanismCounter[]
+  knobs?: Knob[]
+  fidelity?: Fidelity
+  tune?: boolean
+  tune_rounds?: number
+  max_iterations?: number
+  baseline_flags?: string[]
+  /** cost-model prediction for this claim on this engine, made when the spec was planned */
+  prediction?: Prediction | null
   [extra: string]: unknown
 }
 
+// ---- protocol v2: test the claim the way the paper measured it, then test adoption ----------
+
+export type PaperBaselineKind = 'project_default' | 'technique_mode'
+
+export interface PaperBaseline {
+  description: string
+  kind: PaperBaselineKind
+}
+
+export interface PaperWorkload {
+  matches: string
+  description: string
+  prompts: string[]
+  max_new_tokens: number
+  concurrency: number
+  long_context_tokens: number
+}
+
+export interface MechanismCounter {
+  name: string
+  meaning: string
+  paper_value: string | null
+}
+
+export type KnobValue = string | number | boolean
+
+export interface Knob {
+  name: string
+  meaning: string
+  paper_value: string | null
+  candidates: KnobValue[]
+}
+
+export type FidelityLevel = 'high' | 'medium' | 'low'
+
+export interface Fidelity {
+  level: FidelityLevel
+  gaps: string[]
+}
+
+export interface RunComparison {
+  kind: 'claim' | 'adopt' | string
+  workload: string
+  baseline: string
+  baseline_config?: Record<string, KnobValue>
+  variant_config?: Record<string, KnobValue>
+}
+
+export interface MechanismRow {
+  name: string
+  meaning: string | null
+  paper_value: string | null
+  expected: boolean
+  baseline_total: number | null
+  variant_total: number | null
+  baseline_per_1k_tokens: number | null
+  variant_per_1k_tokens: number | null
+  change_pct: number | null
+}
+
+export interface MechanismTable {
+  rows: MechanismRow[]
+  missing: string[]
+  measured: boolean
+  tokens: { baseline: number; variant: number }
+}
+
+export type AdoptionVerdict = 'worth_adopting' | 'small_gain' | 'not_reproduced' | 'regression' | 'inconclusive'
+
+export interface AdoptionResult {
+  verdict: AdoptionVerdict | string
+  reason: string
+  median_delta_pct: number | null
+  ci_low_pct: number | null
+  ci_high_pct: number | null
+  quality_ok: boolean
+  quality_problems: string[]
+  workload?: unknown
+  per_metric?: Record<string, MetricResult>
+  mechanism?: MechanismTable
+}
+
+export type Diagnosis =
+  | 'reproduced'
+  | 'partially_reproduced'
+  | 'implementation_suspect'
+  | 'untuned'
+  | 'regime_mismatch'
+  | 'hardware_mismatch'
+  | 'claim_not_supported'
+  | 'inconclusive'
+
+export interface Analysis {
+  diagnosis: Diagnosis | string
+  summary: string
+  evidence: string[]
+  paper_comparison: string
+  worth_iterating: boolean
+  next_changes: string
+  expected_effect: string
+  model?: string | null
+}
+
+export interface IterationEntry {
+  iteration: number
+  verdict: VerdictName | string
+  reason: string
+  median_delta_pct: number | null
+  ci_low_pct: number | null
+  ci_high_pct: number | null
+  adoption_verdict: string | null
+  adoption_median_delta_pct: number | null
+  diagnosis: string | null
+  summary: string | null
+  next_changes: string | null
+  tuned: { baseline?: Record<string, KnobValue> | null; variant?: Record<string, KnobValue> | null } | null
+  /** commit of this iteration's build (the keep-or-revert loop resets to the best one) */
+  sha?: string | null
+  eval_run_id?: number | null
+  adopt_run_id?: number | null
+  quality_ok?: boolean | null
+}
+
+export interface TuningTrial {
+  config: Record<string, KnobValue>
+  baseline: number | null
+  variant: number | null
+}
+
+export interface TuningResult {
+  configs: Record<string, KnobValue>[]
+  trials: TuningTrial[]
+  metric?: string
+  baseline: Record<string, KnobValue>
+  variant: Record<string, KnobValue>
+  skipped: boolean
+}
+
+/** Scalar spec fields edited as text in the Gate 2 form. */
 export type EditableField =
   | 'hypothesis'
   | 'flag_name'
@@ -540,6 +760,9 @@ export type EditableField =
   | 'warmup'
   | 'workload'
   | 'model'
+
+/** Protocol v2 fields edited with structured controls (lib/protocol.ts). */
+export type ProtocolField = 'paper_baseline' | 'paper_workload' | 'mechanism' | 'knobs' | 'fidelity' | 'lossless' | 'tune' | 'max_iterations'
 
 export interface BuildAttempt {
   attempt: number
@@ -557,12 +780,17 @@ export interface BuildInfo {
   agent_summary?: string
   pr_url?: string | null
   merge_sha?: string
+  iteration?: number
+  iterations?: IterationEntry[]
+  /** the best iteration, kept after judging; later iterations' code was reverted */
+  kept_iteration?: number | null
+  tuning?: TuningResult
   [extra: string]: unknown
 }
 
 export interface RunInfo {
   id: number
-  kind: 'smoke' | 'eval' | string
+  kind: 'smoke' | 'tune' | 'eval' | 'adopt' | string
   status: string
   command: string | null
   started_at: string | null
@@ -570,6 +798,8 @@ export interface RunInfo {
   summary: Record<string, unknown> | null
   quality: QualityInfo | null
   model: { id?: string; dtype?: string; alias?: string } | string | null
+  comparison?: RunComparison | null
+  mechanism?: Record<string, unknown> | null
 }
 
 export interface QualityInfo {
@@ -614,6 +844,15 @@ export interface VerdictDetails {
   environment?: Record<string, unknown> | null
   model?: { id?: string; dtype?: string } | string | null
   workload?: string | WorkloadInfo | null
+  // protocol v2
+  comparison?: RunComparison | null
+  target_pct?: number | null
+  mechanism?: MechanismTable | null
+  adoption?: AdoptionResult | null
+  analysis?: Analysis | null
+  iteration?: number | null
+  iterations?: IterationEntry[] | null
+  tuning?: TuningResult | null
   [extra: string]: unknown
 }
 
@@ -633,7 +872,8 @@ export interface Experiment extends ExperimentSummary {
   project: { id: number; name: string; repo_path: string }
   claim: Claim
   spec: Partial<ExperimentSpec>
-  editable_fields: EditableField[]
+  /** Everything the backend lets Gate 2 change (scalar and protocol fields; unknown names are ignored). */
+  editable_fields: (EditableField | ProtocolField | string)[]
   spec_options: { metrics: string[]; workloads: string[]; models: string[] }
   build: BuildInfo
   worktree_path: string | null
@@ -656,6 +896,12 @@ export type ServicesHealth = Record<string, { url: string; status: string }>
 export interface SpecDecisionBody {
   decision: 'approve' | 'revise' | 'reject'
   overrides?: Record<string, unknown> | null
+  comment?: string | null
+}
+
+export interface RerunBody {
+  /** false: reuse the previous spec and stop at Gate 2; true: write a fresh spec from the paper with the previous result as feedback */
+  replan?: boolean
   comment?: string | null
 }
 

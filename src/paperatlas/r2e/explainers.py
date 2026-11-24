@@ -32,8 +32,8 @@ GROUNDING = (
     "No hype, no emojis, no calls to action."
 )
 DIAGRAM_GUIDE = (
-    "diagram: a small left-to-right flow (3-8 nodes) showing how the approach works at inference "
-    "time. Node labels have at most 4 words. kind is one of input, model, step, decision, memory, "
+    "diagram: a small left-to-right flow (3-8 nodes) showing how the approach works (generic: the "
+    "paper's system, no project, product, model or hardware names). Node labels have at most 4 words. kind is one of input, model, step, decision, memory, "
     "output, hardware, data. Set highlight=true on the nodes the technique adds or changes compared "
     "with a standard pipeline. Use style 'loop' for at most one feedback edge and 'skip' for a "
     "shortcut; otherwise 'normal'. Edge labels are optional (at most 3 words)."
@@ -49,6 +49,9 @@ def _obj(properties: dict) -> dict:
 
 
 _STRS = {"type": "array", "items": {"type": "string"}}
+
+PAPER_VS_HERE_ASPECTS = ["hardware", "model", "runtime", "workload", "baseline", "draft_model", "batch", "context", "other"]
+THEMES = ["speed", "latency", "throughput", "memory", "quality", "cost", "reliability"]
 
 DIAGRAM_SCHEMA = _obj(
     {
@@ -92,8 +95,38 @@ CLAIM_EXPLAINER_SCHEMA = _obj(
         "caveats": _STRS,
         "glossary": {"type": "array", "items": _obj({"term": {"type": "string"}, "meaning": {"type": "string"}})},
         "diagram": DIAGRAM_SCHEMA,
+        # v2: plain-language layer for non-experts
+        "primer": _obj({"concept": {"type": "string"}, "analogy": {"type": "string"}}),
+        "headline_result": _obj(
+            {
+                "value": {"type": "string"},
+                "metric": {"type": "string"},
+                "versus": {"type": "string"},
+                "direction": {"type": "string", "enum": ["up", "down", "none"]},
+            }
+        ),
+        "today_vs_paper": _obj({"today": {"type": "string"}, "with_paper": {"type": "string"}}),
+        "paper_vs_here": {
+            "type": "array",
+            "items": _obj(
+                {
+                    "aspect": {"type": "string", "enum": PAPER_VS_HERE_ASPECTS},
+                    "paper": {"type": "string"},
+                    "here": {"type": "string"},
+                    "effect": {"type": "string"},
+                }
+            ),
+        },
+        "what_we_do_differently": _STRS,
+        "key_numbers": {
+            "type": "array",
+            "items": _obj({"value": {"type": "string"}, "label": {"type": "string"}, "meaning": {"type": "string"}}),
+        },
+        "theme": {"type": "string", "enum": THEMES},
+        "diagram_before": DIAGRAM_SCHEMA,
     }
 )
+CLAIM_EXPLAINER_VERSION = 3
 
 PAPER_EXPLAINER_SCHEMA = _obj(
     {
@@ -122,8 +155,17 @@ TOPIC_EXPLAINER_SCHEMA = _obj(
     }
 )
 
-CLAIM_SYSTEM = f"""You explain one research claim to an engineer deciding whether to try it in their
-LLM inference project. Fill the fields:
+CLAIM_SYSTEM = f"""You explain one research claim to an engineer deciding whether to try it in their own
+system (it may be any kind of system: model training or inference, a distributed system, a database, a SaaS
+backend...). Two kinds of fields:
+- GENERIC fields explain the paper itself and must NOT mention the target project, its name, its models,
+  frameworks, servers or hardware: headline, problem, how_it_works, why_it_helps, claimed_result, primer,
+  headline_result, today_vs_paper, key_numbers, theme, diagram, diagram_before, glossary, lossless.
+  They should teach the facts needed to understand the paper (what the standard approach is, where its cost or
+  limit comes from, what the paper changes and why that helps).
+- PROJECT fields relate the paper to the target project and are the only place for project details:
+  in_this_project, caveats, paper_vs_here, what_we_do_differently.
+Fill the fields:
 - headline: what the technique does, at most 14 words.
 - problem: the bottleneck or failure it addresses (1-2 sentences).
 - how_it_works: 3-5 short steps.
@@ -136,6 +178,26 @@ LLM inference project. Fill the fields:
 - caveats: up to 3 risks or reasons it may not transfer to the project's hardware/model.
 - glossary: up to 3 terms a newcomer may not know.
 - {DIAGRAM_GUIDE}
+Write the following for a smart engineer who is NOT an expert in this area (no jargon without explanation):
+- primer.concept: the background concept in plain words (2-3 sentences: what the system normally does and
+  where time/memory goes), so someone new can follow the rest. primer.analogy: one everyday analogy (1 sentence).
+- headline_result: the paper's MAIN claimed result (not a side number): value as a short string with its sign or
+  unit (e.g. "+5–41%", "2.1×", "−40%"), metric in plain words (e.g. "decoding speed"), versus = what it is compared
+  against in plain words, direction = up if bigger is better and it went up, down if it is a reduction (memory,
+  latency), none if not quantified.
+- today_vs_paper.today: the standard approach this paper improves on — how such systems usually work without the
+  technique and where the cost/limit comes from (1-2 plain sentences, generic, as the paper describes its baseline;
+  never describe the target project here); today_vs_paper.with_paper: what the paper changes and why that saves work
+  or helps (1-2 plain sentences, generic).
+- paper_vs_here: 2-4 rows comparing the paper's setup with this project (aspect, paper, here, and effect = how the
+  difference may change the result, plain words). Use the project brief for "here".
+- what_we_do_differently: 1-3 concrete adaptations this project will need versus the paper (e.g. a different draft
+  model, no trained heads, Apple GPU memory limits), each one sentence.
+- key_numbers: 2-3 numbers from the paper worth remembering (value, short label, meaning in plain words).
+- theme: the main thing it improves (speed, latency, throughput, memory, quality, cost, reliability).
+- diagram_before: the SAME flow WITHOUT the technique (the standard approach the paper compares against, generic),
+  with the same node ids where steps are shared and no highlighted nodes, so the two diagrams can be shown side
+  by side.
 {GROUNDING}"""
 
 PAPER_SYSTEM = f"""You explain a research paper (or patent) to an engineer skimming many papers. Fill:
@@ -245,7 +307,7 @@ def explain_claim(project_id: int, claim_id: int, llm: Optional[LLMClient] = Non
         match = session.scalar(select(Match).where(Match.project_id == project_id, Match.claim_id == claim_id))
         if match is None:
             raise ValueError(f"claim {claim_id} has not been matched to project {project_id}")
-        if match.explainer and not force:
+        if match.explainer and not force and (match.explainer.get("version") or 1) >= CLAIM_EXPLAINER_VERSION:
             return match.explainer
         claim, concept, paper = session.execute(
             select(Claim, Concept, Paper)
@@ -277,6 +339,14 @@ def explain_claim(project_id: int, claim_id: int, llm: Optional[LLMClient] = Non
     llm = _require_llm(llm)
     payload = llm.generate_json(CLAIM_SYSTEM, material, "claim_explainer", CLAIM_EXPLAINER_SCHEMA)
     payload["diagram"] = clean_diagram(payload.get("diagram") or {})
+    before = clean_diagram(payload.get("diagram_before") or {})
+    for node in before["nodes"]:
+        node["highlight"] = False
+    payload["diagram_before"] = before if before["nodes"] else None
+    payload["paper_vs_here"] = (payload.get("paper_vs_here") or [])[:4]
+    payload["what_we_do_differently"] = (payload.get("what_we_do_differently") or [])[:3]
+    payload["key_numbers"] = (payload.get("key_numbers") or [])[:3]
+    payload["version"] = CLAIM_EXPLAINER_VERSION
     payload["how_it_works"] = payload.get("how_it_works", [])[:5]
     payload["caveats"] = payload.get("caveats", [])[:3]
     payload["glossary"] = payload.get("glossary", [])[:3]
@@ -317,6 +387,14 @@ def explain_paper(paper_id: str, llm: Optional[LLMClient] = None, force: bool = 
     llm = _require_llm(llm)
     payload = llm.generate_json(PAPER_SYSTEM, "\n".join(lines), "paper_explainer", PAPER_EXPLAINER_SCHEMA)
     payload["diagram"] = clean_diagram(payload.get("diagram") or {})
+    before = clean_diagram(payload.get("diagram_before") or {})
+    for node in before["nodes"]:
+        node["highlight"] = False
+    payload["diagram_before"] = before if before["nodes"] else None
+    payload["paper_vs_here"] = (payload.get("paper_vs_here") or [])[:4]
+    payload["what_we_do_differently"] = (payload.get("what_we_do_differently") or [])[:3]
+    payload["key_numbers"] = (payload.get("key_numbers") or [])[:3]
+    payload["version"] = CLAIM_EXPLAINER_VERSION
     payload["approach"] = payload.get("approach", [])[:5]
     payload["key_results"] = payload.get("key_results", [])[:4]
     payload["limitations"] = payload.get("limitations", [])[:3]
@@ -455,6 +533,7 @@ def backfill(
     workers: int = 4,
     maps: bool = True,
     report=lambda stage, message, data=None: logger.info("[%s] %s", stage, message),
+    all_claims: bool = False,
 ) -> dict[str, int]:
     llm = _require_llm(None)
     result = {"topics": 0, "papers": 0, "claims": 0, "maps": 0}
@@ -469,13 +548,15 @@ def backfill(
             map_query = map_query.where(Paper.concept_map.is_(None))
         map_ids = session.scalars(map_query).all() if maps else []
         claim_ids: list[int] = []
-        if project_id and claims_top:
-            claim_query = (
-                select(Match.claim_id)
-                .where(Match.project_id == project_id, Match.testable_here.is_(True))
-                .order_by(Match.score.desc())
-                .limit(claims_top)
-            )
+        if project_id and (claims_top or all_claims):
+            claim_query = select(Match.claim_id).where(Match.project_id == project_id)
+            if all_claims:
+                # every card (blocked ones are shown under "Include blocked"): testable first, best first
+                claim_query = claim_query.order_by(Match.testable_here.desc(), Match.score.desc())
+            else:
+                claim_query = (
+                    claim_query.where(Match.testable_here.is_(True)).order_by(Match.score.desc()).limit(claims_top)
+                )
             claim_ids = session.scalars(claim_query).all()
     from paperatlas.distill.concept_map import map_paper
 

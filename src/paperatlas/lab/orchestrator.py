@@ -1,8 +1,11 @@
 """LangGraph orchestration.
 
 Triage graph (per project):  topics? → discover → distill → match → shortlist   (then Gate 1: pick)
-Experiment graph (per claim): plan → [Gate 2: approve spec] → build → smoke → run → judge
-                              → [Gate 3: merge or drop] → finalize
+Experiment graph (per claim): plan → [Gate 2: approve spec] → build → smoke → tune → run → judge
+                              → (fixable? back to build, ≤ max_iterations) → [Gate 3: merge or drop] → finalize
+
+run = claim check (method vs the paper's baseline, paper-like workload) + adoption check (method vs the project's
+default, project workload); judge = verdicts + mechanism counters + an analyst diagnosis (see lab/protocol.py).
 
 Gates are LangGraph interrupts; state is checkpointed in Postgres (schema `agent`), so a
 worker restart continues from the last completed step. The experiment row in `lab.experiments`
@@ -28,14 +31,17 @@ from sqlalchemy import case, select, update
 from paperatlas.db.engine import session_scope
 from paperatlas.db.schema import Experiment, Run, Topic, Triage, Verdict
 from paperatlas.lab import service
+from paperatlas.lab.analyst import analyse, fidelity_notes
 from paperatlas.lab.builder import build_experiment, ensure_protected_paths
+from paperatlas.lab.costmodel import summarize as summarize_roofline
 from paperatlas.lab.events import reporter
 from paperatlas.lab.judge import judge
 from paperatlas.lab.planner import plan_experiment
 from paperatlas.lab.profiler import register_project
 from paperatlas.lab.process import Cancelled, WorkerShutdown, shutting_down
 from paperatlas.lab.report import render_report
-from paperatlas.lab.runner import run_benchmark
+from paperatlas.lab.protocol import needs_adoption_run, spec_defaults
+from paperatlas.lab.runner import run_benchmark, tune
 from paperatlas.lab.workspace import (
     artifacts_dir,
     commit_all,
@@ -180,6 +186,8 @@ class ExperimentState(TypedDict, total=False):
     experiment_id: int
     decision: Optional[str]
     feedback: Optional[str]
+    iteration: int
+    iterate: bool
 
 
 @experiment_step("plan")
@@ -187,17 +195,29 @@ def node_plan(state: ExperimentState, report) -> dict:
     experiment_id = state["experiment_id"]
     context = service.experiment_context(experiment_id)
     set_experiment(experiment_id, status="planning", error=None)
+    rerun_of = context["experiment"].get("rerun_of_experiment_id")
+    if rerun_of and context["spec"] and not state.get("feedback"):
+        spec = _reuse_spec(context)
+        _raise_if_cancelled(experiment_id)
+        set_experiment(experiment_id, spec=spec, flag_name=spec["flag_name"], status="awaiting_approval")
+        report("approve", f"Spec copied from #{rerun_of} — waiting for approval (Gate 2)", {"spec": spec})
+        return {"feedback": None}
     report("plan", "Writing the experiment spec", None)
     llm = build_default_llm_client()
     if context["experiment"].get("depends_on_experiment_id"):
         register_project(context["project"]["repo_path"], context["project"]["name"])
         context = service.experiment_context(experiment_id)
     spec = plan_experiment(
-        {**context["claim"], "bundle": context["bundle"]},
+        {
+            **context["claim"],
+            "bundle": context["bundle"],
+            "prediction": (context["match"] or {}).get("prediction"),
+            "roofline_summary": summarize_roofline(context.get("roofline")),
+        },
         context["profile"],
         context["match"].get("target_metric") if context["match"] else None,
         llm,
-        feedback=state.get("feedback"),
+        feedback=state.get("feedback") or service.rerun_feedback(experiment_id),
         companions=context["bundle"],
         baseline_flags=context["prerequisite_flags"],
     )
@@ -205,6 +225,17 @@ def node_plan(state: ExperimentState, report) -> dict:
     set_experiment(experiment_id, spec=spec, flag_name=spec["flag_name"], status="awaiting_approval")
     report("approve", "Spec ready — waiting for approval (Gate 2)", {"spec": spec})
     return {"feedback": None}
+
+
+def _reuse_spec(context: dict) -> dict:
+    """A previous run's spec, refreshed for the project as it is now (techniques, prerequisites, prediction)."""
+    from paperatlas.lab.planner import ExperimentSpec, unique_flag_name
+
+    spec = ExperimentSpec.model_validate(context["spec"])
+    spec.flag_name = unique_flag_name(spec.flag_name, {t.get("name") for t in context["profile"].get("techniques") or []})
+    spec.baseline_flags = list(context["prerequisite_flags"])
+    spec.prediction = (context["match"] or {}).get("prediction")
+    return spec.model_dump()
 
 
 def _gate_cancel_check(experiment_id: int, stage: str) -> None:
@@ -265,7 +296,14 @@ def node_build(state: ExperimentState, report) -> dict:
     base = (profile.get("repo") or {}).get("branch") or "main"
     worktree, branch = create_worktree(context["project"]["repo_path"], experiment_id, spec["flag_name"], base)
     set_experiment(experiment_id, status="building", branch=branch, worktree_path=str(worktree))
-    report("build", f"Worktree ready on branch {branch}", {"worktree": str(worktree)})
+    iteration = int(state.get("iteration") or 1)
+    previous = context["experiment"].get("build") or {}
+    feedback = state.get("feedback") if state.get("iterate") else None
+    report(
+        "build",
+        f"Worktree ready on branch {branch}" + (f" — iteration {iteration}: applying the analyst's changes" if feedback else ""),
+        {"worktree": str(worktree)},
+    )
     info = build_experiment(
         experiment_id,
         worktree,
@@ -275,9 +313,13 @@ def node_build(state: ExperimentState, report) -> dict:
         artifacts_dir(experiment_id),
         report,
         cancel_checker(experiment_id),
+        initial_feedback=feedback,
     )
+    info["iteration"] = iteration
+    if previous.get("iterations"):
+        info["iterations"] = previous["iterations"]
     set_experiment(experiment_id, build=info, status="smoke_testing")
-    return {}
+    return {"iterate": False, "feedback": None}
 
 
 @experiment_step("smoke")
@@ -300,7 +342,33 @@ def node_smoke(state: ExperimentState, report) -> dict:
     if context["spec"].get("lossless") and agreement is not None and agreement < 1.0:
         report("smoke", f"Lossless technique changed outputs on the smoke model (agreement {agreement:.2f})", None, level="warning")
     report("smoke", "Smoke A/B passed on the small model", None)
-    set_experiment(experiment_id, status="running")
+    expected = [m["name"] for m in context["spec"].get("mechanism") or [] if m.get("name")]
+    flag = context["spec"]["flag_name"]
+    reported = (((results.get("mechanism") or {}).get("variant") or {}).get("techniques") or {}).get(flag) or {}
+    missing = [name for name in expected if name not in reported]
+    if missing:
+        report("smoke", f"The technique did not report mechanism counters {missing}; the verdict will not be able to say why", None, level="warning")
+    set_experiment(experiment_id, status="tuning")
+    return {}
+
+
+@experiment_step("tune")
+def node_tune(state: ExperimentState, report) -> dict:
+    experiment_id = state["experiment_id"]
+    context = service.experiment_context(experiment_id)
+    spec = spec_defaults(context["spec"])
+    set_experiment(experiment_id, status="tuning")
+    chosen = tune(
+        experiment_id,
+        context["worktree"],
+        spec,
+        context["profile"],
+        artifacts_dir(experiment_id),
+        report,
+        cancel_checker(experiment_id),
+    )
+    build = service.experiment_context(experiment_id)["experiment"].get("build") or {}
+    set_experiment(experiment_id, build={**build, "tuning": chosen}, status="running")
     return {}
 
 
@@ -310,38 +378,61 @@ def node_run(state: ExperimentState, report) -> dict:
     context = service.experiment_context(experiment_id)
     set_experiment(experiment_id, status="running")
     ensure_protected_paths(context["worktree"], context["profile"])
-    run_benchmark(
-        experiment_id,
-        "eval",
-        context["worktree"],
-        context["spec"],
-        context["profile"],
-        artifacts_dir(experiment_id),
-        report,
-        cancel_checker(experiment_id),
+    spec = spec_defaults(context["spec"])
+    tuning = (context["experiment"].get("build") or {}).get("tuning") or {}
+    common = dict(
+        workdir=context["worktree"],
+        spec=spec,
+        profile=context["profile"],
+        artifacts=artifacts_dir(experiment_id),
+        report=report,
+        should_cancel=cancel_checker(experiment_id),
+        baseline_config=tuning.get("baseline") or None,
+        variant_config=tuning.get("variant") or None,
     )
+    run_benchmark(experiment_id, "eval", **common)
+    if needs_adoption_run(spec):
+        run_benchmark(experiment_id, "adopt", **common)
     set_experiment(experiment_id, status="judging")
     return {}
 
 
-@experiment_step("judge")
-def node_judge(state: ExperimentState, report) -> dict:
-    experiment_id = state["experiment_id"]
-    context = service.experiment_context(experiment_id)
-    results = service.latest_results(experiment_id, "eval")
-    verdict = judge(results, context["spec"], context["profile"])
-    report_path = artifacts_dir(experiment_id) / "report.html"
-    render_report(
-        report_path,
-        context["experiment"],
-        context["project"],
-        context["claim"],
-        context["paper"],
-        context["spec"],
-        context["experiment"].get("build") or {},
-        verdict,
-        results,
-    )
+def _strip_deltas(per_metric: dict[str, Any]) -> dict[str, Any]:
+    return {name: {k: v for k, v in m.items() if k != "deltas"} for name, m in (per_metric or {}).items()}
+
+
+def _iteration_entry(iteration: int, verdict: dict, analysis: dict, tuning: dict) -> dict[str, Any]:
+    adoption = verdict.get("adoption") or {}
+    return {
+        "iteration": iteration,
+        "verdict": verdict["verdict"],
+        "reason": verdict["reason"],
+        "median_delta_pct": verdict.get("median_delta_pct"),
+        "ci_low_pct": verdict.get("ci_low_pct"),
+        "ci_high_pct": verdict.get("ci_high_pct"),
+        "adoption_verdict": adoption.get("verdict"),
+        "adoption_median_delta_pct": adoption.get("median_delta_pct"),
+        "diagnosis": analysis.get("diagnosis"),
+        "summary": analysis.get("summary"),
+        "next_changes": analysis.get("next_changes") if analysis.get("worth_iterating") else "",
+        "tuned": {"baseline": tuning.get("baseline"), "variant": tuning.get("variant")} if tuning else None,
+    }
+
+
+def _score(entry: dict[str, Any]) -> float:
+    """Ratchet score of an iteration: the claim-check median, but only if quality held."""
+    if entry.get("quality_ok") is False or entry.get("median_delta_pct") is None:
+        return float("-inf")
+    return float(entry["median_delta_pct"])
+
+
+def _judge_runs(experiment_id: int, spec: dict, profile: dict, eval_run_id: Optional[int], adopt_run_id: Optional[int]):
+    results = service.run_results(eval_run_id) if eval_run_id else service.latest_results(experiment_id, "eval")
+    adopt = service.run_results(adopt_run_id) if adopt_run_id else None
+    return results, judge(results, spec, profile, adopt)
+
+
+def _save_verdict(experiment_id: int, verdict: dict, report_path) -> None:
     with session_scope() as session:
         row = session.scalar(select(Verdict).where(Verdict.experiment_id == experiment_id)) or Verdict(
             experiment_id=experiment_id
@@ -353,19 +444,121 @@ def node_judge(state: ExperimentState, report) -> dict:
         row.ci_high_pct = verdict["ci_high_pct"]
         row.claimed_gain_pct = verdict["claimed_gain_pct"]
         row.quality_ok = verdict["quality_ok"]
-        row.details = {k: v for k, v in verdict.items() if k not in ("per_metric",)} | {
-            "per_metric": {name: {k: v for k, v in m.items() if k != "deltas"} for name, m in verdict["per_metric"].items()}
-        }
+        details = {k: v for k, v in verdict.items() if k not in ("per_metric", "adoption")}
+        details["per_metric"] = _strip_deltas(verdict["per_metric"])
+        if verdict.get("adoption"):
+            details["adoption"] = {**verdict["adoption"], "per_metric": _strip_deltas(verdict["adoption"]["per_metric"])}
+        row.details = details
         row.report_path = str(report_path)
         session.add(row)
+
+
+@experiment_step("judge")
+def node_judge(state: ExperimentState, report) -> dict:
+    experiment_id = state["experiment_id"]
+    context = service.experiment_context(experiment_id)
+    spec = spec_defaults(context["spec"])
+    eval_run_id = service.latest_run_id(experiment_id, "eval")
+    adopt_run_id = service.latest_run_id(experiment_id, "adopt") if needs_adoption_run(spec) else None
+    if needs_adoption_run(spec) and adopt_run_id is None:
+        report("judge", "No adoption check results; judging the claim check only", None, level="warning")
+    results, verdict = _judge_runs(experiment_id, spec, context["profile"], eval_run_id, adopt_run_id)
+    build = context["experiment"].get("build") or {}
+    tuning = build.get("tuning") or {}
+    iteration = int(state.get("iteration") or build.get("iteration") or 1)
+    history = list(build.get("iterations") or [])
+    report("judge", "Analysing the result against the paper", None)
+    analysis = analyse(
+        verdict,
+        spec,
+        context["claim"],
+        tuning,
+        fidelity_notes(artifacts_dir(experiment_id)),
+        history,
+        build_default_llm_client(),
+        summarize_roofline(context.get("roofline")),
+    )
+    entry = _iteration_entry(iteration, verdict, analysis, tuning)
+    entry.update(
+        sha=git(context["worktree"], "rev-parse", "HEAD", check=False) or None,
+        eval_run_id=eval_run_id,
+        adopt_run_id=adopt_run_id,
+        quality_ok=verdict["quality_ok"],
+        analysis=analysis,
+    )
+    history.append(entry)
+    best = max(history, key=_score)
+    iterate = bool(analysis.get("worth_iterating")) and iteration < int(spec.get("max_iterations") or 1)
+    diagnosis = (analysis.get("diagnosis") or "").replace("_", " ")
+    report_path = artifacts_dir(experiment_id) / "report.html"
+    if iterate:
+        verdict.update(analysis=analysis, iteration=iteration, iterations=history, tuning=tuning or None)
+        _save_verdict(experiment_id, verdict, report_path)
+        set_experiment(experiment_id, status="building", build={**build, "iterations": history})
+        report(
+            "judge",
+            f"Iteration {iteration}: {verdict['verdict'].replace('_', ' ')} ({diagnosis}). Trying a fix: {analysis['next_changes'][:400]}",
+            {"analysis": analysis},
+        )
+        ratchet = ""
+        if best is not entry and _score(best) > _score(entry):
+            ratchet = (
+                f"\nNote: iteration {best['iteration']} (commit {best.get('sha') or '?'}) is still the best so far "
+                f"({best.get('median_delta_pct') or 0:+.1f}%); build on what worked there."
+            )
+        feedback = (
+            f"Iteration {iteration} result: claim check {verdict['verdict']} — {verdict['reason']}.\n"
+            f"Diagnosis ({analysis.get('diagnosis')}): {analysis.get('summary')}\n"
+            f"Evidence: {'; '.join(analysis.get('evidence') or [])}\n"
+            f"Change the existing implementation as follows: {analysis['next_changes']}\n"
+            f"Expected: {analysis.get('expected_effect')}{ratchet}"
+        )
+        return {"iterate": True, "iteration": iteration + 1, "feedback": feedback}
+
+    if best is not entry and _score(best) > _score(entry) and best.get("sha"):
+        # Keep the best iteration: revert the worktree to its commit and report its measurements.
+        git(context["worktree"], "reset", "--hard", best["sha"])
+        results, verdict = _judge_runs(experiment_id, spec, context["profile"], best.get("eval_run_id"), best.get("adopt_run_id"))
+        analysis = best.get("analysis") or analysis
+        diagnosis = (analysis.get("diagnosis") or "").replace("_", " ")
+        report(
+            "judge",
+            f"Kept iteration {best['iteration']} ({best.get('median_delta_pct') or 0:+.1f}%) and reverted later changes "
+            f"(iteration {iteration}: {entry.get('median_delta_pct') or 0:+.1f}%)",
+            {"kept_iteration": best["iteration"], "sha": best["sha"]},
+        )
+    kept = best if _score(best) > _score(entry) and best.get("sha") else entry
+    verdict.update(analysis=analysis, iteration=kept["iteration"], iterations=history, tuning=tuning or None)
+    render_report(
+        report_path,
+        context["experiment"],
+        context["project"],
+        context["claim"],
+        context["paper"],
+        spec,
+        build,
+        verdict,
+        results,
+    )
+    _save_verdict(experiment_id, verdict, report_path)
     pr_url = _maybe_open_pr(context, verdict, report)
     set_experiment(
         experiment_id,
         status="awaiting_decision",
-        build={**(context["experiment"].get("build") or {}), "pr_url": pr_url},
+        build={**build, "iterations": history, "kept_iteration": kept["iteration"], "pr_url": pr_url},
     )
-    report("decide", f"Verdict: {verdict['verdict'].replace('_', ' ')} — {verdict['reason']}. Waiting for merge/drop (Gate 3)", {"verdict": verdict["verdict"]})
-    return {}
+    adoption = verdict.get("adoption")
+    adopt_text = f" Adoption: {adoption['verdict'].replace('_', ' ')}." if adoption else ""
+    report(
+        "decide",
+        f"Verdict: {verdict['verdict'].replace('_', ' ')} — {verdict['reason']}.{adopt_text} Diagnosis: {diagnosis}. Waiting for merge/drop (Gate 3)",
+        {"verdict": verdict["verdict"], "analysis": analysis},
+    )
+    return {"iterate": False}
+
+
+def route_after_judge(state: ExperimentState) -> str:
+    return "build" if state.get("iterate") else "gate_merge"
 
 
 def _maybe_open_pr(context: dict, verdict: dict, report) -> Optional[str]:
@@ -459,6 +652,7 @@ def build_experiment_graph() -> StateGraph:
     graph.add_node("rejected", node_rejected)
     graph.add_node("build", node_build)
     graph.add_node("smoke", node_smoke)
+    graph.add_node("tune", node_tune)
     graph.add_node("run", node_run)
     graph.add_node("judge", node_judge)
     graph.add_node("gate_merge", node_gate_merge)
@@ -468,9 +662,10 @@ def build_experiment_graph() -> StateGraph:
     graph.add_conditional_edges("gate_spec", route_after_spec, ["build", "plan", "rejected"])
     graph.add_edge("rejected", END)
     graph.add_edge("build", "smoke")
-    graph.add_edge("smoke", "run")
+    graph.add_edge("smoke", "tune")
+    graph.add_edge("tune", "run")
     graph.add_edge("run", "judge")
-    graph.add_edge("judge", "gate_merge")
+    graph.add_conditional_edges("judge", route_after_judge, ["build", "gate_merge"])
     graph.add_edge("gate_merge", "finalize")
     graph.add_edge("finalize", END)
     return graph
@@ -481,6 +676,7 @@ REHYDRATE_AFTER = {
     "approving": ("gate_spec", {"decision": "approve"}),
     "building": ("gate_spec", {"decision": "approve"}),
     "smoke_testing": ("build", {}),
+    "tuning": ("smoke", {}),
     "judging": ("run", {}),
     "awaiting_decision": ("judge", {}),
     "finalizing": ("judge", {}),
@@ -492,6 +688,7 @@ STAGE_REHYDRATE = {
     "approve": ("plan", {}),
     "build": ("gate_spec", {"decision": "approve"}),
     "smoke": ("build", {}),
+    "tune": ("smoke", {}),
     "judge": ("run", {}),
     "decide": ("judge", {}),
 }
@@ -505,12 +702,14 @@ def rehydration_point(experiment_id: int) -> tuple[Optional[str], dict]:
             select(Run.id).where(Run.experiment_id == experiment_id, Run.kind == "smoke", Run.status == "done")
         )
     status = experiment.status
+    tuned = bool((experiment.build or {}).get("tuning"))
+    after_smoke = ("tune" if tuned else "smoke") if smoke_done else "build"
     if status in ("running", "waiting_gpu"):
-        return ("smoke" if smoke_done else "build"), {}
+        return after_smoke, {}
     if status in ("failed", "cancelled", "queued"):
         stage = service.stage_of(status, experiment.error)
         if stage == "run":
-            return ("smoke" if smoke_done else "build"), {}
+            return after_smoke, {}
         return STAGE_REHYDRATE.get(stage or "", (None, {}))
     return REHYDRATE_AFTER.get(status, (None, {}))
 

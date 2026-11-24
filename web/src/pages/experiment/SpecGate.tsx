@@ -1,12 +1,30 @@
 import { useState, type ReactNode } from 'react'
-import type { EditableField, Experiment, ExperimentSpec, Project } from '../../api/types'
+import type { EditableField, Experiment, ExperimentSpec, Project, ProtocolField } from '../../api/types'
 import { useEditSpec, useSpecDecision } from '../../api/queries'
 import { ConfirmDialog, Modal } from '../../components/Dialog'
 import { CheckIcon, GateIcon, XIcon } from '../../components/Icons'
 import { useToast } from '../../components/Toast'
 import { Button, Card, Chip, DefinitionList, Field, InlineError, cx, errorMessage } from '../../components/ui'
 import { formatDuration, formatPct, humanize } from '../../lib/format'
+import {
+  describeProtocolValue,
+  isProtocolField,
+  isProtocolV2,
+  isScalarField,
+  needsAdoptionCheck,
+  PROTOCOL_LABELS,
+  protocolOverrides,
+  protocolToForm,
+  rebaseProtocol,
+  specProtocolValue,
+  validateProtocol,
+  type ProtocolForm,
+} from '../../lib/protocol'
 import { diffOverrides, FIELD_LABELS, rebaseForm, specToForm, validateSpecForm, type SpecForm } from '../../lib/spec'
+import { ProtocolEditor, ProtocolSummary } from './Protocol'
+import { PredictionPanel } from '../../components/Prediction'
+
+const fieldLabel = (field: EditableField | ProtocolField) => (isProtocolField(field) ? PROTOCOL_LABELS[field] : FIELD_LABELS[field])
 
 function metricInfo(project: Project | undefined, name: string | undefined) {
   return project?.metrics?.find((metric) => metric.name === name)
@@ -152,9 +170,13 @@ function DecisionDialog({ open, onClose, kind, onSubmit, loading, error, overrid
 export function SpecGate({ experiment, project }: { experiment: Experiment; project?: Project }) {
   const toast = useToast()
   const spec = experiment.spec
-  const fields = experiment.editable_fields
+  const v2 = isProtocolV2(spec)
+  // Scalar fields are text inputs; protocol v2 fields (objects, lists, toggles) have their own editor.
+  const fields = experiment.editable_fields.filter(isScalarField)
+  const protocolFields = v2 ? experiment.editable_fields.filter(isProtocolField) : []
   const options = experiment.spec_options
   const [form, setForm] = useState<SpecForm>(() => specToForm(spec, fields))
+  const [protocolForm, setProtocolForm] = useState<ProtocolForm>(() => protocolToForm(spec))
   const [dialog, setDialog] = useState<'approve' | 'revise' | 'reject' | null>(null)
   const edit = useEditSpec(experiment.id)
   const decide = useSpecDecision(experiment.id)
@@ -162,22 +184,27 @@ export function SpecGate({ experiment, project }: { experiment: Experiment; proj
 
   // The server spec changed (a save landed, or someone else edited it): rebase the form instead of remounting it.
   const specKey = JSON.stringify(spec)
-  const [base, setBase] = useState(() => ({ key: specKey, form: specToForm(spec, fields) }))
+  const [base, setBase] = useState(() => ({ key: specKey, form: specToForm(spec, fields), protocol: protocolToForm(spec) }))
   if (base.key !== specKey) {
-    setBase({ key: specKey, form: specToForm(spec, fields) })
+    setBase({ key: specKey, form: specToForm(spec, fields), protocol: protocolToForm(spec) })
     setForm(rebaseForm(base.form, form, spec, fields))
+    setProtocolForm(rebaseProtocol(base.protocol, protocolForm, spec, protocolFields))
   }
 
-  const overrides = diffOverrides(spec, form, fields)
-  const changed = Object.keys(overrides) as EditableField[]
+  const protocolChanges = protocolOverrides(spec, protocolForm, protocolFields)
+  const protocolChanged = Object.keys(protocolChanges) as ProtocolField[]
+  const overrides: Record<string, unknown> = { ...diffOverrides(spec, form, fields), ...protocolChanges }
+  const changed = Object.keys(overrides) as (EditableField | ProtocolField)[]
   const errors = validateSpecForm(form, options)
-  const hasErrors = Object.keys(errors).length > 0
+  const protocolErrors = v2 ? validateProtocol(protocolForm) : {}
+  const hasErrors = Object.keys(errors).length > 0 || Object.keys(protocolErrors).length > 0
+  const preview = { ...spec, ...overrides } as Partial<ExperimentSpec>
   const set = (field: EditableField, value: string) => setForm((current) => ({ ...current, [field]: value }))
 
   const save = () => {
     if (edit.isPending) return
     edit.mutate(overrides, {
-      onSuccess: () => toast.success(`Spec saved: ${changed.map((field) => FIELD_LABELS[field]).join(', ')}`),
+      onSuccess: () => toast.success(`Spec saved: ${changed.map(fieldLabel).join(', ')}`),
       onError: (error) => toast.error(errorMessage(error)),
     })
   }
@@ -208,6 +235,11 @@ export function SpecGate({ experiment, project }: { experiment: Experiment; proj
     if (decide.isPending) return
     decide.reset()
     setDialog(kind)
+  }
+
+  const reset = () => {
+    setForm(specToForm(spec, fields))
+    setProtocolForm(protocolToForm(spec))
   }
 
   const fieldClass = (field: EditableField) =>
@@ -346,6 +378,27 @@ export function SpecGate({ experiment, project }: { experiment: Experiment; proj
           )}
         </div>
 
+        {!v2 && spec.prediction && (
+          <div className="mt-5 border-t border-line-muted pt-4 md:max-w-xl">
+            <PredictionPanel prediction={spec.prediction} claimed={spec.claimed_gain_pct} />
+          </div>
+        )}
+        {v2 && (
+          <div className="mt-5 space-y-3 border-t border-line-muted pt-4">
+            <ProtocolSummary spec={preview} changed={protocolChanged} />
+            {protocolFields.length > 0 && (
+              <ProtocolEditor
+                form={protocolForm}
+                onChange={(update) => setProtocolForm((current) => update(current))}
+                errors={protocolErrors}
+                changed={protocolChanged}
+                fields={protocolFields}
+                disabled={locked}
+              />
+            )}
+          </div>
+        )}
+
         <details className="mt-5 rounded-md border border-line-muted">
           <summary className="cursor-pointer px-3 py-2 text-sm font-semibold text-fg select-none hover:bg-canvas-subtle">
             Rest of the spec (read-only): technique, implementation notes, guardrails
@@ -367,7 +420,7 @@ export function SpecGate({ experiment, project }: { experiment: Experiment; proj
           <div className="flex flex-wrap items-center gap-2">
             {changed.length > 0 && (
               <>
-                <Button variant="invisible" onClick={() => setForm(specToForm(spec, fields))} disabled={edit.isPending}>
+                <Button variant="invisible" onClick={reset} disabled={edit.isPending}>
                   Reset
                 </Button>
                 <Button onClick={save} loading={edit.isPending} disabled={hasErrors || decide.isPending}>
@@ -393,8 +446,18 @@ export function SpecGate({ experiment, project }: { experiment: Experiment; proj
         error={dialog === 'approve' ? decide.error : null}
       >
         <p className="text-muted">
-          A coding agent will implement <code className="code-inline">{form.flag_name}</code> behind a flag on a new branch, then smoke-test and A/B
-          benchmark it ({form.rounds} rounds per arm on <code className="code-inline">{form.workload}</code>).
+          A coding agent will implement <code className="code-inline">{form.flag_name}</code> behind a flag on a new branch, then smoke-test
+          {v2 && preview.tune ? ', tune' : ''} and A/B benchmark it with {form.rounds} rounds per arm:{' '}
+          {v2 && needsAdoptionCheck(preview) ? (
+            <>
+              a claim check against the paper’s setup and an adoption check on <code className="code-inline">{form.workload}</code>
+            </>
+          ) : (
+            <>
+              on <code className="code-inline">{form.workload}</code>
+            </>
+          )}
+          {v2 && Number(preview.max_iterations) > 1 && <>, with up to {String(preview.max_iterations)} iterations when the result looks fixable</>}.
         </p>
         {changed.length > 0 && (
           <div className="mt-3">
@@ -402,8 +465,11 @@ export function SpecGate({ experiment, project }: { experiment: Experiment; proj
             <ul className="space-y-1 text-sm">
               {changed.map((field) => (
                 <li key={field}>
-                  <span className="text-muted">{FIELD_LABELS[field]}:</span> <del className="text-danger">{String(spec[field] ?? '')}</del> →{' '}
-                  <ins className="font-semibold text-success no-underline">{String(overrides[field])}</ins>
+                  <span className="text-muted">{fieldLabel(field)}:</span>{' '}
+                  <del className="text-danger">{isProtocolField(field) ? describeProtocolValue(field, specProtocolValue(field, spec)) : String(spec[field] ?? '')}</del> →{' '}
+                  <ins className="font-semibold text-success no-underline">
+                    {isProtocolField(field) ? describeProtocolValue(field, overrides[field]) : String(overrides[field])}
+                  </ins>
                 </li>
               ))}
             </ul>

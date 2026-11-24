@@ -680,3 +680,177 @@ BACKGROUND_PAPERS: dict[str, list[tuple[str, date, list[str], int, int, bool]]] 
         ("Tracing the Token: Distributed Tracing for LLM Serving", date(2026, 7, 23), ["openalex"], 5, 14, True),
     ],
 }
+
+
+# ---- v2 plain-language layer (explainer.version 2) ----------------------------------------
+# Mirrors the shape the LLM writes for real claims (see claim 288, DLoop): primer, headline_result,
+# today_vs_paper, paper_vs_here, what_we_do_differently, key_numbers, theme and a "before" diagram that
+# shares node ids with `diagram`. The other claims keep v1 explainers so the fallback rendering shows.
+
+_HERE_HW = "Apple M5 Pro (MPS), 64 GB unified memory with ~48 GB usable by the GPU."
+_HERE_MODEL = "Qwen3-30B-A3B-Instruct-2507 (mixture of experts, ~3B active per token), bfloat16."
+
+CLAIM_EXPLAINERS_V2: dict[str, dict[str, Any]] = {
+    "c_cache_order": {
+        "headline": "Serve requests that share a cached prefix back-to-back to raise cache hits",
+        "theme": "throughput",
+        "primer": {
+            "concept": "Before a model can answer, it reads the whole prompt once (prefill) and stores the result in a KV cache. "
+            "Chats often start with the same system prompt or history, so that stored work can be reused. "
+            "A radix tree is an index that finds the longest stored prefix for a new request.",
+            "analogy": "A barista who groups all the oat-milk orders together only has to fetch the oat milk once.",
+        },
+        "headline_result": {"value": "1.2×", "metric": "requests served per second", "versus": "first-come-first-served order", "direction": "up"},
+        "today_vs_paper": {
+            "today": "Requests run in arrival order. A request that could reuse a warm prefix often waits behind unrelated ones, and by its turn the prefix may have been evicted.",
+            "with_paper": "The scheduler looks up each waiting request's cached prefix and runs those that share one back-to-back, with an age limit so nobody starves.",
+        },
+        "paper_vs_here": [
+            {"aspect": "hardware", "paper": "NVIDIA A10G 24 GB.", "here": _HERE_HW, "effect": "More memory means fewer evictions, so ordering has less to rescue."},
+            {"aspect": "workload", "paper": "16 concurrent ShareGPT multi-turn chats.", "here": "concurrent_4: four streams with a shared system prompt.",
+             "effect": "A short queue leaves little room to reorder; expect a smaller gain."},
+            {"aspect": "runtime", "paper": "SGLang scheduler.", "here": "inference-lab scheduler hook on top of the merged radix_prefix_cache.",
+             "effect": "Same idea, but our prefix cache is newer and less tuned."},
+        ],
+        "what_we_do_differently": [
+            "Reuse the radix prefix cache merged in experiment #1 instead of SGLang's.",
+            "Add a 2-second age limit so the 4-stream benchmark cannot starve a request.",
+        ],
+        "key_numbers": [
+            {"value": "1.2×", "label": "Throughput vs FCFS", "meaning": "With 16 concurrent clients on an A10G."},
+            {"value": "+38%", "label": "Cache hit rate", "meaning": "More prompt tokens served from the KV cache instead of recomputed."},
+        ],
+        "diagram_before": dg(
+            "First-come-first-served",
+            [("q", "Waiting requests", "input"), ("pf", "Prefill uncached part", "model"), ("d", "Decode", "model"), ("o", "Responses", "output")],
+            [("q", "pf", "arrival order"), ("pf", "d"), ("d", "o")],
+        ),
+        "diagram": dg(
+            "Cache-aware ordering",
+            [("q", "Waiting requests", "input"), ("lk", "Look up cached prefix", "memory", True), ("ord", "Group by shared prefix", "step", True),
+             ("pf", "Prefill uncached part", "model"), ("d", "Decode", "model"), ("o", "Responses", "output")],
+            [("q", "lk"), ("lk", "ord", "prefix length"), ("ord", "pf", "warm first"), ("pf", "d"), ("d", "o")],
+        ),
+    },
+    "c_h2o": {
+        "headline": "Keep only the KV entries attention actually uses; evict the rest under a budget",
+        "theme": "memory",
+        "primer": {
+            "concept": "While generating, the model keeps a KV cache: a memory of every earlier token so it does not recompute them. "
+            "It grows with the conversation and can take more memory than the model itself on long prompts. "
+            "Attention, the step that decides which earlier tokens matter, uses only a few of them heavily.",
+            "analogy": "Like clearing a desk: keep the few documents you keep reaching for and the ones you just opened; file away the rest.",
+        },
+        "headline_result": {"value": "5× less", "metric": "KV cache memory at 8k context", "versus": "keeping the full KV cache", "direction": "down"},
+        "today_vs_paper": {
+            "today": "Every past token stays in the KV cache, so memory grows with the prompt and long prompts read a lot of cache each step.",
+            "with_paper": "Tokens are scored by how much attention they receive. Only the first few, the recent window and the top scorers stay, capped at 20% of the tokens.",
+        },
+        "paper_vs_here": [
+            {"aspect": "hardware", "paper": "Apple M2 Max, 96 GB.", "here": _HERE_HW, "effect": "Same kind of unified memory, so the memory saving should carry over."},
+            {"aspect": "model", "paper": "Llama-2-13B (dense).", "here": _HERE_MODEL, "effect": "Fewer KV heads per layer, so the cache is already smaller and the saving is worth less."},
+            {"aspect": "runtime", "paper": "Custom attention that exposes attention weights.", "here": "PyTorch scaled-dot-product attention, which hides the weights on MPS.",
+             "effect": "Getting the scores needs a slower attention path that may cancel the speed-up."},
+            {"aspect": "context", "paper": "8k-token prompts.", "here": "long_prompt workload (~6k tokens).", "effect": "Shorter prompts leave less to evict."},
+        ],
+        "what_we_do_differently": [
+            "Read attention scores from every 4th step only, to limit the cost of the slower attention path.",
+            "Gate on the exact-match quality set, since dropped tokens can change answers.",
+        ],
+        "key_numbers": [
+            {"value": "5×", "label": "Less KV memory", "meaning": "At a 20% budget with 8k-token prompts."},
+            {"value": "+29%", "label": "Decode throughput", "meaning": "Less cache to read per generated token."},
+            {"value": "20%", "label": "Tokens kept", "meaning": "The budget: first 4 tokens, a recent window and the heaviest hitters."},
+        ],
+        "diagram_before": dg(
+            "Full KV cache",
+            [("t", "New token", "input"), ("a", "Attention", "model"), ("c", "KV cache (all tokens)", "memory"), ("o", "Next token", "output")],
+            [("t", "a"), ("a", "o"), ("a", "c", "append"), ("c", "a", "next step", "loop")],
+        ),
+        "diagram": dg(
+            "Heavy-hitter KV eviction",
+            [("t", "New token", "input"), ("a", "Attention", "model"), ("s", "Score tokens", "step", True), ("b", "Over budget?", "decision", True),
+             ("e", "Evict low scores", "step", True), ("c", "KV cache (20% budget)", "memory"), ("o", "Next token", "output")],
+            [("t", "a"), ("a", "o"), ("a", "s", "weights"), ("s", "b"), ("b", "e", "yes"), ("e", "c"), ("b", "c", "no", "skip"), ("c", "a", "next step", "loop")],
+        ),
+    },
+    "c_prompt_lookup": {
+        "headline": "Draft tokens by copying from the prompt; verify them all in one pass",
+        "theme": "speed",
+        "primer": {
+            "concept": "A language model writes one token at a time, and each token needs a full pass over the large model. "
+            "Speculative decoding guesses several tokens cheaply and lets the model check all of them in one pass. "
+            "Summaries and answers about a document often repeat phrases from the prompt, so the prompt itself is a good source of guesses.",
+            "analogy": "When typing up meeting notes from a transcript, you copy whole sentences instead of retyping them word by word.",
+        },
+        "headline_result": {"value": "+45%", "metric": "decoding speed on document tasks", "versus": "normal one-token-at-a-time decoding", "direction": "up"},
+        "today_vs_paper": {
+            "today": "Even when the answer repeats a long passage of the prompt, the model still produces it one token per pass.",
+            "with_paper": "The last 3 tokens are looked up in the prompt; the next up to 10 prompt tokens become a draft that one model pass checks.",
+        },
+        "paper_vs_here": [
+            {"aspect": "hardware", "paper": "NVIDIA A100 80 GB.", "here": _HERE_HW, "effect": "Both are memory-bound in decode, so checking 10 tokens costs about as much as 1."},
+            {"aspect": "model", "paper": "Mistral-7B (dense).", "here": _HERE_MODEL, "effect": "Each token is already cheap on the MoE model, so verification overhead weighs more."},
+            {"aspect": "workload", "paper": "Summarisation and RAG question answering.", "here": "long_prompt and short_chat.", "effect": "Gains should show on long_prompt and vanish on open-ended chat."},
+        ],
+        "what_we_do_differently": [
+            "Reuse the existing speculative verifier instead of a new decode loop.",
+            "Report short_chat separately so a chat slowdown is not hidden by the document gain.",
+        ],
+        "key_numbers": [
+            {"value": "+45%", "label": "Decode speed", "meaning": "On input-grounded tasks with greedy decoding."},
+            {"value": "≤10", "label": "Draft tokens", "meaning": "Copied from the prompt per step."},
+        ],
+        "diagram_before": dg(
+            "One token per pass",
+            [("p", "Prompt", "input"), ("g", "Last token", "step"), ("m", "Model pass", "model"), ("o", "1 new token", "output")],
+            [("p", "m"), ("g", "m"), ("m", "o"), ("o", "g", "next", "loop")],
+        ),
+        "diagram": dg(
+            "Prompt lookup decoding",
+            [("p", "Prompt", "input"), ("g", "Last 3 tokens", "step"), ("l", "Find match in prompt", "memory", True), ("m", "Verify ≤10 tokens", "model", True), ("o", "Accepted tokens", "output")],
+            [("p", "l", "index"), ("g", "l"), ("l", "m", "draft"), ("m", "o"), ("o", "g", "next", "loop")],
+        ),
+    },
+    "c_dyn_tree": {
+        "headline": "Grow the draft tree where the drafter is confident; verify it in one pass",
+        "theme": "speed",
+        "primer": {
+            "concept": "A language model normally generates one token at a time, running the large model for each. Speculative decoding lets a small draft model propose "
+            "several tokens that the large model checks together. A draft tree proposes several alternative continuations at once, so one check can accept the best branch.",
+            "analogy": "A chess player only thinks several moves deep along the lines that look promising, instead of every possible line.",
+        },
+        "headline_result": {"value": "1.38×", "metric": "decoding speed", "versus": "EAGLE-2 with a fixed-shape draft tree", "direction": "up"},
+        "today_vs_paper": {
+            "today": "The draft tree has a fixed shape, so the large model checks many unlikely branches and misses likely long ones.",
+            "with_paper": "The tree grows only where the draft model is confident and is pruned elsewhere, so each check accepts more tokens.",
+        },
+        "paper_vs_here": [
+            {"aspect": "hardware", "paper": "NVIDIA H100 80 GB.", "here": _HERE_HW, "effect": "Tree attention masks fall back to a slower kernel on MPS, eating into the gain."},
+            {"aspect": "draft_model", "paper": "EAGLE-2 draft heads trained for Vicuna-13B.", "here": "The existing Qwen3-0.6B draft model.", "effect": "A weaker drafter accepts fewer tokens per check."},
+            {"aspect": "batch", "paper": "Batch size 1.", "here": "Batch 1 (short_chat) and 4 streams (concurrent_4).", "effect": "Wider trees cost more when four streams share the GPU."},
+        ],
+        "what_we_do_differently": [
+            "Keep the 0.6B draft model rather than training EAGLE heads.",
+            "Cap the tree at 32 nodes so the MoE target does not activate too many experts.",
+        ],
+        "key_numbers": [
+            {"value": "1.38×", "label": "Speed vs EAGLE-2", "meaning": "Vicuna-13B on MT-Bench, H100, batch 1."},
+            {"value": "≈4.1", "label": "Tokens accepted per check", "meaning": "Up from ≈3.6 with the fixed tree."},
+        ],
+        "diagram_before": dg(
+            "Fixed draft tree",
+            [("c", "Context", "input"), ("d", "Draft model", "model"), ("f", "Fixed-shape tree", "step"), ("v", "Target verify", "model"), ("o", "Accepted path", "output")],
+            [("c", "d"), ("d", "f"), ("f", "v", "tree + mask"), ("v", "o"), ("v", "d", "next step", "loop")],
+        ),
+        "diagram": dg(
+            "Confidence-pruned draft tree",
+            [("c", "Context", "input"), ("d", "Draft model", "model"), ("e", "Expand confident branches", "step", True), ("p", "Prune by confidence", "decision", True),
+             ("v", "Target verify", "model"), ("o", "Accepted path", "output")],
+            [("c", "d"), ("d", "e"), ("e", "p"), ("p", "v", "tree + mask"), ("v", "o"), ("v", "d", "next step", "loop")],
+        ),
+    },
+}
+
+for _key, _extra in CLAIM_EXPLAINERS_V2.items():
+    CLAIM_EXPLAINERS[_key] = {**CLAIM_EXPLAINERS[_key], **_extra, "version": 2}

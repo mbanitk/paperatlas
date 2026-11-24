@@ -115,6 +115,16 @@ def rematch(project_id: int, use_llm: bool = True) -> JobQueued:
     return JobQueued(job_id=enqueue("match", {"project_id": project_id, "use_llm": use_llm}), kind="match")
 
 
+@app.post("/projects/{project_id}/roofline", tags=["projects"], response_model=JobQueued)
+def roofline(project_id: int, model: str = "eval", rematch: bool = True) -> JobQueued:
+    """Measure the engine's roofline (GPU job), then re-rank claims with the cost model."""
+    _project_or_404(project_id)
+    if model not in ("eval", "smoke"):
+        raise service.ServiceError("model must be eval or smoke")
+    job_id = enqueue("project.roofline", {"project_id": project_id, "model": model, "rematch": rematch})
+    return JobQueued(job_id=job_id, kind="project.roofline")
+
+
 @app.get("/claims/{claim_id}/prerequisites", tags=["recommendations"])
 def prerequisites(claim_id: int) -> list[dict[str, Any]]:
     from paperatlas.distill.relations import prerequisite_chain
@@ -203,6 +213,18 @@ def decide_merge(experiment_id: int, body: MergeDecision) -> dict[str, Any]:
 @app.post("/experiments/{experiment_id}/cancel", tags=["experiments"])
 def cancel(experiment_id: int) -> dict[str, Any]:
     return service.cancel_experiment(experiment_id)
+
+
+class RerunRequest(BaseModel):
+    replan: bool = False
+    comment: Optional[str] = None
+
+
+@app.post("/experiments/{experiment_id}/rerun", tags=["experiments"])
+def rerun(experiment_id: int, body: Optional[RerunRequest] = None) -> dict[str, Any]:
+    """New experiment for the same claim on the current code; reuses the spec (Gate 2) unless replan=true."""
+    body = body or RerunRequest()
+    return service.rerun_experiment(experiment_id, body.replan, body.comment)
 
 
 @app.post("/experiments/{experiment_id}/retry", tags=["experiments"])

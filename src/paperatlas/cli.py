@@ -133,6 +133,13 @@ def cmd_project(args: argparse.Namespace) -> None:
     elif args.action == "profile":
         project = get_project(args.name or args.path)
         _print(register_project(project.repo_path, project.name))
+    elif args.action == "roofline":
+        from paperatlas.lab.costmodel import summarize
+        from paperatlas.lab.profiler import measure_roofline
+
+        project = get_project(args.name or args.path)
+        roofline = measure_roofline(project.id, lambda stage, message, data=None, **kw: print(f"[{stage}] {message}", flush=True))
+        print(summarize(roofline))
     else:
         from sqlalchemy import select
 
@@ -220,6 +227,13 @@ def cmd_control(args: argparse.Namespace) -> None:
     print(f"experiment {result['id']}: {result['status']}")
 
 
+def cmd_rerun(args: argparse.Namespace) -> None:
+    from paperatlas.lab import service
+
+    result = service.rerun_experiment(args.experiment, replan=args.replan, comment=args.comment)
+    print(f"experiment {result['id']} re-runs #{args.experiment}: {result['status']}")
+
+
 def cmd_watch(args: argparse.Namespace) -> None:
     from paperatlas.lab import service
 
@@ -242,6 +256,18 @@ def cmd_digest(args: argparse.Namespace) -> None:
     print(f"digest written to {path}")
 
 
+def cmd_batch(args: argparse.Namespace) -> None:
+    from datetime import datetime
+
+    from paperatlas.lab.batch import run_batch
+
+    def say(message: str) -> None:
+        print(f"{datetime.now():%H:%M:%S} {message}", flush=True)
+
+    run_batch(_project_id(args.project), limit=args.limit, poll_s=args.poll, say=say, current_engine_only=args.retest,
+              parallel=args.parallel, min_likelihood=args.min_likelihood)
+
+
 def cmd_report(args: argparse.Namespace) -> None:
     from paperatlas.lab.report import rerender_report
 
@@ -253,7 +279,8 @@ def cmd_explain(args: argparse.Namespace) -> None:
 
     project_id = _project_id(args.project) if args.project else None
     result = backfill(
-        project_id, args.claims, not args.no_papers, not args.no_topics, args.force, args.workers, maps=not args.no_maps
+        project_id, args.claims, not args.no_papers, not args.no_topics, args.force, args.workers, maps=not args.no_maps,
+        all_claims=args.all_claims,
     )
     print(
         f"explained {result['topics']} topics, {result['papers']} papers, {result['claims']} claims; "
@@ -325,7 +352,7 @@ def build_parser() -> argparse.ArgumentParser:
     claims.set_defaults(func=cmd_claims)
 
     project = r2e_sub.add_parser("project", help="target projects")
-    project.add_argument("action", choices=["add", "list", "profile"])
+    project.add_argument("action", choices=["add", "list", "profile", "roofline"])
     project.add_argument("path", nargs="?", help="repo path (add) or project name (profile)")
     project.add_argument("--name")
     project.set_defaults(func=cmd_project)
@@ -391,6 +418,12 @@ def build_parser() -> argparse.ArgumentParser:
         command.add_argument("experiment", type=int)
         command.set_defaults(func=cmd_control, control=control)
 
+    rerun = r2e_sub.add_parser("rerun", help="start a new experiment for the same claim on the current code")
+    rerun.add_argument("experiment", type=int)
+    rerun.add_argument("--replan", action="store_true", help="write a fresh spec from the paper instead of reusing it")
+    rerun.add_argument("--comment", default=None)
+    rerun.set_defaults(func=cmd_rerun)
+
     watch = r2e_sub.add_parser("watch", help="follow an experiment until its next gate")
     watch.add_argument("experiment", type=int)
     watch.set_defaults(func=cmd_watch)
@@ -400,6 +433,25 @@ def build_parser() -> argparse.ArgumentParser:
     digest.add_argument("--days", type=int, default=7)
     digest.set_defaults(func=cmd_digest)
 
+    batch = r2e_sub.add_parser(
+        "batch", help="run every claim testable on the project, one experiment at a time (auto-approves Gate 2)"
+    )
+    batch.add_argument("--project", required=True)
+    batch.add_argument("--limit", type=int, default=None)
+    batch.add_argument("--poll", type=float, default=20.0)
+    batch.add_argument(
+        "--parallel", type=int, default=1,
+        help="experiments in flight at once (builds run side by side; GPU benchmarks still take turns)",
+    )
+    batch.add_argument(
+        "--min-likelihood", choices=["likely", "marginal", "unknown"], default="unknown",
+        help="only claims the cost model rates at least this likely to gain here",
+    )
+    batch.add_argument(
+        "--retest", action="store_true", help="also re-run claims whose experiments predate the last project re-profile"
+    )
+    batch.set_defaults(func=cmd_batch)
+
     report = r2e_sub.add_parser("report", help="re-render an experiment's HTML report from stored results")
     report.add_argument("experiment", type=int)
     report.set_defaults(func=cmd_report)
@@ -407,6 +459,7 @@ def build_parser() -> argparse.ArgumentParser:
     explain = r2e_sub.add_parser("explain", help="generate plain-language explainers + diagrams")
     explain.add_argument("--project", help="also explain the top claims for this project")
     explain.add_argument("--claims", type=int, default=25, help="top N recommendations to explain")
+    explain.add_argument("--all-claims", action="store_true", help="every claim matched to the project (all cards)")
     explain.add_argument("--no-papers", action="store_true")
     explain.add_argument("--no-topics", action="store_true")
     explain.add_argument("--no-maps", action="store_true", help="skip concept maps (links between a paper's concepts)")

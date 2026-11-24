@@ -149,3 +149,201 @@ def test_report_charts_cover_data_and_explain_direction():
     verdict = judge(results, {**SPEC, "primary_metric": "ttft_ms", "direction": "lower_is_better"}, PROFILE)
     chart = effect_chart(verdict)
     assert "Did the claim hold?" in chart and "Paper claims +20.0%" in chart and "Measured +15" in chart
+
+
+V2_SPEC = {
+    **SPEC,
+    "flag_name": "dloop",
+    "workload": "short_chat",
+    "protocol_version": 2,
+    "paper_baseline": {"kind": "technique_mode", "description": "block drafting without DLoop"},
+    "paper_workload": {"matches": "GSM8K", "prompts": ["q1", "q2"], "max_new_tokens": 64, "concurrency": 1},
+    "mechanism": [{"name": "verifications", "meaning": "target passes", "paper_value": "-34%"}],
+}
+
+
+def test_claim_check_uses_the_papers_baseline_mode_and_adoption_uses_the_project_default(tmp_path):
+    from paperatlas.lab.protocol import comparison_arms, needs_adoption_run, tune_configs, workload_file
+
+    claim = comparison_arms({**V2_SPEC, "baseline_flags": ["prior"]}, "claim", {"k": 4}, {"k": 6})
+    assert claim["baseline_flags"] == ["prior", "dloop"] and claim["variant_flags"] == ["prior", "dloop"]
+    assert claim["params"] == {"baseline": {"dloop": {"mode": "baseline", "k": 4}}, "variant": {"dloop": {"mode": "method", "k": 6}}}
+    adopt = comparison_arms({**V2_SPEC, "baseline_flags": ["prior"]}, "adopt", {"k": 4}, {"k": 6})
+    assert adopt["baseline_flags"] == ["prior"] and adopt["params"]["baseline"] == {}
+    assert needs_adoption_run(V2_SPEC) and not needs_adoption_run(SPEC)
+    legacy = comparison_arms({**SPEC, "flag_name": "x"}, "claim")
+    assert legacy == {"baseline_flags": [], "variant_flags": ["x"], "params": {"baseline": {}, "variant": {}}}
+
+    configs = tune_configs([{"name": "k", "candidates": [4, 2, 6]}, {"name": "t", "candidates": [-0.5, -1.0]}])
+    assert configs == [{"k": 4, "t": -0.5}, {"k": 2, "t": -0.5}, {"k": 6, "t": -0.5}, {"k": 4, "t": -1.0}]
+    path = workload_file(V2_SPEC, tmp_path)
+    assert path.name == "paper_workload.json" and '"prompts": [' in path.read_text()
+
+
+def test_judge_fails_closed_without_quality_and_reports_mechanism_and_adoption():
+    no_quality = bench_results([100, 101, 99, 100], [130, 131, 129, 130])
+    no_quality["quality"] = {}
+    assert judge(no_quality, SPEC, PROFILE)["verdict"] == "inconclusive"
+
+    claim = bench_results([100, 101, 99, 100], [125, 126, 124, 125])
+    claim["mechanism"] = {
+        "baseline": {"tokens": 1000, "techniques": {"dloop": {"verifications": 300.0}}},
+        "variant": {"tokens": 1000, "techniques": {"dloop": {"verifications": 200.0, "loops": 50.0}}},
+    }
+    adopt = bench_results([100, 101, 99, 100], [96, 97, 95, 96])
+    verdict = judge(claim, V2_SPEC, PROFILE, adopt)
+    assert verdict["verdict"] == "reproduced"
+    assert verdict["adoption"]["verdict"] == "regression" and verdict["worth_adopting"] is False
+    rows = {row["name"]: row for row in verdict["mechanism"]["rows"]}
+    assert rows["verifications"]["change_pct"] == pytest.approx(-33.3, abs=0.1)
+    assert rows["verifications"]["paper_value"] == "-34%" and rows["loops"]["expected"] is False
+    assert verdict["mechanism"]["measured"] is True
+
+
+def test_planner_flag_collision_terminates_and_protocol_is_clamped():
+    from paperatlas.lab.planner import _normalize_protocol
+
+    long_name = "a" * 41
+    profile = {**PROFILE, "techniques": [{"name": long_name}, {"name": long_name[:38] + "_v2"}]}
+    spec = plan_experiment({"technique": long_name, "name": long_name}, profile, None, None)
+    assert spec["flag_name"] not in {t["name"] for t in profile["techniques"]} and len(spec["flag_name"]) <= 41
+
+    draft = {"paper_workload": {"prompts": ["p"] * 6, "max_new_tokens": 400, "concurrency": 20}, "knobs": [{"name": "k", "candidates": []}]}
+    _normalize_protocol(draft)
+    assert draft["paper_workload"]["max_new_tokens"] == 256 and draft["paper_workload"]["concurrency"] == 8
+    assert len(draft["paper_workload"]["prompts"]) == 4 and draft["knobs"] == []
+
+
+def test_reviewer_can_set_the_protocol_at_gate_2():
+    spec = plan_experiment({"technique": "draft tokens", "name": "dloop"}, PROFILE, None, None)
+    edited = apply_overrides(
+        spec,
+        {
+            "paper_baseline": {"kind": "technique_mode", "description": "block drafting without DLoop"},
+            "paper_workload": {"matches": "GSM8K", "prompts": ["q"] * 9, "max_new_tokens": 200, "concurrency": 1},
+            "knobs": [{"name": "Block Size", "candidates": ["4", "6"]}],
+        },
+        PROFILE,
+    )
+    assert edited["paper_baseline"]["kind"] == "technique_mode"
+    assert len(edited["paper_workload"]["prompts"]) == 6 and edited["knobs"][0] == {
+        "name": "block_size", "meaning": "", "paper_value": None, "candidates": [4, 6]}
+    with pytest.raises(ValueError):
+        apply_overrides(spec, {"paper_baseline": {"kind": "something_else"}}, PROFILE)
+
+
+ROOFLINE_OVERHEAD = {
+    "kind": "profile",
+    "model": {"quantization": "int8"},
+    "decode": {"tokens_per_s": 24.4, "ms_per_token": 41.0, "bandwidth_utilization": 0.26},
+    "forward_cost_ms": {"1": 41.0, "2": 48.0, "4": 60.0, "8": 85.0, "16": 140.0},
+    "draft": {"id": "Qwen3-0.6B", "ms_per_token": 20.0},
+}
+ROOFLINE_MLX = {
+    "kind": "profile",
+    "model": {"quantization": "4bit"},
+    "decode": {"tokens_per_s": 80.0, "ms_per_token": 12.5, "bandwidth_utilization": 0.75},
+    "forward_cost_ms": {"1": 12.5, "2": 13.0, "4": 14.0, "8": 17.0, "16": 24.0},
+    "batch_decode_tokens_per_s": {"1": 80.0, "2": 140.0, "4": 230.0, "8": 330.0},
+    "draft": {"id": "Qwen3.5-0.8B", "ms_per_token": 2.5},
+}
+
+
+def test_cost_model_explains_why_spec_decoding_lost_on_the_overhead_bound_engine():
+    from paperatlas.lab.costmodel import blocker, predict
+
+    claim = {"category": "speculative_decoding", "technique": "draft a block with a small draft model, verify once",
+             "card": {"effects": [{"metric": "speedup", "value": 41, "relative": True,
+                                   "baseline": "underlying speculative decoding method"}]}}
+    slow = predict(claim, ROOFLINE_OVERHEAD)
+    fast = predict(claim, ROOFLINE_MLX)
+    assert slow["bottleneck"] == "overhead" and slow["likelihood"] in ("unlikely", "marginal")
+    assert fast["likelihood"] == "likely" and fast["predicted_gain_pct"]["low"] > slow["predicted_gain_pct"]["high"]
+    assert any("incremental" in r for r in fast["reasons"])
+    lookup = predict({**claim, "technique": "prompt lookup n-gram drafting"}, ROOFLINE_OVERHEAD)
+    assert lookup["predicted_gain_pct"]["high"] > slow["predicted_gain_pct"]["high"]
+
+    already_4bit = predict({"category": "quantization", "technique": "4-bit weight quantization"}, ROOFLINE_MLX)
+    assert already_4bit["likelihood"] == "unlikely" and blocker(already_4bit).startswith("cost model:")
+    routing = predict({"category": "routing_load_balancing", "technique": "route across replicas"}, ROOFLINE_MLX)
+    assert routing["likelihood"] == "unlikely"
+    batching = predict({"category": "batching_scheduling", "technique": "continuous batching"}, ROOFLINE_MLX, ["concurrent_4"])
+    assert batching["likelihood"] == "likely" and batching["metric"] == "throughput_tokens_per_s"
+    assert predict(claim, None)["likelihood"] == "unknown"
+
+
+def test_json_extraction_tolerates_think_blocks_and_fences():
+    from paperatlas.llm.client import LLMError, extract_json_object
+
+    assert extract_json_object('<think>{"no": 1}</think>\n```json\n{"ok": true}\n```') == '{"ok": true}'
+    with pytest.raises(LLMError):
+        extract_json_object("no json here")
+
+
+def test_batch_keeps_at_most_parallel_experiments_in_flight(monkeypatch):
+    from paperatlas.lab import batch
+
+    state = {"running": {}, "next": 100, "max": 0, "ticks": 0}
+
+    def busy(project_id):
+        return [(i, "building") for i in state["running"]]
+
+    def create(project_id, claim_ids):
+        state["next"] += 1
+        state["running"][state["next"]] = 3  # settles after 3 polls
+        state["max"] = max(state["max"], len(state["running"]))
+        return [{"id": state["next"], "title": f"claim {claim_ids[0]}"}]
+
+    def tick(_):
+        state["ticks"] += 1
+        for i in list(state["running"]):
+            state["running"][i] -= 1
+            if state["running"][i] <= 0:
+                del state["running"][i]
+
+    monkeypatch.setattr(batch, "busy_experiments", busy)
+    # claim c becomes experiment 100 + c, so the claims still pending are those above the last one started
+    monkeypatch.setattr(batch, "pending_claims", lambda project_id, current, likelihood: [c for c in range(1, 6) if 100 + c > state["next"]])
+    monkeypatch.setattr(batch.service, "create_experiments", create)
+    monkeypatch.setattr(batch.service, "get_experiment", lambda i: {"id": i, "status": "awaiting_decision", "verdict": "partial"})
+    monkeypatch.setattr(batch.time, "sleep", tick)
+    started = batch.run_batch(1, parallel=2, say=lambda message: None)
+    assert [s["claim_id"] for s in started] == [1, 2, 3, 4, 5]
+    assert state["max"] == 2 and all(s["status"] == "awaiting_decision" for s in started)
+
+
+def test_measurements_wait_for_other_apps_to_release_the_gpu(monkeypatch):
+    from paperatlas.lab import gpu
+
+    readings = iter([90, 80, 85, 5, 0, 0])
+    monkeypatch.setattr(gpu, "gpu_utilization", lambda: next(readings))
+    monkeypatch.setattr(gpu.time, "sleep", lambda s: None)
+    said = []
+    result = gpu.wait_for_quiet_gpu(said.append, window_s=3)
+    assert result["quiet"] and result["background_gpu_pct"] < 15 and len(said) == 1
+    monkeypatch.setattr(gpu, "gpu_utilization", lambda: None)
+    assert gpu.wait_for_quiet_gpu() == {"checked": False}
+
+
+def test_json_extraction_accepts_raw_newlines_inside_strings():
+    import json
+
+    from paperatlas.llm.client import extract_json_object
+
+    assert json.loads(extract_json_object('{"a": "line one\nline two"}')) == {"a": "line one\nline two"}
+
+
+def test_cost_model_credits_only_gains_on_top_of_the_baseline_and_this_hardware():
+    from paperatlas.lab.costmodel import predict
+
+    roofline = {**ROOFLINE_MLX, "hardware": {"chip": "Apple M5 Pro"}, "baseline_features": ["continuous_batching"],
+                "measured": {"draft_acceptance": 0.35},
+                "forward_cost_ms": {"1": 10.8, "2": 13.3, "4": 18.8, "8": 29.1, "16": 48.6}}
+    batching = predict({"category": "batching_scheduling", "technique": "continuous batching"}, roofline, ["concurrent_4"])
+    assert batching["likelihood"] == "marginal" and batching["predicted_gain_pct"]["high"] <= 10
+    fp6 = predict({"category": "quantization", "technique": "FP6 block encoding for activations"}, roofline)
+    assert fp6["likelihood"] == "unlikely"
+    draft = predict({"category": "speculative_decoding", "technique": "draft model proposes a block, target verifies"}, roofline)
+    assert draft["likelihood"] == "unlikely" and any("measured acceptance" in r for r in draft["reasons"])
+    lookup = predict({"category": "speculative_decoding", "technique": "prompt lookup n-gram drafting"}, roofline)
+    assert lookup["predicted_gain_pct"]["high"] > draft["predicted_gain_pct"]["high"]

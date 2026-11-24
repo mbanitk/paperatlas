@@ -1,5 +1,6 @@
 import type { Effort, ExperimentStatus } from '../api/types'
 import { formatPct, humanize } from '../lib/format'
+import { isCostModelBlocker } from '../lib/roofline'
 import { statusInfo, verdictInfo, type Tone } from '../lib/stages'
 import { AlertIcon, CheckIcon, MergeIcon, XIcon } from './Icons'
 import { Chip, cx } from './ui'
@@ -73,10 +74,12 @@ export function CategoryChip({ category }: { category: string | null | undefined
 }
 
 export function BlockerBadge({ blocker }: { blocker: string }) {
+  // Cost-model blockers carry their reasons in parentheses; the chip shows the verdict, the tooltip the rest.
+  const label = isCostModelBlocker(blocker) ? blocker.replace(/\s*\(.*$/s, '') : blocker
   return (
-    <Chip tone="attention" title="Blocked on this project">
-      <AlertIcon size={12} />
-      {blocker}
+    <Chip tone="attention" className="max-w-full" title={`Blocked on this project: ${blocker}`}>
+      <AlertIcon size={12} className="shrink-0" />
+      <span className="truncate">{label}</span>
     </Chip>
   )
 }

@@ -3,7 +3,8 @@ import { Link, useSearchParams } from 'react-router'
 import { useCategories, useClaims, useProjects, useTopics } from '../../api/queries'
 import type { Claim, Project } from '../../api/types'
 import { ClaimChips } from '../../components/ClaimCard'
-import { ClaimDiagram, ClaimExplainDetails, ClaimLead, GenerateClaimExplainer, GlanceStrip } from '../../components/Explainers'
+import { GenerateClaimExplainer } from '../../components/Explainers'
+import { ClaimDeepDive, ClaimHeadline, ClaimOverview, ThemeBadge } from '../../components/ClaimStory'
 import { RelatedStrip } from '../../components/Related'
 import { SearchIcon, SparkIcon } from '../../components/Icons'
 import { Button, EmptyState, ErrorState, Loading, Pagination, PaperLink, useDebounced } from '../../components/ui'
@@ -11,28 +12,28 @@ import { formatScore, humanize, pluralize } from '../../lib/format'
 
 const LIMIT = 30
 
-function ClaimRow({ claim, project }: { claim: Claim; project?: Project }) {
+function ClaimRow({ claim, project, primerOpen = false }: { claim: Claim; project?: Project; primerOpen?: boolean }) {
   const [open, setOpen] = useState(false)
   const explainer = claim.explainer
   return (
     <li className="px-4 py-4">
-      <div className="min-w-0">
-        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-          <Link to={`/research/claims/${claim.id}`} className="font-semibold text-fg hover:text-accent">
-            {claim.name}
-          </Link>
-          {typeof claim.search_score === 'number' && <span className="text-[11px] text-muted">relevance {formatScore(claim.search_score)}</span>}
+      <div className="flex min-w-0 items-start gap-3">
+        <ThemeBadge claim={claim} explainer={explainer} className="hidden sm:inline-flex" />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+            <Link to={`/research/claims/${claim.id}`} className="font-semibold text-fg hover:text-accent">
+              {claim.name}
+            </Link>
+            {typeof claim.search_score === 'number' && <span className="text-[11px] text-muted">relevance {formatScore(claim.search_score)}</span>}
+          </div>
+          <div className="mt-0.5 truncate text-xs text-muted">
+            <PaperLink paperId={claim.paper_id} title={claim.paper_title ?? claim.paper_id} className="text-muted hover:text-accent" />
+          </div>
+          <ClaimHeadline claim={claim} explainer={explainer} />
         </div>
-        <div className="mt-0.5 truncate text-xs text-muted">
-          <PaperLink paperId={claim.paper_id} title={claim.paper_title ?? claim.paper_id} className="text-muted hover:text-accent" />
-        </div>
-        <ClaimLead claim={claim} explainer={explainer} />
       </div>
-      <div className="mt-3">
-        <GlanceStrip claim={claim} explainer={explainer} project={project} />
-      </div>
-      <RelatedStrip related={claim.related} claimId={claim.id} paperId={claim.paper_id} className="mt-3" />
-      <ClaimDiagram diagram={explainer?.diagram} className="mt-3" />
+      <ClaimOverview claim={claim} explainer={explainer} project={project} primerOpen={primerOpen} className="mt-3" />
+      {!explainer && <RelatedStrip related={claim.related} claimId={claim.id} paperId={claim.paper_id} className="mt-3" />}
       <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2">
         <ClaimChips claim={claim} />
         {explainer ? (
@@ -44,8 +45,9 @@ function ClaimRow({ claim, project }: { claim: Claim; project?: Project }) {
         )}
       </div>
       {open && explainer && (
-        <div className="mt-3 border-t border-line-muted pt-4">
-          <ClaimExplainDetails explainer={explainer} projectName={project?.name} showDiagram={false} />
+        <div className="mt-3 space-y-6 border-t border-line-muted pt-4">
+          <ClaimDeepDive explainer={explainer} projectName={project?.name} />
+          <RelatedStrip related={claim.related} claimId={claim.id} paperId={claim.paper_id} />
         </div>
       )}
     </li>
@@ -167,8 +169,8 @@ export default function Claims() {
               {claims.isFetching && ' · updating…'}
             </div>
             <ul className="divide-y divide-line-muted">
-              {claims.data.items.map((claim) => (
-                <ClaimRow key={claim.id} claim={claim} project={project} />
+              {claims.data.items.map((claim, index) => (
+                <ClaimRow key={claim.id} claim={claim} project={project} primerOpen={index === 0} />
               ))}
             </ul>
           </>

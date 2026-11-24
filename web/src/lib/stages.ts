@@ -1,12 +1,13 @@
 import type { ExperimentStatus, Gate, Stage, StageName, StageState, TriageStatus, VerdictName } from '../api/types'
 
-export const STAGES: StageName[] = ['plan', 'approve', 'build', 'smoke', 'run', 'judge', 'decide']
+export const STAGES: StageName[] = ['plan', 'approve', 'build', 'smoke', 'tune', 'run', 'judge', 'decide']
 
 export const STAGE_LABELS: Record<StageName, string> = {
   plan: 'Plan',
   approve: 'Approve spec',
   build: 'Build',
   smoke: 'Smoke test',
+  tune: 'Tune',
   run: 'A/B run',
   judge: 'Judge',
   decide: 'Merge / drop',
@@ -21,6 +22,7 @@ export const STAGE_OF_STATUS: Partial<Record<ExperimentStatus, StageName>> = {
   approving: 'build',
   building: 'build',
   smoke_testing: 'smoke',
+  tuning: 'tune',
   waiting_gpu: 'run',
   running: 'run',
   judging: 'judge',
@@ -44,6 +46,7 @@ export const ACTIVE_STATUSES: ExperimentStatus[] = [
   'approving',
   'building',
   'smoke_testing',
+  'tuning',
   'waiting_gpu',
   'running',
   'judging',
@@ -60,6 +63,18 @@ export const canCancel = (status: ExperimentStatus) => !isTerminalStatus(status)
 /** Failed/cancelled experiments, and blocked ones whose prerequisite was not merged (they then run without it). */
 export const canRetry = (status: ExperimentStatus, error?: string | null) =>
   status === 'failed' || status === 'cancelled' || (status === 'blocked' && !!error)
+
+/** Statuses the backend lets you re-run (service.RERUNNABLE_STATUSES): a new experiment for the same claim on the current code. */
+export const RERUNNABLE_STATUSES: readonly ExperimentStatus[] = ['awaiting_decision', 'merged', 'dropped', 'rejected', 'failed', 'cancelled']
+export const canRerun = (status: ExperimentStatus) => RERUNNABLE_STATUSES.includes(status)
+
+/** Ids of the experiments that re-run `id`, oldest first. */
+export function rerunsOf(id: number, experiments: readonly { id: number; rerun_of_experiment_id?: number | null }[] | undefined): number[] {
+  return (experiments ?? [])
+    .filter((item) => item.rerun_of_experiment_id === id)
+    .map((item) => item.id)
+    .sort((a, b) => a - b)
+}
 
 export type Tone = 'neutral' | 'accent' | 'attention' | 'success' | 'danger' | 'done' | 'muted'
 
@@ -78,6 +93,7 @@ const STATUS_INFO: Record<ExperimentStatus, StatusInfo> = {
   approving: { label: 'Approved — starting', tone: 'accent', busy: true },
   building: { label: 'Building', tone: 'accent', busy: true },
   smoke_testing: { label: 'Smoke testing', tone: 'accent', busy: true },
+  tuning: { label: 'Tuning', tone: 'accent', busy: true },
   waiting_gpu: { label: 'Waiting for GPU', tone: 'neutral', busy: true },
   running: { label: 'Running A/B', tone: 'accent', busy: true },
   judging: { label: 'Judging', tone: 'accent', busy: true },

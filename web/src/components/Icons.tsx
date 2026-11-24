@@ -1,4 +1,4 @@
-import type { SVGProps } from 'react'
+import type { ReactNode, SVGProps } from 'react'
 
 type IconProps = SVGProps<SVGSVGElement> & { size?: number }
 
@@ -186,3 +186,195 @@ export const GraphIcon = (p: IconProps) => (
     <path d="M5.2 7.2l5.6-2.6M5.2 8.8l5.6 2.6" />
   </Svg>
 )
+
+// ---- explainer icons: themes, comparison aspects and diagram node kinds ------------------------
+// Path sets are exported separately so the SVG flow diagrams can draw the same glyphs inside nodes.
+
+const glyph = (paths: ReactNode) => (p: IconProps) => <Svg {...p}>{paths}</Svg>
+
+export const GLYPHS = {
+  speed: (
+    <>
+      <path d="M2.5 11.5a5.5 5.5 0 1 1 11 0" />
+      <path d="M8 11.5l3-3.5" />
+      <circle cx="8" cy="11.5" r="0.6" fill="currentColor" />
+    </>
+  ),
+  latency: (
+    <>
+      <circle cx="8" cy="9" r="5" />
+      <path d="M8 6.5V9l1.8 1.2M6.5 1.8h3M8 1.8V4" />
+    </>
+  ),
+  throughput: (
+    <>
+      <path d="M2 4.5h9M2 8h12M2 11.5h9" />
+      <path d="M9.5 2.5l2 2-2 2M12 6l2 2-2 2M9.5 9.5l2 2-2 2" />
+    </>
+  ),
+  memory: (
+    <>
+      <rect x="2" y="4.5" width="12" height="7" rx="1" />
+      <path d="M4.5 4.5v-2M7 4.5v-2M9.5 4.5v-2M12 4.5v-2M4.5 11.5v2M7 11.5v2M9.5 11.5v2M12 11.5v2M5 7.2h6v1.6H5z" />
+    </>
+  ),
+  quality: (
+    <>
+      <circle cx="8" cy="8" r="5.8" />
+      <circle cx="8" cy="8" r="3.2" />
+      <circle cx="8" cy="8" r="0.7" fill="currentColor" />
+    </>
+  ),
+  cost: (
+    <>
+      <circle cx="8" cy="8" r="5.8" />
+      <path d="M10 5.8C9.6 5.3 8.9 5 8 5c-1.2 0-2 .6-2 1.5S6.8 7.8 8 8s2 .7 2 1.5S9.2 11 8 11c-.9 0-1.6-.3-2-.8M8 3.8V5M8 11v1.2" />
+    </>
+  ),
+  reliability: (
+    <>
+      <path d="M8 1.8l5 2v4c0 3-2.2 5.2-5 6.4C5.2 13 3 10.8 3 7.8v-4z" />
+      <path d="M5.8 8l1.6 1.6 2.9-3" />
+    </>
+  ),
+  lightbulb: (
+    <>
+      <path d="M5.8 11.2C4.6 10.3 3.8 9 3.8 7.4a4.2 4.2 0 1 1 8.4 0c0 1.6-.8 2.9-2 3.8v1.3H5.8z" />
+      <path d="M6.2 14.3h3.6" />
+    </>
+  ),
+  chip: (
+    <>
+      <rect x="4" y="4" width="8" height="8" rx="1" />
+      <rect x="6.3" y="6.3" width="3.4" height="3.4" rx="0.4" />
+      <path d="M6 2v2M10 2v2M6 12v2M10 12v2M2 6h2M2 10h2M12 6h2M12 10h2" />
+    </>
+  ),
+  cube: (
+    <>
+      <path d="M8 1.8l5.5 3v6.4L8 14.2l-5.5-3V4.8z" />
+      <path d="M2.5 4.8L8 7.8l5.5-3M8 7.8v6.4" />
+    </>
+  ),
+  runtime: (
+    <>
+      <rect x="1.8" y="2.8" width="12.4" height="10.4" rx="1.5" />
+      <path d="M4.5 6.5l2 1.7-2 1.7M8.2 10h3" />
+    </>
+  ),
+  workload: (
+    <>
+      <path d="M2.5 13.5h11" />
+      <path d="M4 13.5V9M7 13.5V5M10 13.5V7.5M13 13.5V3" />
+    </>
+  ),
+  baseline: (
+    <>
+      <path d="M8 2.5v11M4.5 13.5h7M3 5h10" />
+      <path d="M3 5l-1.5 4a1.6 1.6 0 0 0 3 0zM13 5l-1.5 4a1.6 1.6 0 0 0 3 0z" />
+    </>
+  ),
+  draft: (
+    <>
+      <path d="M10.5 2.5l3 3-7.5 7.5H3v-3z" />
+      <path d="M9 4l3 3" />
+    </>
+  ),
+  batch: (
+    <>
+      <path d="M8 2l6 3-6 3-6-3z" />
+      <path d="M2 8l6 3 6-3M2 11l6 3 6-3" />
+    </>
+  ),
+  context: (
+    <>
+      <path d="M4 1.8h5.5L12.5 5v9.2H4z" />
+      <path d="M9.5 1.8V5h3M6 8h4.5M6 10.5h4.5" />
+    </>
+  ),
+  input: (
+    <>
+      <path d="M9 3.5h3.5a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H9" />
+      <path d="M2 8h8M7 5l3 3-3 3" />
+    </>
+  ),
+  step: (
+    <>
+      <circle cx="8" cy="8" r="2.2" />
+      <path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6L5 5M11 11l1.4 1.4M3.6 12.4L5 11M11 5l1.4-1.4" />
+    </>
+  ),
+  decision: (
+    <>
+      <path d="M8 1.8L14.2 8 8 14.2 1.8 8z" />
+      <path d="M6.6 6.5a1.5 1.5 0 1 1 1.9 1.4c-.4.2-.5.5-.5.9M8 10.8v.01" />
+    </>
+  ),
+  database: (
+    <>
+      <ellipse cx="8" cy="3.8" rx="5" ry="1.8" />
+      <path d="M3 3.8v8.4c0 1 2.2 1.8 5 1.8s5-.8 5-1.8V3.8M3 8c0 1 2.2 1.8 5 1.8s5-.8 5-1.8" />
+    </>
+  ),
+  output: (
+    <>
+      <path d="M7 3.5H3.5a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1H7" />
+      <path d="M6 8h8M11 5l3 3-3 3" />
+    </>
+  ),
+  table: (
+    <>
+      <rect x="2" y="2.5" width="12" height="11" rx="1.2" />
+      <path d="M2 6h12M2 9.5h12M6.5 6v7.5" />
+    </>
+  ),
+  arrowUp: <path d="M8 13V3M4 7l4-4 4 4" />,
+  arrowDown: <path d="M8 3v10M4 9l4 4 4-4" />,
+  arrowRight: <path d="M3 8h10M9 4l4 4-4 4" />,
+  checklist: (
+    <>
+      <rect x="2" y="2" width="12" height="12" rx="2" />
+      <path d="M5 8.2l2 2 4-4.2" />
+    </>
+  ),
+  compare: (
+    <>
+      <rect x="1.8" y="3" width="5.4" height="10" rx="1" />
+      <rect x="8.8" y="3" width="5.4" height="10" rx="1" />
+      <path d="M3.5 6h2M3.5 8.5h2M10.5 6h2M10.5 8.5h2" />
+    </>
+  ),
+  flow: (
+    <>
+      <rect x="1.5" y="5.5" width="4" height="5" rx="1" />
+      <rect x="10.5" y="5.5" width="4" height="5" rx="1" />
+      <path d="M5.5 8h5M8.5 6l2 2-2 2" />
+    </>
+  ),
+  hash: <path d="M6 2.5l-1.5 11M11.5 2.5L10 13.5M2.8 5.8h11M2.2 10.2h11" />,
+} satisfies Record<string, ReactNode>
+
+export type GlyphName = keyof typeof GLYPHS
+
+export const SpeedIcon = glyph(GLYPHS.speed)
+export const LatencyIcon = glyph(GLYPHS.latency)
+export const ThroughputIcon = glyph(GLYPHS.throughput)
+export const MemoryIcon = glyph(GLYPHS.memory)
+export const QualityIcon = glyph(GLYPHS.quality)
+export const CostIcon = glyph(GLYPHS.cost)
+export const ReliabilityIcon = glyph(GLYPHS.reliability)
+export const LightbulbIcon = glyph(GLYPHS.lightbulb)
+export const ChipIcon = glyph(GLYPHS.chip)
+export const CubeIcon = glyph(GLYPHS.cube)
+export const ArrowUpIcon = glyph(GLYPHS.arrowUp)
+export const ArrowDownIcon = glyph(GLYPHS.arrowDown)
+export const ArrowRightIcon = glyph(GLYPHS.arrowRight)
+export const ChecklistIcon = glyph(GLYPHS.checklist)
+export const CompareIcon = glyph(GLYPHS.compare)
+export const FlowIcon = glyph(GLYPHS.flow)
+export const HashIcon = glyph(GLYPHS.hash)
+
+/** Any glyph by name (themes, aspects, node kinds). */
+export function Glyph({ name, ...props }: IconProps & { name: GlyphName }) {
+  return <Svg {...props}>{GLYPHS[name]}</Svg>
+}

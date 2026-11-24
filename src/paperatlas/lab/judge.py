@@ -99,7 +99,8 @@ def metric_directions(profile: dict[str, Any]) -> dict[str, str]:
     }
 
 
-def judge(results: dict[str, Any], spec: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any]:
+def evaluate(results: dict[str, Any], spec: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any]:
+    """Verdict for one A/B run against the spec's claimed gain and success threshold."""
     directions = metric_directions(profile)
     primary = spec["primary_metric"]
     structural = arm_problems(results, spec)
@@ -147,6 +148,7 @@ def judge(results: dict[str, Any], spec: dict[str, Any], profile: dict[str, Any]
     if stats is not None:
         median, low, high = stats["median_improvement_pct"], stats["ci_low_pct"], stats["ci_high_pct"]
     expected_pairs = len(_arm(results, "baseline"))
+    target = max(threshold, REPRODUCED_FRACTION_OF_CLAIM * claimed) if claimed else threshold
     if structural:
         verdict, reason = "inconclusive", "; ".join(structural)
     elif problems:
@@ -158,7 +160,6 @@ def judge(results: dict[str, Any], spec: dict[str, Any], profile: dict[str, Any]
     elif unmeasured:
         verdict, reason = "inconclusive", "quality not measured: " + "; ".join(unmeasured)
     else:
-        target = max(threshold, REPRODUCED_FRACTION_OF_CLAIM * claimed) if claimed else threshold
         if high < 0:
             verdict, reason = "regression", f"{primary} got worse (95% CI {low:+.1f}% to {high:+.1f}%)"
         elif low <= 0:
@@ -177,6 +178,7 @@ def judge(results: dict[str, Any], spec: dict[str, Any], profile: dict[str, Any]
         "ci_high_pct": high,
         "claimed_gain_pct": claimed,
         "success_threshold_pct": threshold,
+        "target_pct": target,
         "quality_ok": not problems and not unmeasured,
         "worth_adopting": verdict in ("reproduced", "partial") and median is not None and median >= threshold,
         "per_metric": per_metric,
@@ -187,3 +189,77 @@ def judge(results: dict[str, Any], spec: dict[str, Any], profile: dict[str, Any]
         "model": results.get("model"),
         "workload": results.get("workload"),
     }
+
+
+def mechanism_table(results: dict[str, Any], spec: dict[str, Any]) -> dict[str, Any]:
+    """The technique's counters per arm, normalised per 1k generated tokens, next to the paper's values."""
+    flag = spec.get("flag_name")
+    mechanism = results.get("mechanism") or {}
+    expected = {m["name"]: m for m in spec.get("mechanism") or [] if m.get("name")}
+
+    def arm(name: str) -> tuple[dict[str, float], int]:
+        data = mechanism.get(name) or {}
+        return ((data.get("techniques") or {}).get(flag) or {}), int(data.get("tokens") or 0)
+
+    (base, base_tokens), (var, var_tokens) = arm("baseline"), arm("variant")
+    names = list(expected) + sorted((set(base) | set(var)) - set(expected))
+    rows = []
+    for name in names:
+        b, v = base.get(name), var.get(name)
+        b_rate = b / base_tokens * 1000 if b is not None and base_tokens else None
+        v_rate = v / var_tokens * 1000 if v is not None and var_tokens else None
+        change = (v_rate - b_rate) / b_rate * 100 if b_rate and v_rate is not None else None
+        meta = expected.get(name) or {}
+        rows.append(
+            {
+                "name": name,
+                "meaning": meta.get("meaning"),
+                "paper_value": meta.get("paper_value"),
+                "expected": name in expected,
+                "baseline_total": b,
+                "variant_total": v,
+                "baseline_per_1k_tokens": b_rate,
+                "variant_per_1k_tokens": v_rate,
+                "change_pct": change,
+            }
+        )
+    missing = [n for n in expected if var.get(n) is None]
+    return {
+        "rows": rows,
+        "missing": missing,
+        "measured": bool(expected) and not missing,
+        "tokens": {"baseline": base_tokens, "variant": var_tokens},
+    }
+
+
+ADOPTION_VERDICTS = {"reproduced": "worth_adopting", "partial": "small_gain"}
+
+
+def judge(
+    results: dict[str, Any],
+    spec: dict[str, Any],
+    profile: dict[str, Any],
+    adopt_results: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    """Claim verdict from the claim check (the paper's baseline, a paper-like workload) and, when it ran separately,
+    an adoption verdict (the method vs the project's default on the project's workload)."""
+    verdict = evaluate(results, spec, profile)
+    verdict["comparison"] = results.get("comparison") or {"kind": "claim", "baseline": "project default"}
+    verdict["mechanism"] = mechanism_table(results, spec)
+    verdict["adoption"] = None
+    if adopt_results:
+        adopt = evaluate(adopt_results, {**spec, "claimed_gain_pct": None}, profile)
+        verdict["adoption"] = {
+            "verdict": ADOPTION_VERDICTS.get(adopt["verdict"], adopt["verdict"]),
+            "reason": adopt["reason"],
+            "median_delta_pct": adopt["median_delta_pct"],
+            "ci_low_pct": adopt["ci_low_pct"],
+            "ci_high_pct": adopt["ci_high_pct"],
+            "quality_ok": adopt["quality_ok"],
+            "quality_problems": adopt["quality_problems"],
+            "workload": adopt_results.get("workload"),
+            "per_metric": adopt["per_metric"],
+            "mechanism": mechanism_table(adopt_results, spec),
+        }
+        verdict["worth_adopting"] = verdict["adoption"]["verdict"] == "worth_adopting"
+    return verdict

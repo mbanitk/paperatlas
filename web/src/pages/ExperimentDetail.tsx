@@ -1,24 +1,28 @@
 import { useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Link, useParams } from 'react-router'
+import { Link, useNavigate, useParams } from 'react-router'
 import { api } from '../api/client'
-import { keys, useCancelExperiment, useClaim, useExperiment, useProject, useRetryExperiment } from '../api/queries'
+import { keys, useCancelExperiment, useClaim, useExperiment, useExperiments, useProject, useRerunExperiment, useRetryExperiment } from '../api/queries'
 import { mergeEvents, useEventStream } from '../api/sse'
 import type { Experiment, LabEvent, Project } from '../api/types'
 import { CategoryChip, LiveDot, MODE_INFO, ModeBadge, StatusChip, VerdictBadge } from '../components/Badges'
 import { ClaimCardDetails } from '../components/ClaimCard'
-import { ConfirmDialog } from '../components/Dialog'
+import { ConfirmDialog, Modal } from '../components/Dialog'
 import { EventTimeline } from '../components/EventTimeline'
 import { AlertIcon, BranchIcon, ClockIcon, ChevronDown, ChevronRight, GateIcon, RefreshIcon, SparkIcon, StopIcon } from '../components/Icons'
-import { ClaimDiagram, ClaimExplainDetails, ClaimLead, GenerateClaimExplainer, GlanceStrip } from '../components/Explainers'
+import { GenerateClaimExplainer } from '../components/Explainers'
+import { ClaimDeepDive, ClaimHeadline, ClaimOverview, ThemeBadge } from '../components/ClaimStory'
 import { RelatedStrip } from '../components/Related'
+import { PredictionPanel } from '../components/Prediction'
 import { Stepper } from '../components/Stepper'
 import { useToast } from '../components/Toast'
-import { Banner, Button, Card, ErrorState, ExternalLink, Loading, PageHeader, PaperLink, RelativeTime, errorMessage } from '../components/ui'
+import { Banner, Button, Card, Chip, ErrorState, ExternalLink, InlineError, Loading, PageHeader, PaperLink, RelativeTime, cx, errorMessage } from '../components/ui'
 import { formatPct } from '../lib/format'
-import { canCancel, canRetry, isActiveStatus, normalizeStages, statusInfo } from '../lib/stages'
+import { canCancel, canRerun, canRetry, isActiveStatus, normalizeStages, rerunsOf, statusInfo } from '../lib/stages'
 import { BuildCard, LogCard, ProjectFacts, RunsCard } from './experiment/Sections'
 import { SpecDetails, SpecGate } from './experiment/SpecGate'
+import { ProtocolSummary } from './experiment/Protocol'
+import { adoptionInfo, currentIteration, isProtocolV2, protocolOf } from '../lib/protocol'
 import { VerdictPanel } from './experiment/VerdictPanel'
 
 function useExperimentEvents(id: number, enabled: boolean) {
@@ -56,10 +60,14 @@ function ClaimUnderTest({ experiment, project }: { experiment: Experiment; proje
   const toggle = (panel: 'explain' | 'card') => setOpen((current) => (current === panel ? null : panel))
   return (
     <div className="space-y-3">
-      <ClaimLead claim={subject} explainer={explainer} />
-      <GlanceStrip claim={subject} explainer={explainer} project={project} />
+      <div className="flex min-w-0 items-start gap-3">
+        <ThemeBadge claim={subject} explainer={explainer} className="hidden sm:inline-flex" />
+        <div className="min-w-0 flex-1 [&>p:first-child]:mt-0 [&>div:first-child]:mt-0">
+          <ClaimHeadline claim={subject} explainer={explainer} />
+        </div>
+      </div>
+      <ClaimOverview claim={subject} explainer={explainer} project={project} />
       <RelatedStrip related={experiment.related ?? claim.data?.related} claimId={experiment.claim_id} paperId={experiment.paper_id} />
-      <ClaimDiagram diagram={explainer?.diagram} />
       <div className="flex flex-wrap items-center gap-1">
         {explainer ? (
           <Button size="sm" variant="invisible" onClick={() => toggle('explain')} aria-expanded={open === 'explain'} icon={<SparkIcon size={14} />}>
@@ -74,7 +82,7 @@ function ClaimUnderTest({ experiment, project }: { experiment: Experiment; proje
       </div>
       {open === 'explain' && explainer && (
         <div className="border-t border-line-muted pt-4">
-          <ClaimExplainDetails explainer={explainer} projectName={experiment.project.name} showDiagram={false} />
+          <ClaimDeepDive explainer={explainer} projectName={experiment.project.name} />
         </div>
       )}
       {open === 'card' && (
@@ -194,8 +202,111 @@ function BlockedBanner({ experiment }: { experiment: Experiment }) {
   )
 }
 
+const RERUN_OPTIONS = [
+  {
+    replan: false,
+    label: 'Reuse this spec (review at Gate 2)',
+    description: 'Same hypothesis, protocol and knobs on the project’s current code. Stops at Gate 2 so you can edit it before anything is built.',
+  },
+  {
+    replan: true,
+    label: 'Re-plan from the paper (use this result as feedback)',
+    description: 'The planner writes a fresh spec from the paper, using this verdict and diagnosis as feedback. Also stops at Gate 2.',
+  },
+]
+
+function RerunDialog({ experiment, onClose }: { experiment: Experiment; onClose: () => void }) {
+  const rerun = useRerunExperiment(experiment.id)
+  const navigate = useNavigate()
+  const toast = useToast()
+  const [replan, setReplan] = useState(false)
+  const [comment, setComment] = useState('')
+  // isPending only updates on the next render; the ref also stops a second click in the same tick.
+  const submitting = useRef(false)
+  const busy = rerun.isPending
+  const submit = () => {
+    if (submitting.current || busy) return
+    submitting.current = true
+    rerun.mutate(
+      { replan, comment: comment.trim() || null },
+      {
+        onSuccess: (created) => {
+          toast.success(`Re-run started as experiment #${created.id}`)
+          onClose()
+          navigate(`/experiments/${created.id}`)
+        },
+        onSettled: () => {
+          submitting.current = false
+        },
+      },
+    )
+  }
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`Re-run experiment #${experiment.id}?`}
+      size="sm"
+      dismissable={!busy}
+      footer={
+        <>
+          <Button onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button variant="primary" icon={<RefreshIcon />} onClick={submit} loading={busy} disabled={busy}>
+            Start re-run
+          </Button>
+        </>
+      }
+    >
+      <form
+        onSubmit={(event) => {
+          event.preventDefault()
+          submit()
+        }}
+      >
+        <p className="mb-3 text-muted">
+          Starts a new experiment for the same claim on the project’s current code. This experiment, its verdict and its branch stay as they are.
+        </p>
+        <fieldset disabled={busy} className="space-y-1.5">
+          <legend className="sr-only">Spec for the re-run</legend>
+          {RERUN_OPTIONS.map((option) => (
+            <label
+              key={String(option.replan)}
+              className={cx(
+                'flex cursor-pointer gap-2.5 rounded-md border bg-canvas px-3 py-2',
+                replan === option.replan ? 'border-accent ring-1 ring-accent' : 'border-line hover:border-subtle',
+                busy && 'cursor-not-allowed opacity-70',
+              )}
+            >
+              <input type="radio" name="rerun-mode" checked={replan === option.replan} onChange={() => setReplan(option.replan)} className="mt-0.5 accent-accent" />
+              <span className="min-w-0">
+                <span className="block text-sm font-medium">{option.label}</span>
+                <span className="block text-xs text-muted">{option.description}</span>
+              </span>
+            </label>
+          ))}
+          <label htmlFor="rerun-comment" className="label mt-3 block">
+            Comment (optional)
+          </label>
+          <textarea
+            id="rerun-comment"
+            className="input min-h-16"
+            value={comment}
+            onChange={(event) => setComment(event.target.value)}
+            placeholder="e.g. engine ported to MLX"
+            maxLength={500}
+          />
+        </fieldset>
+        <button type="submit" hidden />
+      </form>
+      <InlineError error={rerun.error} />
+    </Modal>
+  )
+}
+
 function Actions({ experiment }: { experiment: Experiment }) {
-  const [dialog, setDialog] = useState<'cancel' | 'retry' | null>(null)
+  const [dialog, setDialog] = useState<'cancel' | 'retry' | 'rerun' | null>(null)
   const cancel = useCancelExperiment(experiment.id)
   const retry = useRetryExperiment(experiment.id)
   const toast = useToast()
@@ -206,11 +317,23 @@ function Actions({ experiment }: { experiment: Experiment }) {
           Retry
         </Button>
       )}
+      <span
+        title={
+          canRerun(experiment.status)
+            ? 'Start a new experiment for the same claim on the current code'
+            : `Re-run is available once the experiment has a verdict or has ended (it is ${statusInfo(experiment.status).label.toLowerCase()})`
+        }
+      >
+        <Button icon={<RefreshIcon />} onClick={() => setDialog('rerun')} disabled={!canRerun(experiment.status)}>
+          Re-run
+        </Button>
+      </span>
       {canCancel(experiment.status) && (
         <Button variant="danger" icon={<StopIcon />} onClick={() => setDialog('cancel')}>
           Cancel experiment
         </Button>
       )}
+      {dialog === 'rerun' && <RerunDialog experiment={experiment} onClose={() => setDialog(null)} />}
       <ConfirmDialog
         open={dialog === 'cancel'}
         onClose={() => setDialog(null)}
@@ -268,7 +391,10 @@ function GateCallout({ experiment }: { experiment: Experiment }) {
   if (experiment.status === 'awaiting_decision')
     return (
       <Banner tone="attention" icon={<GateIcon className="text-attention" />} action={<a href="#gate" className="text-sm font-semibold">See verdict ↓</a>}>
-        <strong>Gate 3 — merge or drop?</strong> The judge measured {formatPct(experiment.median_delta_pct)} vs the paper’s {formatPct(experiment.claimed_gain_pct, 0)}.
+        <strong>Gate 3 — merge or drop?</strong> The judge measured {formatPct(experiment.median_delta_pct)} vs the paper’s {formatPct(experiment.claimed_gain_pct, 0)}
+        {experiment.verdict_detail?.details?.adoption
+          ? `; adoption check: ${adoptionInfo(experiment.verdict_detail.details.adoption.verdict).label.toLowerCase()} (${formatPct(experiment.verdict_detail.details.adoption.median_delta_pct)} vs the project default).`
+          : '.'}
       </Banner>
     )
   if (experiment.status === 'approving' || experiment.status === 'queued' || experiment.status === 'finalizing')
@@ -284,6 +410,7 @@ export default function ExperimentDetail() {
   const id = Number(useParams().id)
   const experiment = useExperiment(id)
   const project = useProject(experiment.data?.project_id)
+  const siblings = useExperiments({ project_id: experiment.data?.project_id })
   const { events, status: streamStatus } = useExperimentEvents(id, Number.isFinite(id) && !experiment.isError)
 
   if (!Number.isFinite(id)) return <ErrorState error={new Error('Invalid experiment id')} />
@@ -301,6 +428,9 @@ export default function ExperimentDetail() {
   const data = experiment.data
   const stages = normalizeStages(data.stages, data.status, data.stage)
   const busy = isActiveStatus(data.status) && !['awaiting_approval', 'awaiting_decision'].includes(data.status)
+  const iteration = currentIteration(data)
+  const reruns = rerunsOf(data.id, siblings.data)
+  const maxIterations = protocolOf(data.spec).max_iterations
 
   return (
     <>
@@ -314,6 +444,23 @@ export default function ExperimentDetail() {
             <span>
               · created <RelativeTime iso={data.created_at} />
             </span>
+            {data.rerun_of_experiment_id != null && (
+              <span>
+                · <RefreshIcon size={12} className="inline align-[-1px]" /> Re-run of{' '}
+                <Link to={`/experiments/${data.rerun_of_experiment_id}`}>#{data.rerun_of_experiment_id}</Link>
+              </span>
+            )}
+            {reruns.length > 0 && (
+              <span>
+                · Re-runs:{' '}
+                {reruns.map((rerunId, index) => (
+                  <span key={rerunId}>
+                    {index > 0 && ', '}
+                    <Link to={`/experiments/${rerunId}`}>#{rerunId}</Link>
+                  </span>
+                ))}
+              </span>
+            )}
             {data.triage_id && (
               <span>
                 · from <Link to={`/recommendations?project=${data.project_id}&triage=${data.triage_id}`}>research scan #{data.triage_id}</Link>
@@ -373,6 +520,20 @@ export default function ExperimentDetail() {
         {data.status === 'cancelled' && data.error && <Banner tone="muted">{data.error}</Banner>}
 
         <Card bodyClassName="px-4 py-5">
+          {iteration > 1 && (
+            <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-muted">
+              <Chip tone="done">
+                Iteration {iteration}
+                {maxIterations >= iteration && ` of ${maxIterations}`}
+              </Chip>
+              the judge diagnosed a fixable gap and sent the build back with a change
+              {data.build.kept_iteration != null && data.build.kept_iteration < iteration && (
+                <span className="font-medium text-fg">
+                  · iteration {data.build.kept_iteration} scored best and was kept; later changes were reverted
+                </span>
+              )}
+            </div>
+          )}
           <Stepper
             stages={stages}
             waitingLabel={
@@ -401,6 +562,13 @@ export default function ExperimentDetail() {
             <LogCard experimentId={data.id} live={busy} />
             {data.status !== 'awaiting_approval' && Object.keys(data.spec).length > 0 && (
               <Card title="Experiment spec">
+                {isProtocolV2(data.spec) ? (
+                  <ProtocolSummary spec={data.spec} className="mb-5 border-b border-line-muted pb-5" />
+                ) : (
+                  data.spec.prediction && (
+                    <PredictionPanel prediction={data.spec.prediction} claimed={data.spec.claimed_gain_pct} className="mb-5 md:max-w-xl" />
+                  )
+                )}
                 <SpecDetails spec={data.spec} project={project.data} includeEditable />
               </Card>
             )}

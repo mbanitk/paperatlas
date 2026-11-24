@@ -18,7 +18,15 @@ function ExperimentRow({ experiment, highlight }: { experiment: ExperimentSummar
       className={cx('cursor-pointer border-b border-line-muted last:border-b-0 hover:bg-canvas-subtle', highlight && 'bg-accent-subtle/60')}
       onClick={open}
     >
-      <td className="py-3 pr-2 pl-4 align-top text-xs text-muted tabular-nums">#{experiment.id}</td>
+      <td className="py-3 pr-2 pl-4 align-top text-xs whitespace-nowrap text-muted tabular-nums">
+        #{experiment.id}
+        {experiment.rerun_of_experiment_id != null && (
+          <span className="ml-1 font-semibold text-accent" title={`Re-run of #${experiment.rerun_of_experiment_id}`}>
+            <span aria-hidden="true">↻</span>
+            <span className="sr-only">re-run of #{experiment.rerun_of_experiment_id}</span>
+          </span>
+        )}
+      </td>
       <td className="w-full max-w-0 min-w-56 py-3 pr-3 align-top">
         <Link to={`/experiments/${experiment.id}`} className="font-semibold text-fg hover:text-accent" onClick={(event) => event.stopPropagation()}>
           {experiment.title}

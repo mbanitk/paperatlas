@@ -282,10 +282,8 @@ function Generated({ explainer }: { explainer: { generated_at?: string | null; m
 export function ClaimDiagram({ diagram, className }: { diagram: ClaimExplainer['diagram']; className?: string }) {
   if (!diagram?.nodes?.length) return null
   return (
-    <div className={cx('overflow-x-auto rounded-md border border-line-muted bg-canvas px-3 py-3', className)}>
-      <div className="min-w-[420px]">
-        <FlowDiagram diagram={diagram} />
-      </div>
+    <div className={cx('rounded-lg border border-line-muted bg-canvas px-3.5 py-3', className)}>
+      <FlowDiagram diagram={diagram} />
     </div>
   )
 }

@@ -213,9 +213,22 @@ def rerender_report(experiment_id: int) -> Optional[Path]:
     from paperatlas.lab.judge import judge
     from paperatlas.lab.workspace import artifacts_dir
 
+    from paperatlas.lab.protocol import needs_adoption_run, spec_defaults
+
     context = service.experiment_context(experiment_id)
+    spec = spec_defaults(context["spec"])
     results = service.latest_results(experiment_id, "eval")
-    verdict = judge(results, context["spec"], context["profile"])
+    adopt = None
+    if needs_adoption_run(spec):
+        try:
+            adopt = service.latest_results(experiment_id, "adopt")
+        except service.ServiceError:
+            adopt = None
+    verdict = judge(results, spec, context["profile"], adopt)
+    stored = service.get_experiment(experiment_id).get("verdict_detail") or {}
+    for key in ("analysis", "iteration", "iterations", "tuning"):
+        if stored.get("details", {}).get(key) is not None:
+            verdict[key] = stored["details"][key]
     return render_report(
         artifacts_dir(experiment_id) / "report.html",
         context["experiment"],

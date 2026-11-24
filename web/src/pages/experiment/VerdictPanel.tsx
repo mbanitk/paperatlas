@@ -9,6 +9,10 @@ import { CheckIcon, ExternalIcon, FileIcon, GateIcon, MergeIcon, XIcon } from '.
 import { useToast } from '../../components/Toast'
 import { Button, Card, Chip, DefinitionList, Field, InlineError, cx, errorMessage } from '../../components/ui'
 import { displayValue, formatCI, formatNumber, formatPct, formatWorkload, humanize } from '../../lib/format'
+import { adoptionInfo, currentIteration, protocolOf } from '../../lib/protocol'
+import { predictionMatchesMetric } from '../../lib/roofline'
+import { PredictedLine } from '../../components/Prediction'
+import { DiagnosisCallout, IterationsTimeline, MechanismTableView, TuningTable, VerdictTiles } from './VerdictV2'
 
 const REPRODUCED_FRACTION_OF_CLAIM = 0.7
 
@@ -162,6 +166,12 @@ export function VerdictPanel({ experiment, verdict, project }: { experiment: Exp
   const problems = details.quality_problems ?? []
   const environment = details.environment ?? {}
   const reportUrl = api.lab.reportUrl(experiment.id)
+  // Protocol v2 verdicts carry the claim/adoption split, counters, tuning, the analyst's diagnosis and iterations.
+  const v2 = !!(details.comparison || details.adoption || details.analysis || details.mechanism?.rows?.length)
+  const iterations = details.iterations ?? []
+  const maxIterations = protocolOf(experiment.spec).max_iterations
+  const settled = !['building', 'smoke_testing', 'tuning', 'waiting_gpu', 'running', 'judging'].includes(experiment.status)
+  const adoption = details.adoption
 
   return (
     <Card
@@ -183,6 +193,25 @@ export function VerdictPanel({ experiment, verdict, project }: { experiment: Exp
         )
       }
     >
+      {v2 ? (
+        <div className="space-y-5">
+          <VerdictTiles experiment={experiment} verdict={verdict} />
+          {details.analysis && (
+            <DiagnosisCallout analysis={details.analysis} iteration={details.iteration ?? currentIteration(experiment)} maxIterations={maxIterations} settled={settled} />
+          )}
+          {details.mechanism && <MechanismTableView mechanism={details.mechanism} />}
+          {details.tuning && (
+            <TuningTable
+              tuning={details.tuning}
+              metric={verdict.primary_metric}
+              direction={experiment.spec.direction}
+              knobOrder={protocolOf(experiment.spec).knobs.map((knob) => knob.name)}
+            />
+          )}
+          <IterationsTimeline iterations={iterations} kept={experiment.build.kept_iteration} />
+        </div>
+      ) : (
+        <>
       <div className="flex flex-wrap items-center gap-3">
         <VerdictBadge verdict={verdict.verdict} size="lg" />
         {details.reason && <span className="text-sm text-fg">{details.reason}</span>}
@@ -204,15 +233,34 @@ export function VerdictPanel({ experiment, verdict, project }: { experiment: Exp
       </div>
 
       <div className="mt-4 rounded-md border border-line-muted px-3 py-2">
-        <ImprovementChart median={verdict.median_delta_pct} low={verdict.ci_low_pct} high={verdict.ci_high_pct} claimed={claimed} threshold={threshold} target={target} />
+        <ImprovementChart
+          median={verdict.median_delta_pct}
+          low={verdict.ci_low_pct}
+          high={verdict.ci_high_pct}
+          claimed={claimed}
+          threshold={threshold}
+          target={target}
+          predicted={predictionMatchesMetric(experiment.spec.prediction, verdict.primary_metric) ? experiment.spec.prediction!.predicted_gain_pct : null}
+        />
       </div>
+      <PredictedLine prediction={experiment.spec.prediction} metric={verdict.primary_metric} className="mt-1.5" />
+        </>
+      )}
 
       {details.per_metric && Object.keys(details.per_metric).length > 0 && (
-        <div className="mt-4">
-          <h3 className="mb-2 text-sm font-semibold">Per-metric results</h3>
+        <div className="mt-5">
+          <h3 className="mb-2 text-sm font-semibold">{v2 ? 'Per-metric results · claim check' : 'Per-metric results'}</h3>
           <MetricsTable perMetric={details.per_metric} primary={verdict.primary_metric} project={project} />
           <p className="mt-1 text-xs text-muted">Improvement is positive when the metric moved in its better direction; faded values are not significant (CI includes 0).</p>
         </div>
+      )}
+      {adoption?.per_metric && Object.keys(adoption.per_metric).length > 0 && (
+        <details className="mt-3 rounded-md border border-line-muted">
+          <summary className="cursor-pointer px-3 py-2 text-sm font-semibold select-none hover:bg-canvas-subtle">Per-metric results · adoption check</summary>
+          <div className="border-t border-line-muted p-3">
+            <MetricsTable perMetric={adoption.per_metric} primary={verdict.primary_metric} project={project} />
+          </div>
+        </details>
       )}
 
       <div className="mt-4 grid gap-4 md:grid-cols-2">
@@ -268,8 +316,12 @@ export function VerdictPanel({ experiment, verdict, project }: { experiment: Exp
       {gateOpen && (
         <div className="mt-5 flex flex-col gap-3 border-t border-line-muted pt-4 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm text-muted">
-            {details.worth_adopting ? 'The improvement clears the success bar.' : 'The improvement does not clear the success bar.'} Merging keeps the flag off by
-            default.
+            {adoption
+              ? `Adoption check: ${adoptionInfo(adoption.verdict).label.toLowerCase()} (${formatPct(adoption.median_delta_pct, 1)} vs the project default).`
+              : details.worth_adopting
+                ? 'The improvement clears the success bar.'
+                : 'The improvement does not clear the success bar.'}{' '}
+            Merging keeps the flag off by default.
           </p>
           <div className="flex gap-2">
             <Button variant="danger" icon={<XIcon />} onClick={() => setDialog('drop')}>

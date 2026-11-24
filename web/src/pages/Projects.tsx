@@ -6,6 +6,7 @@ import type { Project } from '../api/types'
 import { ConfirmDialog, Modal } from '../components/Dialog'
 import { BranchIcon, FlaskIcon, RefreshIcon, ServerIcon, SparkIcon } from '../components/Icons'
 import { JobStatus } from '../components/JobStatus'
+import { RooflineCard, RooflineSummary } from '../components/Roofline'
 import { useToast } from '../components/Toast'
 import {
   Banner,
@@ -375,6 +376,9 @@ function ProjectDetail({ project }: { project: Project }) {
           {jobs.data && jobs.data.length > 1 && <p className="mt-1 text-xs text-muted">{pluralize(jobs.data.length - 1, 'earlier re-match job')} on the System page.</p>}
         </div>
       )}
+      <div className="mb-6">
+        <RooflineCard project={project} />
+      </div>
       <ProjectProfile project={project} />
       <RematchDialog project={project} open={rematchOpen} onClose={() => setRematchOpen(false)} />
     </Card>
@@ -439,6 +443,9 @@ export default function Projects() {
                   <div className="mt-1 text-xs text-muted">
                     {pluralize(project.metrics?.length ?? 0, 'metric')} · {pluralize(project.techniques?.length ?? 0, 'technique')} · profiled{' '}
                     <RelativeTime iso={project.profiled_at} />
+                  </div>
+                  <div className="mt-1 text-xs text-muted">
+                    <RooflineSummary roofline={project.roofline} />
                   </div>
                 </button>
               )

@@ -1,19 +1,26 @@
 import { formatPct } from '../lib/format'
+import { formatGainRange } from '../lib/roofline'
 import { cx } from './ui'
 
 /**
  * Horizontal % axis with the measured 95% CI (bar), the median (dot), the success threshold and the
  * paper's claimed gain (markers). Positive = better in the metric's own direction.
  */
-export function ImprovementChart({ median, low, high, claimed, threshold, target }: {
+export function ImprovementChart({ median, low, high, claimed, threshold, target, predicted }: {
   median: number | null | undefined
   low: number | null | undefined
   high: number | null | undefined
   claimed?: number | null
   threshold?: number | null
   target?: number | null
+  /** the cost model's predicted range on this engine, drawn as a band behind the measurement */
+  predicted?: { low: number; high: number } | null
 }) {
-  const values = [median, low, high, claimed, threshold, target, 0].filter((v): v is number => typeof v === 'number' && Number.isFinite(v))
+  const band =
+    predicted && Number.isFinite(predicted.low) && Number.isFinite(predicted.high)
+      ? { low: Math.min(predicted.low, predicted.high), high: Math.max(predicted.low, predicted.high) }
+      : null
+  const values = [median, low, high, claimed, threshold, target, band?.low, band?.high, 0].filter((v): v is number => typeof v === 'number' && Number.isFinite(v))
   if (median === null || median === undefined || !values.length) return null
   const min = Math.min(...values)
   const max = Math.max(...values)
@@ -21,10 +28,10 @@ export function ImprovementChart({ median, low, high, claimed, threshold, target
   const lo = min - span * 0.08
   const hi = max + span * 0.08
   const width = 560
-  const height = 100
+  const height = band ? 112 : 100
   const pad = 14
   const x = (value: number) => pad + ((value - lo) / (hi - lo)) * (width - 2 * pad)
-  const axisY = 60
+  const axisY = band ? 72 : 60
   const markers: { value: number; label: string; color: string; dash?: boolean }[] = []
   if (typeof threshold === 'number') markers.push({ value: threshold, label: `success bar ${formatPct(threshold, 0)}`, color: '#59636e', dash: true })
   if (typeof target === 'number' && Math.abs(target - (threshold ?? Number.NaN)) > 0.05)
@@ -32,6 +39,7 @@ export function ImprovementChart({ median, low, high, claimed, threshold, target
   if (typeof claimed === 'number') markers.push({ value: claimed, label: `paper claims ${formatPct(claimed, 0)}`, color: '#8250df' })
   const tone = (low ?? median) > 0 ? '#1a7f37' : (high ?? median) < 0 ? '#d1242f' : '#59636e'
   const anchor = (px: number) => (px > width - 90 ? 'end' : px < 90 ? 'start' : 'middle')
+  const bandLabelY = 11 + markers.length * 12
   const showZeroLabel = Math.abs(x(median) - x(0)) > 34
 
   return (
@@ -39,8 +47,27 @@ export function ImprovementChart({ median, low, high, claimed, threshold, target
       viewBox={`0 0 ${width} ${height}`}
       className="h-auto w-full"
       role="img"
-      aria-label={`Measured improvement ${formatPct(median)} (95% CI ${formatPct(low)} to ${formatPct(high)})${typeof claimed === 'number' ? `, paper claims ${formatPct(claimed)}` : ''}`}
+      aria-label={`Measured improvement ${formatPct(median)} (95% CI ${formatPct(low)} to ${formatPct(high)})${typeof claimed === 'number' ? `, paper claims ${formatPct(claimed)}` : ''}${band ? `, predicted on this engine ${formatPct(band.low)} to ${formatPct(band.high)}` : ''}`}
     >
+      {band && (
+        <g>
+          <rect
+            x={x(band.low)}
+            y={axisY - 13}
+            width={Math.max(3, x(band.high) - x(band.low))}
+            height={26}
+            rx={4}
+            fill="#0969da"
+            fillOpacity={0.1}
+            stroke="#0969da"
+            strokeOpacity={0.55}
+            strokeDasharray="4 3"
+          />
+          <text x={x((band.low + band.high) / 2)} y={Math.min(bandLabelY, axisY - 17)} textAnchor={anchor(x((band.low + band.high) / 2))} fontSize={10.5} fill="#0969da" fontWeight={600}>
+            predicted here {formatGainRange(band)}
+          </text>
+        </g>
+      )}
       <line x1={pad} x2={width - pad} y1={axisY} y2={axisY} stroke="#d1d9e0" strokeWidth={2} />
       <line x1={x(0)} x2={x(0)} y1={axisY - 10} y2={axisY + 10} stroke="#818b98" strokeWidth={1} />
       {showZeroLabel && (

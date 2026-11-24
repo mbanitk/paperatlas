@@ -65,6 +65,18 @@ def _match(payload: dict, job: dict) -> dict:
     return {"matched": len(ranked)}
 
 
+def _roofline(payload: dict, job: dict) -> dict:
+    from paperatlas.lab.events import reporter
+    from paperatlas.lab.matcher import match_project
+    from paperatlas.lab.profiler import measure_roofline
+
+    report = reporter(job_id=job["id"])
+    roofline = measure_roofline(payload["project_id"], report, payload.get("model", "eval"))
+    if payload.get("rematch", True):
+        match_project(payload["project_id"], use_llm=payload.get("use_llm", True), report=report)
+    return {"decode": roofline.get("decode"), "forward_cost_ms": roofline.get("forward_cost_ms")}
+
+
 def _triage(payload: dict, job: dict) -> dict:
     from paperatlas.lab.orchestrator import run_triage
 
@@ -98,6 +110,7 @@ HANDLERS: dict[str, Callable[[dict, dict], dict]] = {
     "discover": _discover,
     "distill": _distill,
     "match": _match,
+    "project.roofline": _roofline,
     "triage.run": _triage,
     "experiment.run": _experiment,
     "experiment.resume": _experiment,
