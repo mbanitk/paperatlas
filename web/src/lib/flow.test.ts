@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { FlowDiagramData } from '../api/types'
-import { assignLayers, layoutFlow, sanitizeDiagram, wrapLabel } from './flow'
+import { assignLayers, compareFlows, layoutFlow, sanitizeDiagram, VERTICAL_METRICS, wrapLabel } from './flow'
 
 const node = (id: string, kind = 'step', highlight = false) => ({ id, label: id.toUpperCase(), kind, highlight })
 const edge = (from: string, to: string, style: 'normal' | 'loop' | 'skip' = 'normal') => ({ from, to, label: null, style })
@@ -71,11 +71,94 @@ describe('layoutFlow', () => {
     expect(high).toBeGreaterThanOrEqual(0)
   })
 
+  it('routes loops below every node they span, not just their endpoints', () => {
+    const layout = layoutFlow(diagram)
+    const loop = layout.edges.find((e) => e.route === 'loop')!
+    const lowest = Math.max(...layout.nodes.filter((n) => n.id === 'draft' || n.id === 'lookup' || n.id === 'verify').map((n) => n.y + n.height))
+    expect(parseFloat(loop.path.split(' ')[5])).toBeGreaterThan(lowest)
+  })
+
+  it('lays out top to bottom with loops on the left and labels inside the canvas', () => {
+    const layout = layoutFlow(diagram, VERTICAL_METRICS, { orientation: 'vertical' })
+    const byId = Object.fromEntries(layout.nodes.map((n) => [n.id, n]))
+    expect(layout.orientation).toBe('vertical')
+    expect(byId.prompt.y).toBeLessThan(byId.draft.y)
+    expect(byId.draft.y).toBe(byId.lookup.y)
+    expect(byId.draft.x).toBeLessThan(byId.lookup.x)
+    const loop = layout.edges.find((e) => e.route === 'loop')!
+    expect(loop.labelRotate).toBe(-90)
+    expect(loop.labelX).toBeGreaterThan(0)
+    for (const n of layout.nodes) {
+      expect(n.x).toBeGreaterThan(0)
+      expect(n.x + n.width).toBeLessThanOrEqual(layout.width)
+      expect(n.y + n.height).toBeLessThanOrEqual(layout.height)
+    }
+  })
+
+  it('widens the gap between columns for long edge labels and wraps them', () => {
+    const labelled = { nodes: [node('a'), node('b')], edges: [{ from: 'a', to: 'b', label: 'warm prefixes first', style: 'normal' }] }
+    const plain = layoutFlow({ nodes: [node('a'), node('b')], edges: [edge('a', 'b')] })
+    const wide = layoutFlow(labelled)
+    expect(wide.width).toBeGreaterThan(plain.width)
+    expect(wide.edges[0].labelLines).toEqual(['warm prefixes', 'first'])
+  })
+
   it('drops broken input instead of failing', () => {
     expect(layoutFlow(null).nodes).toEqual([])
     const broken = sanitizeDiagram({ nodes: [node('a'), node('a'), node('b')], edges: [edge('a', 'zzz'), edge('a', 'a'), edge('a', 'b')] })
     expect(broken.nodes.map((n) => n.id)).toEqual(['a', 'b'])
     expect(broken.edges).toHaveLength(1)
+  })
+})
+
+describe('compareFlows', () => {
+  const labelled = (id: string, label: string, kind = 'step', highlight = false) => ({ id, label, kind, highlight })
+  // Claim 288 (DLoop): the gate is inserted between drafting and verification.
+  const before: FlowDiagramData = {
+    nodes: [labelled('context', 'Accepted context', 'input'), labelled('draft', 'Draft model', 'model'), labelled('verify', 'Verify one block', 'model'), labelled('accept', 'Accept or correct'), labelled('output', 'Verified tokens', 'output')],
+    edges: [edge('context', 'draft'), edge('draft', 'verify'), edge('verify', 'accept'), edge('accept', 'output')],
+  }
+  const after: FlowDiagramData = {
+    nodes: [
+      labelled('context', 'Accepted context', 'input'),
+      labelled('draft', 'Loop-ready draft model', 'model', true),
+      labelled('gate', 'Sum logprobs ≥ g?', 'decision', true),
+      labelled('verify', 'Verify accumulated blocks', 'model', true),
+      labelled('accept', 'Accept or correct'),
+      labelled('output', 'Verified tokens', 'output'),
+    ],
+    edges: [edge('context', 'draft'), edge('draft', 'gate'), edge('gate', 'draft', 'loop'), edge('gate', 'verify'), edge('verify', 'accept'), edge('accept', 'output')],
+  }
+
+  it('lines shared steps up in the same column and leaves a gap where the new step goes', () => {
+    const result = compareFlows(before, after)
+    const x = (layout: typeof result.before, id: string) => layout.nodes.find((n) => n.id === id)!.x
+    for (const id of ['context', 'draft', 'verify', 'accept', 'output']) expect(x(result.before, id)).toBe(x(result.after, id))
+    expect(result.before.width).toBe(result.after.width)
+    expect(result.before.nodes.find((n) => n.id === 'verify')!.layer).toBe(3)
+    // draft → verify jumps over the empty column, so it stays a straight forward edge
+    expect(result.before.edges.find((e) => e.from === 'draft')!.route).toBe('forward')
+  })
+
+  it('marks new, changed and removed steps', () => {
+    const withRemoval: FlowDiagramData = { ...before, nodes: [...before.nodes, labelled('sync', 'Host sync')], edges: [...before.edges, edge('accept', 'sync')] }
+    const result = compareFlows(withRemoval, after)
+    expect(result.afterStatus.get('gate')).toBe('new')
+    expect(result.afterStatus.get('draft')).toBe('changed')
+    expect(result.afterStatus.get('context')).toBe('same')
+    expect(result.beforeStatus.get('sync')).toBe('removed')
+    expect(result.added).toEqual(['Sum logprobs ≥ g?'])
+    expect(result.removed).toEqual(['Host sync'])
+  })
+
+  it('keeps forward edges pointing right when a removed step sits before a shared one', () => {
+    const b: FlowDiagramData = { nodes: [node('a'), node('x'), node('b')], edges: [edge('a', 'x'), edge('x', 'b')] }
+    const a: FlowDiagramData = { nodes: [node('a'), node('b')], edges: [edge('a', 'b')] }
+    const result = compareFlows(b, a)
+    const layer = (id: string) => result.before.nodes.find((n) => n.id === id)!.layer
+    expect(layer('a')).toBeLessThan(layer('x'))
+    expect(layer('x')).toBeLessThan(layer('b'))
+    expect(result.after.layers).toBe(result.before.layers)
   })
 })
 

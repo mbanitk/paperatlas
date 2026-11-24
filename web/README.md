@@ -34,7 +34,8 @@ Checks: `npm run typecheck`, `npm test` (vitest, pure helpers in `src/lib`), `np
 ## Demo data
 
 `web/dev/seed_demo.py` loads realistic fixtures (project `inference-lab` with a measured roofline, 8 topics, 13 papers incl. a patent,
-29 claim cards with explainers, concept maps with typed links and combined results, matches with blockers and cost-model predictions (likely / marginal / unlikely), a
+29 claim cards with explainers (four with the v2 plain-language layer — primer, headline result, before/after
+flow — and the rest v1, to exercise the fallback), concept maps with typed links and combined results, matches with blockers and cost-model predictions (likely / marginal / unlikely), a
 research scan waiting at Gate 1, and experiments in every interesting state — awaiting approval, building,
 running, awaiting decision with a judged verdict and HTML report, merged, failed, a chain (prerequisite awaiting
 approval → dependent blocked), a blocked dependent whose prerequisite was not merged, a bundle, and three protocol v2
@@ -60,7 +61,9 @@ Without a worker, gate buttons simply queue jobs (visible on the System page); n
 src/api/        typed client (client.ts), TS mirrors of the service dicts (types.ts),
                 TanStack Query hooks (queries.ts), SSE hook with reconnect/resume (sse.ts)
 src/lib/        pure helpers + tests: formatting, stage/status mapping, spec override diffing,
-                flow-diagram and concept-map layout, protocol v2 form/diff helpers
-src/components/ layout, badges, stepper, timeline, dialogs, charts (hand-made SVG), claim card
+                flow-diagram layout (incl. before/after alignment and a top-to-bottom variant for narrow screens),
+                explainer v2 helpers (hero result, theme), concept-map layout, protocol v2 form/diff helpers
+src/components/ layout, badges, stepper, timeline, dialogs, charts (hand-made SVG), claim card;
+                ClaimStory.tsx = shared claim blocks (hero result, primer, today vs. paper, flow, paper vs. here)
 src/pages/      one file per screen; experiment/ holds the Gate 2 and Gate 3 panels
 ```

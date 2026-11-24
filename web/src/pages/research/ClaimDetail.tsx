@@ -3,7 +3,8 @@ import { encodePaperId } from '../../api/client'
 import { useClaim, usePaper, useProjects } from '../../api/queries'
 import { StatusChip } from '../../components/Badges'
 import { ClaimCardDetails, ClaimChips } from '../../components/ClaimCard'
-import { ClaimExplainDetails, ClaimLead, ExplainerFootnote, GenerateClaimExplainer, GlanceStrip, ResultTiles } from '../../components/Explainers'
+import { ExplainerFootnote, GenerateClaimExplainer, ResultTiles } from '../../components/Explainers'
+import { ClaimDeepDive, ClaimHeadline, ClaimOverview, ThemeBadge } from '../../components/ClaimStory'
 import { BookIcon, SparkIcon } from '../../components/Icons'
 import { ConceptMapGraph } from '../../components/ConceptMap'
 import { RelatedCard } from '../../components/Related'
@@ -37,16 +38,17 @@ export default function ClaimDetailPage() {
         <Link to="/research/claims" className="text-sm">
           ← Claim cards
         </Link>
-        <h2 className="mt-2 text-xl leading-snug font-semibold">{data.name}</h2>
-        <div className="mt-1 text-sm text-muted">
-          from <PaperLink paperId={data.paper_id} title={data.paper_title ?? data.paper_id} /> · {data.kind ?? 'concept'} · claim #{data.id}
+        <div className="mt-2 flex min-w-0 items-start gap-3">
+          <ThemeBadge claim={data} explainer={explainer} className="mt-0.5" />
+          <div className="min-w-0 max-w-3xl">
+            <h2 className="text-xl leading-snug font-semibold">{data.name}</h2>
+            <div className="mt-1 text-sm text-muted">
+              from <PaperLink paperId={data.paper_id} title={data.paper_title ?? data.paper_id} /> · {data.kind ?? 'concept'} · claim #{data.id}
+            </div>
+            <ClaimHeadline claim={data} explainer={explainer} clamp={false} />
+          </div>
         </div>
-        <div className="max-w-3xl">
-          <ClaimLead claim={data} explainer={explainer} clamp={false} />
-        </div>
-        <div className="mt-3">
-          <GlanceStrip claim={data} explainer={explainer} project={project} />
-        </div>
+        <ClaimOverview claim={data} explainer={explainer} project={project} primerOpen className="mt-4" />
         <div className="mt-3">
           <ClaimChips claim={data} />
         </div>
@@ -61,7 +63,7 @@ export default function ClaimDetailPage() {
             }
           >
             {explainer ? (
-              <ClaimExplainDetails explainer={explainer} projectName={project?.name} />
+              <ClaimDeepDive explainer={explainer} projectName={project?.name} />
             ) : (
               <div className="space-y-2 text-sm text-muted">
                 <p>

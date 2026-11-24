@@ -10,7 +10,8 @@ import { ClaimCardDetails } from '../components/ClaimCard'
 import { ConfirmDialog, Modal } from '../components/Dialog'
 import { EventTimeline } from '../components/EventTimeline'
 import { AlertIcon, BranchIcon, ClockIcon, ChevronDown, ChevronRight, GateIcon, RefreshIcon, SparkIcon, StopIcon } from '../components/Icons'
-import { ClaimDiagram, ClaimExplainDetails, ClaimLead, GenerateClaimExplainer, GlanceStrip } from '../components/Explainers'
+import { GenerateClaimExplainer } from '../components/Explainers'
+import { ClaimDeepDive, ClaimHeadline, ClaimOverview, ThemeBadge } from '../components/ClaimStory'
 import { RelatedStrip } from '../components/Related'
 import { PredictionPanel } from '../components/Prediction'
 import { Stepper } from '../components/Stepper'
@@ -59,10 +60,14 @@ function ClaimUnderTest({ experiment, project }: { experiment: Experiment; proje
   const toggle = (panel: 'explain' | 'card') => setOpen((current) => (current === panel ? null : panel))
   return (
     <div className="space-y-3">
-      <ClaimLead claim={subject} explainer={explainer} />
-      <GlanceStrip claim={subject} explainer={explainer} project={project} />
+      <div className="flex min-w-0 items-start gap-3">
+        <ThemeBadge claim={subject} explainer={explainer} className="hidden sm:inline-flex" />
+        <div className="min-w-0 flex-1 [&>p:first-child]:mt-0 [&>div:first-child]:mt-0">
+          <ClaimHeadline claim={subject} explainer={explainer} />
+        </div>
+      </div>
+      <ClaimOverview claim={subject} explainer={explainer} project={project} />
       <RelatedStrip related={experiment.related ?? claim.data?.related} claimId={experiment.claim_id} paperId={experiment.paper_id} />
-      <ClaimDiagram diagram={explainer?.diagram} />
       <div className="flex flex-wrap items-center gap-1">
         {explainer ? (
           <Button size="sm" variant="invisible" onClick={() => toggle('explain')} aria-expanded={open === 'explain'} icon={<SparkIcon size={14} />}>
@@ -77,7 +82,7 @@ function ClaimUnderTest({ experiment, project }: { experiment: Experiment; proje
       </div>
       {open === 'explain' && explainer && (
         <div className="border-t border-line-muted pt-4">
-          <ClaimExplainDetails explainer={explainer} projectName={experiment.project.name} showDiagram={false} />
+          <ClaimDeepDive explainer={explainer} projectName={experiment.project.name} />
         </div>
       )}
       {open === 'card' && (

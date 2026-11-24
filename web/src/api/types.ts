@@ -116,7 +116,21 @@ export interface ClaimExplainer {
   diagram?: FlowDiagramData | null
   generated_at?: string | null
   model?: string | null
+  /** 2 = plain-language layer below is present (primer, headline result, before/after, paper vs here). */
+  version?: number
+  primer?: { concept?: string; analogy?: string } | null
+  headline_result?: { value?: string; metric?: string; versus?: string; direction?: 'up' | 'down' | 'none' | string } | null
+  today_vs_paper?: { today?: string; with_paper?: string } | null
+  paper_vs_here?: { aspect: ComparisonAspect | string; paper?: string; here?: string; effect?: string }[]
+  what_we_do_differently?: string[]
+  key_numbers?: { value: string; label: string; meaning?: string }[]
+  theme?: ClaimTheme | string | null
+  /** The standard flow without the technique; shares node ids with `diagram`. */
+  diagram_before?: FlowDiagramData | null
 }
+
+export type ClaimTheme = 'speed' | 'latency' | 'throughput' | 'memory' | 'quality' | 'cost' | 'reliability'
+export type ComparisonAspect = 'hardware' | 'model' | 'runtime' | 'workload' | 'baseline' | 'draft_model' | 'batch' | 'context' | 'other'
 
 export interface PaperExplainer {
   tldr?: string

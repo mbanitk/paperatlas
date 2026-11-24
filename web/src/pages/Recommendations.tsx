@@ -8,7 +8,8 @@ import type { ExperimentMode, LabEvent, Project, Recommendation, TriageOptions, 
 import { api } from '../api/client'
 import { BlockerBadge, CategoryChip, DocTypeChip, LiveDot, StatusChip } from '../components/Badges'
 import { ClaimCardDetails, ClaimedEffect, Requirements } from '../components/ClaimCard'
-import { ClaimDiagram, ClaimExplainDetails, ClaimLead, GenerateClaimExplainer, GlanceStrip } from '../components/Explainers'
+import { GenerateClaimExplainer } from '../components/Explainers'
+import { ClaimDeepDive, ClaimHeadline, ClaimOverview, QuickFacts, ThemeBadge } from '../components/ClaimStory'
 import { ConfirmDialog, Modal } from '../components/Dialog'
 import { ConceptRef, RelatedStrip } from '../components/Related'
 import { EventTimeline } from '../components/EventTimeline'
@@ -35,6 +36,7 @@ import {
   errorMessage,
   useDebounced,
 } from '../components/ui'
+import { isPlainLanguage } from '../lib/explainer'
 import { formatScore, humanize, pluralize } from '../lib/format'
 import { LIKELIHOOD_INFO, LIKELIHOODS, likelihoodOf, sortByPrediction } from '../lib/roofline'
 import { isActiveStatus, isTriageRunning, TRIAGE_STATUS_LABEL, TRIAGE_STEPS, triageStepState } from '../lib/stages'
@@ -224,19 +226,32 @@ function TriageBanner({ triage, logOpen, onToggleLog }: { triage: TriageSummary;
 
 // ---- recommendation card --------------------------------------------------------------------
 
-function RecommendationCard({ item, selected, disabledReason, onToggle, shortlisted, project }: {
+function RecommendationCard({ item, selected, disabledReason, onToggle, shortlisted, project, primerOpen = false }: {
   item: Recommendation
   selected: boolean
   disabledReason: string | null
   onToggle: () => void
   shortlisted: boolean
   project?: Project
+  primerOpen?: boolean
 }) {
   const [open, setOpen] = useState<'explain' | 'card' | null>(null)
   const blocked = !item.testable_here || item.blockers.length > 0
   const checkboxId = `pick-${item.claim_id}`
   const explainer = item.explainer
+  const plain = isPlainLanguage(explainer)
   const toggle = (panel: 'explain' | 'card') => setOpen((current) => (current === panel ? null : panel))
+  const chips = (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <CategoryChip category={item.category} />
+      {item.topics.map((topic) => (
+        <Link key={topic.slug} to={`/research/topics/${topic.slug}`} className="chip border-line bg-canvas text-muted hover:border-accent hover:text-accent hover:no-underline">
+          {topic.name}
+        </Link>
+      ))}
+      <Requirements claim={item} />
+    </div>
+  )
   return (
     <article
       className={cx(
@@ -262,54 +277,57 @@ function RecommendationCard({ item, selected, disabledReason, onToggle, shortlis
           </span>
         </div>
         <div className="min-w-0 flex-1">
-          <div className="min-w-0">
-            <h3 id={`rec-title-${item.claim_id}`} className="text-base leading-snug font-semibold">
-              <label htmlFor={checkboxId} className="cursor-pointer">
-                {item.name}
-              </label>
-            </h3>
-            <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs text-muted">
-              <DocTypeChip docType={item.paper_doc_type} />
-              <PaperLink paperId={item.paper_id} title={item.paper_title ?? item.paper_id} className="min-w-0 text-muted hover:text-accent" />
-              {item.paper_date && <span>· {item.paper_date.slice(0, 7)}</span>}
-              {item.paper_url && (
-                <>
-                  <span>·</span>
-                  <ExternalLink href={item.paper_url} className="text-muted">
-                    source
-                  </ExternalLink>
-                </>
-              )}
+          <div className="flex min-w-0 items-start gap-3">
+            <ThemeBadge claim={item} explainer={explainer} className="hidden sm:inline-flex" />
+            <div className="min-w-0 flex-1">
+              <h3 id={`rec-title-${item.claim_id}`} className="text-base leading-snug font-semibold">
+                <label htmlFor={checkboxId} className="cursor-pointer">
+                  {item.name}
+                </label>
+              </h3>
+              <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted">
+                <DocTypeChip docType={item.paper_doc_type} />
+                <PaperLink paperId={item.paper_id} title={item.paper_title ?? item.paper_id} className="min-w-0 text-muted hover:text-accent" />
+                {item.paper_date && <span>· {item.paper_date.slice(0, 7)}</span>}
+                {item.paper_url && (
+                  <>
+                    <span>·</span>
+                    <ExternalLink href={item.paper_url} className="text-muted">
+                      source
+                    </ExternalLink>
+                  </>
+                )}
+                {shortlisted && <Chip tone="accent">shortlisted</Chip>}
+                {item.blockers.map((blocker) => (
+                  <BlockerBadge key={blocker} blocker={blocker} />
+                ))}
+              </div>
+              <ClaimHeadline claim={item} explainer={explainer} />
             </div>
-            <ClaimLead claim={item} explainer={explainer} />
           </div>
 
-          <div className="mt-3">
-            <GlanceStrip claim={item} explainer={explainer} project={project} fit={item.fit} blockers={item.blockers} />
-          </div>
+          <ClaimOverview
+            claim={item}
+            explainer={explainer}
+            project={project}
+            prediction={item.prediction ?? null}
+            fit={item.fit}
+            blockers={item.blockers}
+            primerOpen={primerOpen}
+            className="mt-3.5"
+          />
 
-          <PredictionRow prediction={item.prediction} className="mt-3" />
+          {!plain && <PredictionRow prediction={item.prediction} className="mt-3" />}
 
-          <RelatedStrip related={item.related} claimId={item.claim_id} paperId={item.paper_id} className="mt-3" />
-
-          <div className="mt-3 flex flex-wrap items-center gap-1.5">
-            <CategoryChip category={item.category} />
-            {item.topics.map((topic) => (
-              <Link key={topic.slug} to={`/research/topics/${topic.slug}`} className="chip border-line bg-canvas text-muted hover:border-accent hover:text-accent hover:no-underline">
-                {topic.name}
-              </Link>
-            ))}
-            {shortlisted && <Chip tone="accent">shortlisted</Chip>}
-            {item.blockers.map((blocker) => (
-              <BlockerBadge key={blocker} blocker={blocker} />
-            ))}
-            <Requirements claim={item} />
-          </div>
-
-          <ClaimDiagram diagram={explainer?.diagram} className="mt-3" />
+          {!explainer && (
+            <>
+              <RelatedStrip related={item.related} claimId={item.claim_id} paperId={item.paper_id} className="mt-3" />
+              <div className="mt-3">{chips}</div>
+            </>
+          )}
 
           {item.rationale && (
-            <p className="mt-3 rounded-md bg-canvas-subtle px-3 py-2 text-sm text-fg">
+            <p className="mt-3.5 rounded-lg bg-canvas-subtle px-3.5 py-2.5 text-sm text-fg">
               <span className="mr-1 inline-flex items-center gap-1 text-xs font-semibold text-done">
                 <SparkIcon size={12} /> Why for this project:
               </span>
@@ -318,13 +336,14 @@ function RecommendationCard({ item, selected, disabledReason, onToggle, shortlis
           )}
 
           <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-muted">
               <div className="w-20">
                 <Meter value={Math.min(item.score, 1)} label={`Match score ${formatScore(item.score)}`} tone="done" />
               </div>
-              <span title="score = fit × (0.4 + gain) ÷ effort cost · gain and effort are shown above">
+              <span title="score = fit × (0.4 + gain) ÷ effort cost">
                 score <strong className="text-fg tabular-nums">{formatScore(item.score)}</strong>
               </span>
+              {plain && <QuickFacts claim={item} explainer={explainer} fit={item.fit} blockers={item.blockers} />}
               {item.target_metric && (
                 <span>
                   measured as <code className="code-inline">{item.target_metric}</code>
@@ -355,8 +374,14 @@ function RecommendationCard({ item, selected, disabledReason, onToggle, shortlis
             </p>
           )}
           {open === 'explain' && explainer && (
-            <div className="mt-3 border-t border-line-muted pt-4">
-              <ClaimExplainDetails explainer={explainer} projectName={project?.name} showDiagram={false} />
+            <div className="mt-3 space-y-6 border-t border-line-muted pt-4">
+              <ClaimDeepDive explainer={explainer} projectName={project?.name} />
+              {(item.related || item.topics.length > 0 || item.category) && (
+                <section aria-label="Related concepts and tags" className="space-y-2.5">
+                  <RelatedStrip related={item.related} claimId={item.claim_id} paperId={item.paper_id} />
+                  {chips}
+                </section>
+              )}
             </div>
           )}
           {open === 'card' && (
@@ -813,9 +838,10 @@ export default function Recommendations() {
             </EmptyState>
           )}
           <div className="space-y-3">
-            {shown.map((item) => (
+            {shown.map((item, index) => (
               <RecommendationCard
                 key={item.claim_id}
+                primerOpen={index === 0}
                 item={item}
                 selected={selected.has(item.claim_id)}
                 disabledReason={disabledReason(item)}
