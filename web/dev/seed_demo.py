@@ -17,10 +17,12 @@ import random
 import sys
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from seed_concept_maps import EXTRA_CONCEPTS, apply_concept_maps  # noqa: E402
+import seed_protocol  # noqa: E402
 from seed_explainers import BACKGROUND_PAPERS, CLAIM_EXPLAINERS, PAPER_EXPLAINERS, TOPIC_EXPLAINERS  # noqa: E402
 
 MARKER = ".seed_demo"
@@ -760,7 +762,7 @@ for _paper in PAPERS:
     _paper["concepts"].extend(EXTRA_CONCEPTS.get(_paper["paper_id"], []))
 
 ALREADY_TESTED = {"c_radix", "c_split_k", "c_prompt_lookup", "c_chunked_prefill", "c_kivi", "c_lookahead", "c_draft_len",
-                  "c_tree_mask", "c_dyn_tree", "c_split_heuristic", "c_awq"}
+                  "c_tree_mask", "c_dyn_tree", "c_split_heuristic", "c_awq", "c_batched_verify", "c_adaptive_ngram", "c_lookahead_tuning"}
 
 
 # ---- experiments ---------------------------------------------------------------------------
@@ -1075,6 +1077,10 @@ class Seeder:
         self.exp_awaiting_approval(project_id, triage_ids[1], "c_lookahead", ago(hours=5, minutes=4))
         self.exp_awaiting_approval(project_id, triage_ids[1], "c_draft_len", ago(hours=5, minutes=3))
         self.exp_chain_and_bundle(project_id, triage_ids[2], failed_prerequisite=2)
+        kit = SimpleNamespace(ago=ago, spec_for=spec_for, make_results=make_results, profile=PROFILE)
+        seed_protocol.exp_v2_gate2(self, kit, project_id, triage_ids[2])
+        seed_protocol.exp_v2_gate3(self, kit, project_id, triage_ids[1])
+        seed_protocol.exp_v2_tuning(self, kit, project_id)
 
     def triage_events(self, triage_id: int, start: datetime, opts: dict) -> None:
         t = start

@@ -1,12 +1,13 @@
 import type { ExperimentStatus, Gate, Stage, StageName, StageState, TriageStatus, VerdictName } from '../api/types'
 
-export const STAGES: StageName[] = ['plan', 'approve', 'build', 'smoke', 'run', 'judge', 'decide']
+export const STAGES: StageName[] = ['plan', 'approve', 'build', 'smoke', 'tune', 'run', 'judge', 'decide']
 
 export const STAGE_LABELS: Record<StageName, string> = {
   plan: 'Plan',
   approve: 'Approve spec',
   build: 'Build',
   smoke: 'Smoke test',
+  tune: 'Tune',
   run: 'A/B run',
   judge: 'Judge',
   decide: 'Merge / drop',
@@ -21,6 +22,7 @@ export const STAGE_OF_STATUS: Partial<Record<ExperimentStatus, StageName>> = {
   approving: 'build',
   building: 'build',
   smoke_testing: 'smoke',
+  tuning: 'tune',
   waiting_gpu: 'run',
   running: 'run',
   judging: 'judge',
@@ -44,6 +46,7 @@ export const ACTIVE_STATUSES: ExperimentStatus[] = [
   'approving',
   'building',
   'smoke_testing',
+  'tuning',
   'waiting_gpu',
   'running',
   'judging',
@@ -78,6 +81,7 @@ const STATUS_INFO: Record<ExperimentStatus, StatusInfo> = {
   approving: { label: 'Approved — starting', tone: 'accent', busy: true },
   building: { label: 'Building', tone: 'accent', busy: true },
   smoke_testing: { label: 'Smoke testing', tone: 'accent', busy: true },
+  tuning: { label: 'Tuning', tone: 'accent', busy: true },
   waiting_gpu: { label: 'Waiting for GPU', tone: 'neutral', busy: true },
   running: { label: 'Running A/B', tone: 'accent', busy: true },
   judging: { label: 'Judging', tone: 'accent', busy: true },

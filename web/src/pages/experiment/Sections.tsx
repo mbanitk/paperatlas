@@ -4,6 +4,7 @@ import type { BuildInfo, Experiment, Project, RunInfo } from '../../api/types'
 import { BranchIcon, ChevronDown, ChevronRight, LogIcon, MergeIcon, RefreshIcon } from '../../components/Icons'
 import { Button, Card, Checkbox, Chip, DefinitionList, EmptyState, ErrorState, ExternalLink, Loading, RelativeTime, cx } from '../../components/ui'
 import { displayValue, durationBetween, formatDuration, formatNumber, tailLines } from '../../lib/format'
+import { formatConfig, runKindLabel } from '../../lib/protocol'
 
 export function BuildCard({ experiment }: { experiment: Experiment }) {
   const build: BuildInfo = experiment.build ?? {}
@@ -151,7 +152,16 @@ function RunItem({ run, primary }: { run: RunInfo; primary?: string }) {
     <li className="rounded-md border border-line-muted">
       <button type="button" className="flex w-full flex-wrap items-center gap-2 px-3 py-2 text-left hover:bg-canvas-subtle" onClick={() => setOpen(!open)} aria-expanded={open}>
         {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-        <span className="font-semibold">{run.kind === 'eval' ? 'Evaluation A/B' : run.kind === 'smoke' ? 'Smoke A/B' : run.kind}</span>
+        <span className="font-semibold">{runKindLabel(run.kind)}</span>
+        {run.kind === 'tune' && run.comparison?.variant_config && Object.keys(run.comparison.variant_config).length > 0 ? (
+          <code className="text-xs text-muted">{formatConfig(run.comparison.variant_config)}</code>
+        ) : (
+          run.comparison && (
+            <span className="text-xs text-muted">
+              vs {run.comparison.baseline} · {run.comparison.workload}
+            </span>
+          )
+        )}
         <Chip tone={run.status === 'done' ? 'success' : running ? 'accent' : run.status === 'failed' ? 'danger' : 'neutral'}>
           {running && <span className="size-1.5 animate-pulse-dot rounded-full bg-current" />}
           {run.status}
@@ -163,6 +173,17 @@ function RunItem({ run, primary }: { run: RunInfo; primary?: string }) {
       </button>
       {open && (
         <div className="space-y-3 border-t border-line-muted px-3 py-2">
+          {run.comparison && (run.comparison.variant_config || run.comparison.baseline_config) && (
+            <p className="text-xs text-muted">
+              Method config <code>{formatConfig(run.comparison.variant_config)}</code>
+              {run.comparison.baseline_config && Object.keys(run.comparison.baseline_config).length > 0 && (
+                <>
+                  {' '}
+                  · baseline config <code>{formatConfig(run.comparison.baseline_config)}</code>
+                </>
+              )}
+            </p>
+          )}
           {run.command && <pre className="overflow-x-auto rounded bg-canvas-subtle p-2 text-[11.5px] whitespace-pre-wrap">{run.command}</pre>}
           {run.summary ? <SummaryTable summary={run.summary} primary={primary} /> : <p className="text-xs text-muted">{running ? 'Results appear when the run finishes.' : 'No summary.'}</p>}
           {run.quality && (
@@ -181,7 +202,7 @@ export function RunsCard({ experiment }: { experiment: Experiment }) {
   return (
     <Card title="Benchmark runs">
       {experiment.runs.length === 0 ? (
-        <p className="text-sm text-muted">No runs yet — the smoke A/B starts after a verified build.</p>
+        <p className="text-sm text-muted">No runs yet — the smoke A/B starts after a verified build, then tuning, the claim check and the adoption check.</p>
       ) : (
         <ul className="space-y-2">
           {experiment.runs.map((run) => (

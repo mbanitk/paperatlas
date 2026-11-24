@@ -9,6 +9,7 @@ export type ExperimentStatus =
   | 'approving'
   | 'building'
   | 'smoke_testing'
+  | 'tuning'
   | 'waiting_gpu'
   | 'running'
   | 'judging'
@@ -21,7 +22,7 @@ export type ExperimentStatus =
   | 'failed'
   | 'cancelled'
 
-export type StageName = 'plan' | 'approve' | 'build' | 'smoke' | 'run' | 'judge' | 'decide'
+export type StageName = 'plan' | 'approve' | 'build' | 'smoke' | 'tune' | 'run' | 'judge' | 'decide'
 export type StageState =
   | 'done'
   | 'active'
@@ -528,9 +529,154 @@ export interface ExperimentSpec {
   build_timeout_s: number
   smoke_timeout_s: number
   eval_timeout_s: number
+  // protocol v2 (lab/protocol.py) — older specs may lack these
+  protocol_version?: number
+  paper_baseline?: PaperBaseline
+  paper_workload?: PaperWorkload | null
+  mechanism?: MechanismCounter[]
+  knobs?: Knob[]
+  fidelity?: Fidelity
+  tune?: boolean
+  tune_rounds?: number
+  max_iterations?: number
+  baseline_flags?: string[]
   [extra: string]: unknown
 }
 
+// ---- protocol v2: test the claim the way the paper measured it, then test adoption ----------
+
+export type PaperBaselineKind = 'project_default' | 'technique_mode'
+
+export interface PaperBaseline {
+  description: string
+  kind: PaperBaselineKind
+}
+
+export interface PaperWorkload {
+  matches: string
+  description: string
+  prompts: string[]
+  max_new_tokens: number
+  concurrency: number
+  long_context_tokens: number
+}
+
+export interface MechanismCounter {
+  name: string
+  meaning: string
+  paper_value: string | null
+}
+
+export type KnobValue = string | number | boolean
+
+export interface Knob {
+  name: string
+  meaning: string
+  paper_value: string | null
+  candidates: KnobValue[]
+}
+
+export type FidelityLevel = 'high' | 'medium' | 'low'
+
+export interface Fidelity {
+  level: FidelityLevel
+  gaps: string[]
+}
+
+export interface RunComparison {
+  kind: 'claim' | 'adopt' | string
+  workload: string
+  baseline: string
+  baseline_config?: Record<string, KnobValue>
+  variant_config?: Record<string, KnobValue>
+}
+
+export interface MechanismRow {
+  name: string
+  meaning: string | null
+  paper_value: string | null
+  expected: boolean
+  baseline_total: number | null
+  variant_total: number | null
+  baseline_per_1k_tokens: number | null
+  variant_per_1k_tokens: number | null
+  change_pct: number | null
+}
+
+export interface MechanismTable {
+  rows: MechanismRow[]
+  missing: string[]
+  measured: boolean
+  tokens: { baseline: number; variant: number }
+}
+
+export type AdoptionVerdict = 'worth_adopting' | 'small_gain' | 'not_reproduced' | 'regression' | 'inconclusive'
+
+export interface AdoptionResult {
+  verdict: AdoptionVerdict | string
+  reason: string
+  median_delta_pct: number | null
+  ci_low_pct: number | null
+  ci_high_pct: number | null
+  quality_ok: boolean
+  quality_problems: string[]
+  workload?: unknown
+  per_metric?: Record<string, MetricResult>
+  mechanism?: MechanismTable
+}
+
+export type Diagnosis =
+  | 'reproduced'
+  | 'partially_reproduced'
+  | 'implementation_suspect'
+  | 'untuned'
+  | 'regime_mismatch'
+  | 'hardware_mismatch'
+  | 'claim_not_supported'
+  | 'inconclusive'
+
+export interface Analysis {
+  diagnosis: Diagnosis | string
+  summary: string
+  evidence: string[]
+  paper_comparison: string
+  worth_iterating: boolean
+  next_changes: string
+  expected_effect: string
+  model?: string | null
+}
+
+export interface IterationEntry {
+  iteration: number
+  verdict: VerdictName | string
+  reason: string
+  median_delta_pct: number | null
+  ci_low_pct: number | null
+  ci_high_pct: number | null
+  adoption_verdict: string | null
+  adoption_median_delta_pct: number | null
+  diagnosis: string | null
+  summary: string | null
+  next_changes: string | null
+  tuned: { baseline?: Record<string, KnobValue> | null; variant?: Record<string, KnobValue> | null } | null
+}
+
+export interface TuningTrial {
+  config: Record<string, KnobValue>
+  baseline: number | null
+  variant: number | null
+}
+
+export interface TuningResult {
+  configs: Record<string, KnobValue>[]
+  trials: TuningTrial[]
+  metric?: string
+  baseline: Record<string, KnobValue>
+  variant: Record<string, KnobValue>
+  skipped: boolean
+}
+
+/** Scalar spec fields edited as text in the Gate 2 form. */
 export type EditableField =
   | 'hypothesis'
   | 'flag_name'
@@ -540,6 +686,9 @@ export type EditableField =
   | 'warmup'
   | 'workload'
   | 'model'
+
+/** Protocol v2 fields edited with structured controls (lib/protocol.ts). */
+export type ProtocolField = 'paper_baseline' | 'paper_workload' | 'mechanism' | 'knobs' | 'fidelity' | 'lossless' | 'tune' | 'max_iterations'
 
 export interface BuildAttempt {
   attempt: number
@@ -557,12 +706,15 @@ export interface BuildInfo {
   agent_summary?: string
   pr_url?: string | null
   merge_sha?: string
+  iteration?: number
+  iterations?: IterationEntry[]
+  tuning?: TuningResult
   [extra: string]: unknown
 }
 
 export interface RunInfo {
   id: number
-  kind: 'smoke' | 'eval' | string
+  kind: 'smoke' | 'tune' | 'eval' | 'adopt' | string
   status: string
   command: string | null
   started_at: string | null
@@ -570,6 +722,8 @@ export interface RunInfo {
   summary: Record<string, unknown> | null
   quality: QualityInfo | null
   model: { id?: string; dtype?: string; alias?: string } | string | null
+  comparison?: RunComparison | null
+  mechanism?: Record<string, unknown> | null
 }
 
 export interface QualityInfo {
@@ -614,6 +768,15 @@ export interface VerdictDetails {
   environment?: Record<string, unknown> | null
   model?: { id?: string; dtype?: string } | string | null
   workload?: string | WorkloadInfo | null
+  // protocol v2
+  comparison?: RunComparison | null
+  target_pct?: number | null
+  mechanism?: MechanismTable | null
+  adoption?: AdoptionResult | null
+  analysis?: Analysis | null
+  iteration?: number | null
+  iterations?: IterationEntry[] | null
+  tuning?: TuningResult | null
   [extra: string]: unknown
 }
 
@@ -633,7 +796,8 @@ export interface Experiment extends ExperimentSummary {
   project: { id: number; name: string; repo_path: string }
   claim: Claim
   spec: Partial<ExperimentSpec>
-  editable_fields: EditableField[]
+  /** Everything the backend lets Gate 2 change (scalar and protocol fields; unknown names are ignored). */
+  editable_fields: (EditableField | ProtocolField | string)[]
   spec_options: { metrics: string[]; workloads: string[]; models: string[] }
   build: BuildInfo
   worktree_path: string | null

@@ -14,11 +14,13 @@ import { ClaimDiagram, ClaimExplainDetails, ClaimLead, GenerateClaimExplainer, G
 import { RelatedStrip } from '../components/Related'
 import { Stepper } from '../components/Stepper'
 import { useToast } from '../components/Toast'
-import { Banner, Button, Card, ErrorState, ExternalLink, Loading, PageHeader, PaperLink, RelativeTime, errorMessage } from '../components/ui'
+import { Banner, Button, Card, Chip, ErrorState, ExternalLink, Loading, PageHeader, PaperLink, RelativeTime, errorMessage } from '../components/ui'
 import { formatPct } from '../lib/format'
 import { canCancel, canRetry, isActiveStatus, normalizeStages, statusInfo } from '../lib/stages'
 import { BuildCard, LogCard, ProjectFacts, RunsCard } from './experiment/Sections'
 import { SpecDetails, SpecGate } from './experiment/SpecGate'
+import { ProtocolSummary } from './experiment/Protocol'
+import { adoptionInfo, currentIteration, isProtocolV2, protocolOf } from '../lib/protocol'
 import { VerdictPanel } from './experiment/VerdictPanel'
 
 function useExperimentEvents(id: number, enabled: boolean) {
@@ -268,7 +270,10 @@ function GateCallout({ experiment }: { experiment: Experiment }) {
   if (experiment.status === 'awaiting_decision')
     return (
       <Banner tone="attention" icon={<GateIcon className="text-attention" />} action={<a href="#gate" className="text-sm font-semibold">See verdict ↓</a>}>
-        <strong>Gate 3 — merge or drop?</strong> The judge measured {formatPct(experiment.median_delta_pct)} vs the paper’s {formatPct(experiment.claimed_gain_pct, 0)}.
+        <strong>Gate 3 — merge or drop?</strong> The judge measured {formatPct(experiment.median_delta_pct)} vs the paper’s {formatPct(experiment.claimed_gain_pct, 0)}
+        {experiment.verdict_detail?.details?.adoption
+          ? `; adoption check: ${adoptionInfo(experiment.verdict_detail.details.adoption.verdict).label.toLowerCase()} (${formatPct(experiment.verdict_detail.details.adoption.median_delta_pct)} vs the project default).`
+          : '.'}
       </Banner>
     )
   if (experiment.status === 'approving' || experiment.status === 'queued' || experiment.status === 'finalizing')
@@ -301,6 +306,8 @@ export default function ExperimentDetail() {
   const data = experiment.data
   const stages = normalizeStages(data.stages, data.status, data.stage)
   const busy = isActiveStatus(data.status) && !['awaiting_approval', 'awaiting_decision'].includes(data.status)
+  const iteration = currentIteration(data)
+  const maxIterations = protocolOf(data.spec).max_iterations
 
   return (
     <>
@@ -373,6 +380,15 @@ export default function ExperimentDetail() {
         {data.status === 'cancelled' && data.error && <Banner tone="muted">{data.error}</Banner>}
 
         <Card bodyClassName="px-4 py-5">
+          {iteration > 1 && (
+            <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-muted">
+              <Chip tone="done">
+                Iteration {iteration}
+                {maxIterations >= iteration && ` of ${maxIterations}`}
+              </Chip>
+              the judge diagnosed a fixable gap and sent the build back with a change
+            </div>
+          )}
           <Stepper
             stages={stages}
             waitingLabel={
@@ -401,6 +417,7 @@ export default function ExperimentDetail() {
             <LogCard experimentId={data.id} live={busy} />
             {data.status !== 'awaiting_approval' && Object.keys(data.spec).length > 0 && (
               <Card title="Experiment spec">
+                {isProtocolV2(data.spec) && <ProtocolSummary spec={data.spec} className="mb-5 border-b border-line-muted pb-5" />}
                 <SpecDetails spec={data.spec} project={project.data} includeEditable />
               </Card>
             )}
