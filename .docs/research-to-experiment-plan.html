@@ -101,6 +101,12 @@
   .bar{display:grid;grid-template-columns:120px 1fr 64px;gap:8px;align-items:center;font-size:12.5px}
   .bar i{display:block;height:10px;border-radius:6px}
   @media (max-width:900px){.status-grid,.kpis{grid-template-columns:1fr 1fr}.result{grid-template-columns:1fr}}
+
+  .req{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;font-size:13px;margin-top:12px}
+  .req th,.req td{padding:7px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+  .req th{background:#eef1f4;font-size:11.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+  .req td:first-child{color:var(--muted);width:28px}
+  .now{outline:2px solid #0969da33;background:#f6faff}
 </style>
 </head>
 <body>
@@ -108,61 +114,71 @@
 
   <div style="font-size:12px;font-weight:700;letter-spacing:.08em;color:var(--muted)">PAPERATLAS</div>
   <h1>Research → Experiment</h1>
-  <p class="lead">Find new research, break it into testable ideas, try the best 1–2 in <em>your</em> project,
-     and prove whether the claimed gain is real.</p>
-  <div class="chips">
-    <span class="chip"><b>Live:</b> 1,088 papers · 10 topics · 404 claim cards · 1 verdict</span>
-    <span class="chip">Agents do the work · you approve at 3 gates</span>
-    <span class="chip">Runs on your M5 Pro · 64 GB</span>
-    <span class="chip">Every verdict backed by repeated A/B runs</span>
-  </div>
-
-  <!-- ===================== STATUS ===================== -->
-  <h2>Status <span style="font-weight:400;color:var(--muted);font-size:14px">· updated Nov 23, 2026</span></h2>
+  <p clas<!-- ===================== STATUS ===================== -->
+  <h2>Status <span style="font-weight:400;color:var(--muted);font-size:14px">· updated Nov 23, 2026 · 16:50</span></h2>
   <div class="kpis">
-    <div class="kpi"><b>10</b><span>trending topics</span></div>
-    <div class="kpi"><b>1,088</b><span>papers pooled · 50 distilled</span></div>
-    <div class="kpi"><b>404</b><span>claim cards · 305 testable</span></div>
-    <div class="kpi"><b>51</b><span>testable on inference-lab</span></div>
-    <div class="kpi"><b>35</b><span>backend tests passing</span></div>
+    <div class="kpi"><b>10</b><span>trending topics · all explained</span></div>
+    <div class="kpi"><b>1,088</b><span>papers pooled · 50 distilled + concept maps</span></div>
+    <div class="kpi"><b>404</b><span>claim cards · observations now blocked</span></div>
+    <div class="kpi"><b>3</b><span>experiments · #3 is the first faithful re‑test</span></div>
+    <div class="kpi"><b>96</b><span>backend tests · 46 web · 54 inference‑lab</span></div>
   </div>
   <div class="status-grid">
-    <div class="st"><h4>Done <span class="pill p-done">M0–M7</span></h4><ul>
-      <li>Postgres 18 + pgvector (MySQL kept, Neo4j removed)</li>
-      <li>5 sources, auto top‑10 topics, ranking</li>
-      <li>Claim cards (no LinkedIn posts)</li>
-      <li><code>inference-lab</code>: Qwen3‑30B‑A3B int8, ~25 tok/s, ~31 GB</li>
-      <li>LangGraph loop + 3 gates, Copilot CLI builder</li>
-      <li>Microservices + React console</li>
-      <li>Digest + weekly schedule (opt‑in)</li>
+    <div class="st"><h4>Done <span class="pill p-done">shipped</span></h4><ul>
+      <li>Explainers, infographics, concept maps and full card diagrams in the console</li>
+      <li>Code review (46 findings) · fixes merged to <code>main</code> via PR #1 · merged back here</li>
+      <li><b>Faithful experiments (protocol v2)</b>: claim check vs the paper’s own baseline on paper‑style prompts, adoption check vs your default, knob tuning, mechanism counters, analyst diagnosis + retry loop</li>
+      <li>inference‑lab contract: per‑arm params (<code>mode=baseline|method</code>), counters, workload files</li>
     </ul></div>
-    <div class="st"><h4>In progress <span class="pill p-wip">now</span></h4><ul>
-      <li>Explainers on topics, papers/patents and claim cards (plain‑language + approach diagram)</li>
-      <li>Clean infographics: trend bars, source mix, result tiles, at‑a‑glance strip</li>
-      <li>Checkpoint‑loss recovery (done, being shipped)</li>
+    <div class="st now"><h4>Working on now <span class="pill p-wip">in progress</span></h4><ul>
+      <li><b>Experiment #3</b>: DLoop vs the same block speculative decoder, GSM8K/HumanEval/MT‑Bench‑style prompts, gate g and block k tuned</li>
+      <li><b>Web UI for protocol v2</b> (web agent): Gate 2 “how we’ll test the claim”, Gate 3 claim vs adoption, mechanism, diagnosis, iterations</li>
     </ul></div>
     <div class="st"><h4>Next <span class="pill p-next">queued</span></h4><ul>
-      <li>Backfill explainers for 10 topics, 50 papers, top claims</li>
-      <li>Restart services so the worker runs the latest code</li>
-      <li>Pick the next 1–2 claims (e.g. a KV‑cache or scheduling idea)</li>
+      <li>Review #3’s verdict and mechanism counters</li>
+      <li>Visual review of the new Gate 2/3 panels</li>
     </ul></div>
     <div class="st"><h4>Needs you <span class="pill p-you">action</span></h4><ul>
-      <li><b>Gate 3</b> for experiment #1: merge or drop</li>
-      <li><b>Rotate the OpenAI key</b> (it was in the public repo history)</li>
-      <li>Optional keys: Semantic Scholar, OpenAlex, USPTO</li>
+      <li><b>Add OpenAI credits</b> — the account is out; planner/analyst/review fall back to templates</li>
+      <li><b>Rotate the OpenAI key</b> (was in public repo history)</li>
+      <li><b>Gate 3</b> for #1 (regression) and #2 (observation, no effect) → likely drop both</li>
     </ul></div>
   </div>
+
+  <table class="req">
+    <tr><th>#</th><th>Your request</th><th style="width:150px">Status</th><th>Where</th></tr>
+    <tr><td>1</td><td>Fix <code>python</code> not found, set up a database</td><td><span class="pill p-done">done</span></td><td>uv venv, MySQL → now Postgres</td></tr>
+    <tr><td>2</td><td>Plan as an HTML page with phase diagram</td><td><span class="pill p-done">done</span></td><td>this page</td></tr>
+    <tr><td>3</td><td>No LinkedIn posts; call it Research → Experiment</td><td><span class="pill p-done">done</span></td><td>technical claim cards</td></tr>
+    <tr><td>4</td><td>Replace MySQL with a modern DB (vector + search + agents)</td><td><span class="pill p-done">done</span></td><td>PostgreSQL 18 + pgvector</td></tr>
+    <tr><td>5</td><td>Build it: discover → split → code agent → run → validate</td><td><span class="pill p-done">done</span></td><td>first verdict: DLoop −66.8% vs +41%</td></tr>
+    <tr><td>6</td><td>Web UI on microservices with gates + live progress</td><td><span class="pill p-done">done</span></td><td>http://127.0.0.1:8100</td></tr>
+    <tr><td>7</td><td>Self‑explanatory recommendation cards + small diagram</td><td><span class="pill p-done">done</span></td><td>Recommendations page</td></tr>
+    <tr><td>8</td><td>Descriptions + clean infographics on topics, papers, patents, claims</td><td><span class="pill p-done">done</span></td><td>Research pages</td></tr>
+    <tr><td>9</td><td>Make the report chart understandable</td><td><span class="pill p-done">done</span></td><td>experiment report</td></tr>
+    <tr><td>10</td><td>Show plan status here</td><td><span class="pill p-done">done</span></td><td>this section</td></tr>
+    <tr><td>11</td><td>Link concepts from the same paper + concept map</td><td><span class="pill p-done">done</span></td><td>paper page, cards, Gate 1 (bundle / chain)</td></tr>
+    <tr><td>12</td><td>Full diagram in the main card, no corner thumbnail</td><td><span class="pill p-done">done</span></td><td>all claim cards</td></tr>
+    <tr><td>13</td><td>Code review in a sub‑session</td><td><span class="pill p-done">done</span></td><td>PR #1 merged</td></tr>
+    <tr class="now"><td>14</td><td>Make experiments do justice to the paper</td><td><span class="pill p-wip">backend done · #3 running · UI in progress</span></td><td>protocol v2</td></tr>
+  </table>
+
   <div class="result">
     <div>
-      <div style="font-size:12px;color:var(--muted)">First end‑to‑end experiment · #1</div>
-      <div style="font-weight:700;font-size:15px">DLoop confidence‑gated speculative decoding</div>
-      <div style="font-size:12.5px;color:var(--muted)">Copilot CLI built it in 18 min · tests + smoke passed · 8 ABBA rounds on Qwen3‑30B‑A3B</div>
-      <div style="margin-top:6px"><span class="pill p-you">REGRESSION</span> <span style="font-size:12.5px">outputs identical, but MoE target + small draft = more work per token on MPS</span></div>
+      <div style="font-size:12px;color:var(--muted)">Why #1 and #2 missed — and what changed</div>
+      <div style="font-weight:700;font-size:15px">We were testing a different question than the paper</div>
+      <ul style="font-size:12.5px;margin:6px 0 0 18px;padding:0;line-height:1.55">
+        <li><b>Baseline:</b> DLoop vs plain decoding → now vs <i>the same speculative decoder without DLoop</i> (paper’s comparison)</li>
+        <li><b>Workload:</b> 4 creative chat prompts → now prompts mirroring GSM8K / HumanEval / MT‑Bench</li>
+        <li><b>Tuning:</b> one default → paper’s knobs swept, each arm gets its best config</li>
+        <li><b>Why:</b> no counters → verifications / acceptance recorded, analyst diagnoses implementation vs hardware vs claim</li>
+        <li><b>Claim choice:</b> #2 was an observation → observations are now blocked from recommendations</li>
+      </ul>
     </div>
     <div class="bars">
-      <div class="bar"><span>Paper (H100)</span><i style="background:#8250df;width:41%"></i><b style="color:#8250df">+41%</b></div>
-      <div class="bar"><span>Your M5 Pro</span><i style="background:#cf222e;width:66.8%"></i><b style="color:#cf222e">−66.8%</b></div>
-      <div class="bar"><span>Decode tok/s</span><span style="font-size:12px;color:var(--muted)">24.4 → 8.1 (95% CI −67.2…−66.4%)</span><span></span></div>
+      <div class="bar"><span>Paper (H100)</span><i style="background:#8250df;width:41%"></i><b style="color:#8250df">+5…41%</b></div>
+      <div class="bar"><span>#1 (wrong baseline)</span><i style="background:#cf222e;width:66.8%"></i><b style="color:#cf222e">−66.8%</b></div>
+      <div class="bar"><span>#3 (faithful)</span><span style="font-size:12px;color:var(--muted)">running…</span><span></span></div>
     </div>
   </div>
 
