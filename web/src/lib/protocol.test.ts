@@ -77,12 +77,13 @@ describe('validateProtocol', () => {
       paper_baseline: { kind: 'technique_mode' as const, description: ' ' },
       paper_workload: { ...form.paper_workload, prompts: [' '], concurrency: '9' },
       knobs: [{ name: 'k', meaning: '', paper_value: '', candidates: '1, 2, 3, 4' }],
-      max_iterations: 4,
+      max_iterations: 6,
     }
     expect(Object.keys(validateProtocol(bad)).sort()).toEqual(
       ['knobs.0.candidates', 'max_iterations', 'paper_baseline.description', 'paper_workload.concurrency', 'paper_workload.prompts'].sort(),
     )
     expect(validateProtocol(form)).toEqual({})
+    expect(validateProtocol({ ...form, max_iterations: 5 })).toEqual({})
   })
 })
 

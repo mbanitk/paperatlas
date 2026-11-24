@@ -6,6 +6,7 @@ Three experiments that exercise the v2 UI:
 - Gate 3: adaptive n-gram prompt lookup — two iterations (the first build never used 4-grams), tuned knobs,
   mechanism counters (one missing), a partial claim verdict and a worth-adopting adoption verdict, analyst diagnosis.
 - In progress: bandwidth-aware lookahead window — status `tuning`, two of four tune configs measured.
+- Keep-or-revert: adaptive draft length — iteration 1 of 2 is kept (iteration 2 was slower and its code reverted).
 
 Shapes mirror paperatlas.lab.protocol / judge.judge / orchestrator.node_judge / runner.tune.
 """
@@ -59,7 +60,7 @@ def _mechanism(flag: str, baseline: dict[str, float], variant: dict[str, float])
 
 
 def _add_run(seeder: Any, eid: int, kind: str, status: str, started: datetime, finished: Optional[datetime], spec: dict, results: Optional[dict],
-             workload_arg: str, label: str = "") -> None:
+             workload_arg: str, label: str = "") -> int:
     from paperatlas.db.engine import session_scope
     from paperatlas.db.schema import Run
 
@@ -70,8 +71,11 @@ def _add_run(seeder: Any, eid: int, kind: str, status: str, started: datetime, f
                f"--variant-flags {spec['flag_name']} --workload {workload_arg} --rounds {rounds} --warmup {spec['warmup']} --out {out}"
                + (f"  # {label}" if label else ""))
     with session_scope() as session:
-        session.add(Run(experiment_id=eid, kind=kind, status=status, command=command, results=results, results_path=out,
-                        log_path=out.replace(".json", ".log"), started_at=started, finished_at=finished))
+        run = Run(experiment_id=eid, kind=kind, status=status, command=command, results=results, results_path=out,
+                  log_path=out.replace(".json", ".log"), started_at=started, finished_at=finished)
+        session.add(run)
+        session.flush()
+        return run.id
 
 
 def exp_v2_gate2(seeder: Any, kit: Any, project_id: int, triage_id: int) -> int:
@@ -209,12 +213,12 @@ def exp_v2_gate3(seeder: Any, kit: Any, project_id: int, triage_id: int) -> int:
     eval_1 = _with(make_results(flag, "long_prompt", 10, {"decode_tokens_per_s": 1.1, "itl_ms": 0.9}, 702, QUALITY), claim_cmp(tuned_1), paper_regime,
                    _mechanism(flag, {"verify_steps": 3810, "accepted_draft_tokens": 6430, "ngram4_matches": 0},
                               {"verify_steps": 3790, "accepted_draft_tokens": 6461, "ngram4_matches": 0}))
-    _add_run(seeder, eid, "eval", "done", t, t + timedelta(minutes=26), spec, eval_1, paper_file)
+    eval_1_id = _add_run(seeder, eid, "eval", "done", t, t + timedelta(minutes=26), spec, eval_1, paper_file)
     seeder.event(t, "run", "Claim check: 10 rounds per arm, workload paper regime", experiment_id=eid, job=job)
     t += timedelta(minutes=27)
     adopt_1 = _with(make_results(flag, "long_prompt", 10, {"decode_tokens_per_s": 14.9, "itl_ms": 12.8}, 703, QUALITY), adopt_cmp(tuned_1), "long_prompt",
                     _mechanism(flag, {}, {"verify_steps": 3720, "accepted_draft_tokens": 6522, "ngram4_matches": 0}))
-    _add_run(seeder, eid, "adopt", "done", t, t + timedelta(minutes=28), spec, adopt_1, "long_prompt")
+    adopt_1_id = _add_run(seeder, eid, "adopt", "done", t, t + timedelta(minutes=28), spec, adopt_1, "long_prompt")
     seeder.event(t, "run", "Adoption check: 10 rounds per arm, workload long_prompt", experiment_id=eid, job=job)
     t += timedelta(minutes=29)
     next_1 = ("Start matching at n=max_ngram (the build starts at n=3, so 4-grams are never tried) and fall back 4→3→2→1; bound the draft "
@@ -230,6 +234,7 @@ def exp_v2_gate3(seeder: Any, kit: Any, project_id: int, triage_id: int) -> int:
         "summary": "The method arm never drafted from 4-grams (ngram4_matches = 0) and accepted draft tokens barely moved (+0.5%), so the "
                    "adaptive path was not active — the gain over plain decoding is just prompt lookup itself.",
         "next_changes": next_1, "tuned": tuned_1,
+        "sha": "3b8e1f0a9c2d4e6f8a0b1c2d3e4f5a6b7c8d9e0f", "eval_run_id": eval_1_id, "adopt_run_id": adopt_1_id, "quality_ok": first["quality_ok"],
     }
     seeder.event(t, "judge", "Analysing the result against the paper", experiment_id=eid, job=job)
     seeder.event(t + timedelta(seconds=40), "judge", f"Iteration 1: not reproduced (implementation suspect). Trying a fix: {next_1[:400]}",
@@ -263,7 +268,7 @@ def exp_v2_gate3(seeder: Any, kit: Any, project_id: int, triage_id: int) -> int:
         _mechanism(flag, {"verify_steps": 3810, "accepted_draft_tokens": 6430, "ngram4_matches": 0},
                    {"verify_steps": 3530, "accepted_draft_tokens": 7050, "ngram4_matches": 1340}),
     )
-    _add_run(seeder, eid, "eval", "done", t, t + timedelta(minutes=26), spec, results, paper_file)
+    eval_2_id = _add_run(seeder, eid, "eval", "done", t, t + timedelta(minutes=26), spec, results, paper_file)
     seeder.event(t, "run", "Claim check: 10 rounds per arm, workload paper regime", experiment_id=eid, job=job)
     t += timedelta(minutes=27)
     adopt = _with(
@@ -272,7 +277,7 @@ def exp_v2_gate3(seeder: Any, kit: Any, project_id: int, triage_id: int) -> int:
         adopt_cmp(tuning), "long_prompt",
         _mechanism(flag, {}, {"verify_steps": 3460, "accepted_draft_tokens": 7120, "ngram4_matches": 1410}),
     )
-    _add_run(seeder, eid, "adopt", "done", t, t + timedelta(minutes=28), spec, adopt, "long_prompt")
+    adopt_2_id = _add_run(seeder, eid, "adopt", "done", t, t + timedelta(minutes=28), spec, adopt, "long_prompt")
     seeder.event(t, "run", "Adoption check: 10 rounds per arm, workload long_prompt", experiment_id=eid, job=job)
     t += timedelta(minutes=29)
 
@@ -307,6 +312,7 @@ def exp_v2_gate3(seeder: Any, kit: Any, project_id: int, triage_id: int) -> int:
         "adoption_verdict": (verdict.get("adoption") or {}).get("verdict"), "adoption_median_delta_pct": (verdict.get("adoption") or {}).get("median_delta_pct"),
         "diagnosis": analysis["diagnosis"], "summary": analysis["summary"], "next_changes": analysis["next_changes"],
         "tuned": {"baseline": tuning["baseline"], "variant": tuning["variant"]},
+        "sha": "c41d7a92e5b3f6081a2b3c4d5e6f7a8b9c0d1e2f", "eval_run_id": eval_2_id, "adopt_run_id": adopt_2_id, "quality_ok": verdict["quality_ok"],
     }
     history = [iteration_1, iteration_2]
     verdict.update(analysis=analysis, iteration=2, iterations=history, tuning=tuning)
@@ -318,7 +324,7 @@ def exp_v2_gate3(seeder: Any, kit: Any, project_id: int, triage_id: int) -> int:
                      " tests/test_adaptive_ngram.py                   |  66 +++++++\n 3 files changed, 202 insertions(+), 6 deletions(-)",
         "agent_summary": "Iteration 2: matching now starts at max_ngram and falls back to 1; the EMA bounds k in [2, draft_cap]. "
                          "Counters verify_steps, accepted_draft_tokens and ngram4_matches are reported via the technique stats hook.",
-        "iteration": 2, "iterations": history, "tuning": tuning, "pr_url": None,
+        "iteration": 2, "iterations": history, "kept_iteration": 2, "tuning": tuning, "pr_url": None,
     }
     report_path = None
     if folder is not None:
@@ -414,4 +420,158 @@ def exp_v2_tuning(seeder: Any, kit: Any, project_id: int) -> int:
     seeder._set(eid, branch=branch, worktree_path=f"/nonexistent/demo/r2e/worktrees/exp-{eid}",
                 build={"builder": "copilot", "attempts": [{"attempt": 1, "agent_exit": 0, "duration_s": 652.0, "problems": [], "log": None}],
                        "files": ["src/inference_lab/techniques/lookahead.py", "tests/test_lookahead_window.py"], "iteration": 1})
+    return eid
+
+
+def _save_verdict(eid: int, verdict: dict[str, Any], report_path: Any, at: datetime) -> None:
+    from paperatlas.db.engine import session_scope
+    from paperatlas.db.schema import Verdict
+
+    strip = lambda per_metric: {n: {k: v for k, v in m.items() if k != "deltas"} for n, m in (per_metric or {}).items()}  # noqa: E731
+    details = {k: v for k, v in verdict.items() if k not in ("per_metric", "adoption")}
+    details["per_metric"] = strip(verdict["per_metric"])
+    if verdict.get("adoption"):
+        details["adoption"] = {**verdict["adoption"], "per_metric": strip(verdict["adoption"]["per_metric"])}
+    with session_scope() as session:
+        session.add(Verdict(
+            experiment_id=eid, verdict=verdict["verdict"], primary_metric=verdict["primary_metric"], median_delta_pct=verdict["median_delta_pct"],
+            ci_low_pct=verdict["ci_low_pct"], ci_high_pct=verdict["ci_high_pct"], claimed_gain_pct=verdict["claimed_gain_pct"],
+            quality_ok=verdict["quality_ok"], details=details, report_path=str(report_path) if report_path else None, created_at=at,
+        ))
+
+
+def exp_v2_kept(seeder: Any, kit: Any, project_id: int, triage_id: int) -> int:
+    """Keep-or-revert: iteration 1 of 2 is kept — iteration 2's longer drafts were slower, so its code was reverted."""
+    from paperatlas.lab.judge import judge
+    from paperatlas.lab.report import render_report
+    from paperatlas.lab.service import get_claim
+
+    key = "c_draft_len"
+    ago, make_results, PROFILE = kit.ago, kit.make_results, kit.profile
+    created = ago(hours=5, minutes=3)
+    flag = "adaptive_draft_length"
+    spec = kit.spec_for(
+        hypothesis="An acceptance-rate–driven draft length controller improves decode_tokens_per_s on short_chat by at least 14% over the "
+        "fixed draft length of 5, with identical greedy outputs.",
+        flag_name=flag, technique_summary=seeder.claim_rows[key]["card"].technique,
+        implementation_notes="Extend speculative_draft: mode=baseline keeps num_draft_tokens=5; mode=method sets the draft length from an EMA "
+        "of the acceptance rate (alpha 0.2, bounds 1–8) and stops drafting when the drafter's top-1 probability < 0.35. Report "
+        "verify_passes and accepted_tokens.",
+        primary_metric="decode_tokens_per_s", direction="higher_is_better", secondary_metrics=["itl_ms", "e2e_latency_ms"],
+        workload="short_chat", model="eval", rounds=10, warmup=1, success_threshold_pct=5.0, claimed_gain_pct=20.0, lossless=True,
+        guardrails=GUARDRAILS,
+        paper_vs_project="The patent gives an example embodiment without hardware details. Here the 0.6B drafter costs about half a "
+        "30B-A3B step on an overhead-bound PyTorch MPS engine, which limits what fewer verifications can buy.",
+        paper_baseline={"kind": "technique_mode", "description": "Speculative decoding with a fixed draft length of 5 (the patent's comparison)"},
+        mechanism=[
+            {"name": "verify_passes", "meaning": "target forward passes spent on verification", "paper_value": "fewer (not quantified)"},
+            {"name": "accepted_tokens", "meaning": "draft tokens accepted by the target", "paper_value": None},
+        ],
+        fidelity={"level": "low", "gaps": ["A patent example embodiment: no hardware, model or dataset given"]},
+        tune=False, max_iterations=3,
+    )
+    eid = seeder._experiment(project_id, key, "awaiting_decision", created, ago(hours=1, minutes=20), triage_id=triage_id, spec=spec)
+    branch = f"r2e/exp-{eid}-adaptive-draft-length"
+    folder = seeder._artifacts(eid)
+    approved = created + timedelta(minutes=9)
+    seeder._plan_events(eid, created, spec, triage_id, approved)
+    job = f"resume-{eid}"
+    seeder.job(job, "experiment.resume", {"experiment_id": eid, "resume": {"decision": "approve", "comment": None}}, approved,
+               finished=ago(hours=1, minutes=18), experiment_id=eid)
+    claim_cmp = {"kind": "claim", "workload": "short_chat", "baseline": "paper baseline"}
+    adopt_cmp = {"kind": "adopt", "workload": "short_chat", "baseline": "project default"}
+    shas = ["7f2c9d41b0e83a6c5d1e2f3a4b5c6d7e8f9a0b1c", "e09a4b7d2c61f8350a1b2c3d4e5f6a7b8c9d0e1f"]
+    plans = [
+        # (claim-check effect, adoption effect, verify passes, accepted tokens, seed)
+        ({"decode_tokens_per_s": 6.4, "itl_ms": 5.9}, {"decode_tokens_per_s": -11.8, "itl_ms": -12.6}, (3420, 2810), (5120, 5390), 801),
+        ({"decode_tokens_per_s": -3.6, "itl_ms": -3.1}, {"decode_tokens_per_s": -19.5, "itl_ms": -20.2}, (3420, 2640), (5120, 4980), 811),
+    ]
+    history: list[dict[str, Any]] = []
+    judged: list[tuple[dict, dict]] = []
+    analyses = [
+        {
+            "diagnosis": "hardware_mismatch",
+            "summary": "The controller works — verify passes per 1k tokens fell 18% — but decode moved only {claim:+.1f}% vs fixed k=5 and "
+                       "{adopt:+.1f}% vs plain decoding: a 0.6B draft token costs 48% of a target step on this overhead-bound engine.",
+            "evidence": ["verify_passes −17.8% per 1k tokens", "accepted_tokens +5.3%",
+                         "roofline: decode at 26% of the bandwidth limit; draft 19.8 ms vs target 41.5 ms per token"],
+            "paper_comparison": "The patent claims +20% over a fixed draft length; here {claim:+.1f}% vs k=5 and {adopt:+.1f}% vs no speculation.",
+            "worth_iterating": True,
+            "next_changes": "Allow longer drafts when acceptance is high (bounds 1–12) and lower the confidence stop to 0.25 to cut verify passes further.",
+            "expected_effect": "verify passes −5 to −8% more, decode +2 to +4% vs fixed k=5",
+            "model": "gpt-5-mini (demo fixture)",
+        },
+        {
+            "diagnosis": "implementation_suspect",
+            "summary": "Longer drafts cut verify passes further (−22.8%) but rejected draft tokens rose, so decode moved {claim:+.1f}% vs fixed k=5.",
+            "evidence": ["verify_passes −22.8% per 1k tokens", "accepted_tokens −2.7%"],
+            "paper_comparison": "Worse than iteration 1 on both checks.",
+            "worth_iterating": False, "next_changes": "", "expected_effect": "",
+            "model": "gpt-5-mini (demo fixture)",
+        },
+    ]
+    t = approved + timedelta(seconds=10)
+    for index, ((claim_fx, adopt_fx, verify, accepted, seed), analysis) in enumerate(zip(plans, analyses), start=1):
+        note = "" if index == 1 else " — iteration 2: applying the analyst's changes"
+        seeder.event(t, "build", f"Worktree ready on branch {branch}{note}", experiment_id=eid, job=job)
+        seeder.event(t + timedelta(minutes=8), "build", f"Build verified at {shas[index - 1][:10]}: 2 files changed, tests pass", experiment_id=eid, job=job)
+        t += timedelta(minutes=9)
+        mech = {"baseline": {"techniques": {flag: {"verify_passes": verify[0], "accepted_tokens": accepted[0]}}, "tokens": TOKENS},
+                "variant": {"techniques": {flag: {"verify_passes": verify[1], "accepted_tokens": accepted[1]}}, "tokens": TOKENS}}
+        claim = _with(make_results(flag, "short_chat", 10, claim_fx, seed, QUALITY), claim_cmp, "short_chat", mech)
+        eval_id = _add_run(seeder, eid, "eval", "done", t, t + timedelta(minutes=22), spec, claim, "short_chat")
+        seeder.event(t, "run", "Claim check: 10 rounds per arm, workload short_chat", experiment_id=eid, job=job)
+        t += timedelta(minutes=23)
+        adopt = _with(make_results(flag, "short_chat", 10, adopt_fx, seed + 1, QUALITY), adopt_cmp, "short_chat",
+                      {"baseline": {"techniques": {}, "tokens": TOKENS}, "variant": mech["variant"]})
+        adopt_id = _add_run(seeder, eid, "adopt", "done", t, t + timedelta(minutes=22), spec, adopt, "short_chat")
+        seeder.event(t, "run", "Adoption check: 10 rounds per arm, workload short_chat", experiment_id=eid, job=job)
+        t += timedelta(minutes=23)
+        verdict = judge(claim, spec, PROFILE, adopt)
+        judged.append((verdict, claim))
+        numbers = {"claim": verdict["median_delta_pct"], "adopt": (verdict.get("adoption") or {}).get("median_delta_pct") or 0.0}
+        for field in ("summary", "paper_comparison"):
+            analysis[field] = analysis[field].format(**numbers)
+        history.append({
+            "iteration": index, "verdict": verdict["verdict"], "reason": verdict["reason"], "median_delta_pct": verdict["median_delta_pct"],
+            "ci_low_pct": verdict["ci_low_pct"], "ci_high_pct": verdict["ci_high_pct"],
+            "adoption_verdict": (verdict.get("adoption") or {}).get("verdict"),
+            "adoption_median_delta_pct": (verdict.get("adoption") or {}).get("median_delta_pct"),
+            "diagnosis": analysis["diagnosis"], "summary": analysis["summary"],
+            "next_changes": analysis["next_changes"] if analysis["worth_iterating"] else "", "tuned": None,
+            "sha": shas[index - 1], "eval_run_id": eval_id, "adopt_run_id": adopt_id, "quality_ok": verdict["quality_ok"], "analysis": analysis,
+        })
+        seeder.event(t, "judge", "Analysing the result against the paper", experiment_id=eid, job=job)
+        if index == 1:
+            seeder.event(t + timedelta(seconds=40), "judge", f"Iteration 1: {verdict['verdict'].replace('_', ' ')} (hardware mismatch). "
+                         f"Trying a fix: {analysis['next_changes']}", {"analysis": analysis}, experiment_id=eid, job=job)
+            t += timedelta(minutes=1)
+    seeder.event(t + timedelta(seconds=45), "judge",
+                 f"Kept iteration 1 ({history[0]['median_delta_pct']:+.1f}%) and reverted later changes (iteration 2: {history[1]['median_delta_pct']:+.1f}%)",
+                 {"kept_iteration": 1, "sha": shas[0]}, experiment_id=eid, job=job)
+    verdict, results = judged[0]
+    verdict.update(analysis=analyses[0], iteration=1, iterations=history, tuning=None)
+    build = {
+        "builder": "copilot",
+        "attempts": [{"attempt": 1, "agent_exit": 0, "duration_s": 352.7, "problems": [], "log": None}],
+        "files": ["src/inference_lab/techniques/adaptive_draft_length.py", "tests/test_adaptive_draft_length.py"],
+        "diff_stat": " src/inference_lab/techniques/adaptive_draft_length.py | 96 +++++++++++\n tests/test_adaptive_draft_length.py | 58 +++++++\n"
+                     " 2 files changed, 154 insertions(+)",
+        "agent_summary": "EMA draft-length controller (bounds 1–8) with a confidence stop at 0.35; verify_passes and accepted_tokens reported.",
+        "iteration": 2, "iterations": history, "kept_iteration": 1, "pr_url": None,
+    }
+    report_path = None
+    if folder is not None:
+        claim_row = get_claim(seeder.claims[key])
+        report_path = render_report(
+            folder / "report.html", {"id": eid, "branch": branch, "flag_name": flag},
+            {"id": project_id, "name": PROFILE["name"], "repo_path": PROFILE["repo"]["path"]},
+            claim_row, {"paper_id": claim_row["paper_id"], "title": claim_row["paper_title"], "url": claim_row["paper_url"]},
+            spec, build, verdict, results,
+        )
+    _save_verdict(eid, verdict, report_path, t + timedelta(minutes=1))
+    seeder.event(t + timedelta(minutes=1), "decide",
+                 f"Verdict: {verdict['verdict'].replace('_', ' ')} — {verdict['reason']}. Diagnosis: hardware mismatch. Waiting for merge/drop (Gate 3)",
+                 {"verdict": verdict["verdict"]}, experiment_id=eid, job=job)
+    seeder._set(eid, branch=branch, worktree_path=f"/nonexistent/demo/r2e/worktrees/exp-{eid}", build=build)
     return eid

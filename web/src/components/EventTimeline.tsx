@@ -10,6 +10,7 @@ const STAGE_TONES: Record<string, string> = {
   discover: 'bg-done-subtle text-done',
   distill: 'bg-done-subtle text-done',
   match: 'bg-done-subtle text-done',
+  roofline: 'bg-accent-subtle text-accent',
   pick: 'bg-attention-subtle text-attention',
   plan: 'bg-accent-subtle text-accent',
   approve: 'bg-attention-subtle text-attention',

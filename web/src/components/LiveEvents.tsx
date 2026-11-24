@@ -25,6 +25,8 @@ const STAGE_QUERY_GROUPS: Record<string, string[]> = {
   distill: ['recommendations', 'claims', 'claim', 'papers', 'paper', 'topic'],
   match: ['recommendations', 'claims', 'claim', 'papers'],
   pick: ['recommendations', 'claims', 'claim', 'papers'],
+  // a measured roofline lands on the project and re-ranks its recommendations (predictions)
+  roofline: ['projects', 'recommendations', 'claim'],
   // explainer backfill: claim, paper and topic explainers plus concept maps
   explain: ['recommendations', 'claims', 'claim', 'papers', 'paper', 'topics', 'topic'],
 }

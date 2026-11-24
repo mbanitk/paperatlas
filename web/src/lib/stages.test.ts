@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Stage } from '../api/types'
-import { canRetry, normalizeStages, stagesForStatus, triageStepState } from './stages'
+import { canRerun, canRetry, normalizeStages, rerunsOf, stagesForStatus, triageStepState } from './stages'
 
 const states = (stages: Stage[]) => stages.map((stage) => stage.state).join(',')
 
@@ -49,5 +49,24 @@ describe('blocked (chain dependents)', () => {
     expect(stagesForStatus('blocked')[0]).toEqual({ stage: 'plan', state: 'waiting' })
     expect(canRetry('blocked')).toBe(false)
     expect(canRetry('blocked', 'plan: prerequisite experiment #2 was not merged — retry to run without it')).toBe(true)
+  })
+})
+
+describe('re-runs', () => {
+  it('allows re-running settled experiments only', () => {
+    for (const status of ['awaiting_decision', 'merged', 'dropped', 'rejected', 'failed', 'cancelled'] as const) expect(canRerun(status)).toBe(true)
+    for (const status of ['awaiting_approval', 'building', 'running', 'blocked', 'queued', 'finalizing'] as const) expect(canRerun(status)).toBe(false)
+  })
+
+  it('finds the re-runs of an experiment in a list', () => {
+    const list = [
+      { id: 9, rerun_of_experiment_id: 3 },
+      { id: 7, rerun_of_experiment_id: null },
+      { id: 5, rerun_of_experiment_id: 3 },
+      { id: 4 },
+    ]
+    expect(rerunsOf(3, list)).toEqual([5, 9])
+    expect(rerunsOf(7, list)).toEqual([])
+    expect(rerunsOf(3, undefined)).toEqual([])
   })
 })

@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import type { ExperimentSpec, FidelityLevel, PaperBaselineKind, ProtocolField } from '../../api/types'
 import { AlertIcon, ChevronDown, ChevronRight, MinusIcon, XIcon } from '../../components/Icons'
+import { PredictionPanel } from '../../components/Prediction'
 import { Button, Checkbox, Chip, cx, Field } from '../../components/ui'
 import { formatPct } from '../../lib/format'
 import {
@@ -10,6 +11,7 @@ import {
   formatKnobValue,
   MAX_COUNTERS,
   MAX_KNOBS,
+  MAX_ITERATIONS,
   MAX_NEW_TOKENS,
   maxPrompts,
   MIN_NEW_TOKENS,
@@ -73,6 +75,7 @@ export function ProtocolSummary({ spec, changed = [], className }: { spec: Parti
   const tuned = protocol.tune && configs.length >= 2
   const is = (field: ProtocolField) => changed.includes(field)
   const metric = spec.primary_metric ? <code className="code-inline">{spec.primary_metric}</code> : 'the primary metric'
+  const prediction = spec.prediction
 
   return (
     <div className={cx('space-y-3', className)}>
@@ -82,7 +85,7 @@ export function ProtocolSummary({ spec, changed = [], className }: { spec: Parti
           <FidelityBadge level={protocol.fidelity.level} />
         </span>
       </div>
-      <div className={cx('grid gap-3', adoption && 'md:grid-cols-2')}>
+      <div className={cx('grid gap-3', (adoption || prediction) && 'md:grid-cols-2')}>
         <CheckCard tone="claim" title="Claim check" question="Does the paper’s claim hold?">
           <Row label="Compares">
             <span className={changedRing(is('paper_baseline'))}>
@@ -138,6 +141,7 @@ export function ProtocolSummary({ spec, changed = [], className }: { spec: Parti
             </Row>
           </CheckCard>
         )}
+        {prediction && <PredictionPanel prediction={prediction} claimed={spec.claimed_gain_pct} className={adoption ? 'md:col-span-2' : undefined} />}
       </div>
       {!adoption && protocol.version >= 2 && (
         <p className="text-xs text-muted">The claim check already uses the project default and workload, so it also answers whether the technique is worth adopting.</p>
@@ -571,13 +575,13 @@ export function ProtocolEditor({ form, onChange, errors, changed, fields, disabl
                       <Button
                         size="sm"
                         aria-label="More iterations"
-                        disabled={disabled || form.max_iterations >= 3}
-                        onClick={() => onChange((f) => ({ ...f, max_iterations: Math.min(3, f.max_iterations + 1) }))}
+                        disabled={disabled || form.max_iterations >= MAX_ITERATIONS}
+                        onClick={() => onChange((f) => ({ ...f, max_iterations: Math.min(MAX_ITERATIONS, f.max_iterations + 1) }))}
                       >
                         +
                       </Button>
                     </div>
-                    <p className="mt-1 text-xs text-muted">1–3 · diagnose, fix and re-run when fixable</p>
+                    <p className="mt-1 text-xs text-muted">1–{MAX_ITERATIONS} · diagnose, fix and re-run when fixable; the best iteration is kept</p>
                     {errors.max_iterations && <p className="text-xs text-danger">{errors.max_iterations}</p>}
                   </div>
                 )}

@@ -9,6 +9,7 @@ import type {
   JobQueued,
   LabEvent,
   MergeDecisionBody,
+  RerunBody,
   Paged,
   PaperDetail,
   PaperSummary,
@@ -176,6 +177,9 @@ export const api = {
     prerequisites: (claimId: number) => get<ConceptNode[]>(`/lab/claims/${claimId}/prerequisites`),
     explainClaim: (projectId: number, claimId: number) => post<ClaimExplainer>(`/lab/projects/${projectId}/claims/${claimId}/explain`),
     rematch: (id: number, useLlm = true) => post<JobQueued>(`/lab/projects/${id}/match${buildQuery({ use_llm: useLlm })}`),
+    /** GPU job: measure the engine's roofline, then (rematch) re-rank the claims with the cost model. */
+    measureRoofline: (id: number, model = 'eval', rematch = true) =>
+      post<JobQueued>(`/lab/projects/${id}/roofline${buildQuery({ model, rematch })}`),
     recommendations: (projectId: number, params: RecommendationParams = {}, signal?: AbortSignal) =>
       get<Recommendation[]>(`/lab/projects/${projectId}/recommendations${buildQuery({ ...params })}`, signal),
     startTriage: (projectId: number, options: TriageOptions) => post<Triage>(`/lab/projects/${projectId}/triage`, options),
@@ -191,6 +195,7 @@ export const api = {
     decideMerge: (id: number, body: MergeDecisionBody) => post<Experiment>(`/lab/experiments/${id}/decision`, body),
     cancel: (id: number) => post<Experiment>(`/lab/experiments/${id}/cancel`),
     retry: (id: number) => post<Experiment>(`/lab/experiments/${id}/retry`),
+    rerun: (id: number, body: RerunBody) => post<Experiment>(`/lab/experiments/${id}/rerun`, body),
     events: (id: number, after = 0) => get<LabEvent[]>(`/lab/experiments/${id}/events${buildQuery({ after })}`),
     log: (id: number) => get<ExperimentLog>(`/lab/experiments/${id}/log`),
     reportUrl: (id: number) => `${API_BASE}/lab/experiments/${id}/report`,

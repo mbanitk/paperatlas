@@ -6,6 +6,8 @@ import { AlertIcon, CheckIcon, SparkIcon } from '../../components/Icons'
 import { Chip, cx, TONE_CLASSES } from '../../components/ui'
 import { formatCI, formatNumber, formatPct, formatWorkload } from '../../lib/format'
 import { adoptionInfo, chosenBy, claimTarget, diagnosisInfo, formatConfig, formatKnobValue, protocolOf } from '../../lib/protocol'
+import { predictionMatchesMetric } from '../../lib/roofline'
+import { PredictedLine } from '../../components/Prediction'
 
 function Tile({ kicker, question, badge, children, className }: { kicker: string; question: string; badge: ReactNode; children: ReactNode; className?: string }) {
   return (
@@ -44,6 +46,8 @@ export function VerdictTiles({ experiment, verdict }: { experiment: Experiment; 
   const paperBaseline = comparison?.baseline === 'paper baseline'
   const paperWorkload = comparison?.workload === 'paper regime'
   const adoptionLabel = adoption ? adoptionInfo(adoption.verdict) : details.worth_adopting ? adoptionInfo('worth_adopting') : adoptionInfo('not_reproduced')
+  const prediction = experiment.spec.prediction
+  const band = predictionMatchesMetric(prediction, verdict.primary_metric) ? prediction!.predicted_gain_pct : null
 
   return (
     <div className="grid gap-3 md:grid-cols-2">
@@ -53,6 +57,7 @@ export function VerdictTiles({ experiment, verdict }: { experiment: Experiment; 
           target ≥ {formatPct(target, 1)}
           {typeof verdict.claimed_gain_pct === 'number' && <> · paper claims {formatPct(verdict.claimed_gain_pct, 0)}</>} · <code>{verdict.primary_metric}</code>
         </p>
+        <PredictedLine prediction={prediction} metric={verdict.primary_metric} />
         <p className="text-xs">
           <span className="text-muted">vs </span>
           {paperBaseline ? <strong>{protocol.paper_baseline.description || 'the paper’s baseline'}</strong> : <strong>the project default</strong>}
@@ -98,6 +103,7 @@ export function VerdictTiles({ experiment, verdict }: { experiment: Experiment; 
           claimed={verdict.claimed_gain_pct}
           threshold={threshold}
           target={target}
+          predicted={band}
         />
       </div>
     </div>
@@ -316,23 +322,46 @@ export function TuningTable({ tuning, metric, direction, knobOrder = [] }: { tun
 }
 
 /** What happened in each build → measure → diagnose round. */
-export function IterationsTimeline({ iterations }: { iterations: IterationEntry[] }) {
+export function IterationsTimeline({ iterations, kept }: { iterations: IterationEntry[]; kept?: number | null }) {
   if (iterations.length < 2) return null
+  const keptEntry = kept != null ? iterations.find((entry) => entry.iteration === kept) : undefined
   return (
     <div>
-      <h3 className="mb-2 text-sm font-semibold">Iterations</h3>
+      <h3 className="mb-1 text-sm font-semibold">Iterations</h3>
+      {keptEntry && keptEntry !== iterations[iterations.length - 1] ? (
+        <p className="mb-2 text-xs text-muted">
+          Iteration {keptEntry.iteration} scored best, so it was kept: later iterations’ code was reverted and the verdict above is iteration {keptEntry.iteration}’s.
+        </p>
+      ) : (
+        keptEntry && <p className="mb-2 text-xs text-muted">The last iteration scored best and was kept.</p>
+      )}
       <ol className="relative space-y-3 border-l-2 border-line-muted pl-4">
         {iterations.map((entry, index) => {
           const last = index === iterations.length - 1
+          const state = keptEntry ? (entry.iteration === keptEntry.iteration ? 'kept' : entry.iteration > keptEntry.iteration ? 'reverted' : null) : last ? 'final' : null
           const diagnosis = entry.diagnosis ? diagnosisInfo(entry.diagnosis) : null
           return (
             <li key={entry.iteration} className="relative">
               <span
-                className={cx('absolute top-1 -left-[23px] size-3 rounded-full border-2 border-canvas', last ? 'bg-accent-emphasis' : 'bg-subtle')}
+                className={cx(
+                  'absolute top-1 -left-[23px] size-3 rounded-full border-2 border-canvas',
+                  state === 'kept' ? 'bg-success-emphasis' : state === 'final' ? 'bg-accent-emphasis' : 'bg-subtle',
+                )}
                 aria-hidden="true"
               />
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
-                <span className="font-semibold">Iteration {entry.iteration}</span>
+                <span className={cx('font-semibold', state === 'reverted' && 'text-muted')}>Iteration {entry.iteration}</span>
+                {state === 'kept' && (
+                  <Chip tone="success">
+                    <CheckIcon size={12} /> kept
+                  </Chip>
+                )}
+                {state === 'reverted' && <Chip tone="muted">reverted</Chip>}
+                {entry.sha && (
+                  <code className="code-inline text-[11px]" title={entry.sha}>
+                    {entry.sha.slice(0, 7)}
+                  </code>
+                )}
                 <VerdictBadge verdict={entry.verdict} />
                 <Delta value={entry.median_delta_pct} />
                 <span className="text-xs text-muted tabular-nums">CI {formatCI(entry.ci_low_pct, entry.ci_high_pct)}</span>
@@ -343,7 +372,8 @@ export function IterationsTimeline({ iterations }: { iterations: IterationEntry[
                     {typeof entry.adoption_median_delta_pct === 'number' && ` (${formatPct(entry.adoption_median_delta_pct, 1)})`}
                   </span>
                 )}
-                {last && <span className="text-xs font-semibold text-accent">final</span>}
+                {state === 'final' && <span className="text-xs font-semibold text-accent">final</span>}
+                {entry.quality_ok === false && <Chip tone="danger">quality failed</Chip>}
               </div>
               {entry.summary && <p className="mt-0.5 text-sm text-muted">{entry.summary}</p>}
               {entry.tuned?.variant && Object.keys(entry.tuned.variant).length > 0 && (

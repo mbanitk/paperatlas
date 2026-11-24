@@ -272,6 +272,53 @@ export interface TopicRef {
   name: string
 }
 
+// ---- roofline + cost-model predictions (lab/profiler.measure_roofline, lab/costmodel.predict) -----------
+
+/** The engine's measured roofline (project `commands.profile`). Every field may be missing. */
+export interface Roofline {
+  kind?: 'profile' | string
+  model?: {
+    profile?: string
+    id?: string
+    quantization?: string
+    active_params_b?: number
+    total_params_b?: number
+    bytes_per_token_gb?: number
+  } | null
+  hardware?: { chip?: string; peak_bandwidth_gbs?: number; memory_gb?: number } | null
+  decode?: {
+    tokens_per_s?: number
+    ms_per_token?: number
+    achieved_bandwidth_gbs?: number
+    /** 0–1 */
+    bandwidth_utilization?: number
+  } | null
+  /** Cost of one forward pass that appends N tokens (the verification cost curve), keyed by N. */
+  forward_cost_ms?: Record<string, number> | null
+  batch_decode_tokens_per_s?: Record<string, number> | null
+  prefill_tokens_per_s?: number | null
+  draft?: { profile?: string; id?: string; ms_per_token?: number } | null
+  environment?: Record<string, unknown> | null
+  [extra: string]: unknown
+}
+
+export type Likelihood = 'likely' | 'marginal' | 'unlikely' | 'unknown'
+export type Bottleneck = 'bandwidth' | 'overhead' | 'mixed' | 'unknown'
+
+/** What a claim is predicted to gain on this engine, before building it. */
+export interface Prediction {
+  likelihood: Likelihood | string
+  predicted_gain_pct: { low: number; high: number } | null
+  metric?: string | null
+  relies_on?: string | null
+  bottleneck?: Bottleneck | string | null
+  reasons?: string[]
+  best_block_size?: number | null
+  acceptance?: number | null
+  note?: string | null
+  [extra: string]: unknown
+}
+
 export interface Recommendation extends Claim {
   rank: number
   project_id: number
@@ -286,6 +333,7 @@ export interface Recommendation extends Claim {
   topics: TopicRef[]
   experiment_id: number | null
   experiment_status: ExperimentStatus | null
+  prediction?: Prediction | null
 }
 
 export interface Paged<T> {
@@ -399,6 +447,9 @@ export interface Project {
   techniques: { name: string; description?: string; hooks?: string[] }[] | null
   repo: { path?: string; branch?: string; sha?: string; remote?: string | null } | null
   profiled_at: string | null
+  /** null until `POST /projects/{id}/roofline` has measured it */
+  roofline?: Roofline | null
+  roofline_at?: string | null
 }
 
 export type TriageStatus =
@@ -500,6 +551,8 @@ export interface ExperimentSummary {
   mode?: ExperimentMode | string | null
   bundle_claim_ids?: number[]
   depends_on_experiment_id?: number | null
+  /** set on a re-run: the experiment it repeats (same claim, current code) */
+  rerun_of_experiment_id?: number | null
 }
 
 export interface Guardrails {
@@ -540,6 +593,8 @@ export interface ExperimentSpec {
   tune_rounds?: number
   max_iterations?: number
   baseline_flags?: string[]
+  /** cost-model prediction for this claim on this engine, made when the spec was planned */
+  prediction?: Prediction | null
   [extra: string]: unknown
 }
 
@@ -659,6 +714,11 @@ export interface IterationEntry {
   summary: string | null
   next_changes: string | null
   tuned: { baseline?: Record<string, KnobValue> | null; variant?: Record<string, KnobValue> | null } | null
+  /** commit of this iteration's build (the keep-or-revert loop resets to the best one) */
+  sha?: string | null
+  eval_run_id?: number | null
+  adopt_run_id?: number | null
+  quality_ok?: boolean | null
 }
 
 export interface TuningTrial {
@@ -708,6 +768,8 @@ export interface BuildInfo {
   merge_sha?: string
   iteration?: number
   iterations?: IterationEntry[]
+  /** the best iteration, kept after judging; later iterations' code was reverted */
+  kept_iteration?: number | null
   tuning?: TuningResult
   [extra: string]: unknown
 }
@@ -820,6 +882,12 @@ export type ServicesHealth = Record<string, { url: string; status: string }>
 export interface SpecDecisionBody {
   decision: 'approve' | 'revise' | 'reject'
   overrides?: Record<string, unknown> | null
+  comment?: string | null
+}
+
+export interface RerunBody {
+  /** false: reuse the previous spec and stop at Gate 2; true: write a fresh spec from the paper with the previous result as feedback */
+  replan?: boolean
   comment?: string | null
 }
 

@@ -14,6 +14,7 @@ import { ConceptRef, RelatedStrip } from '../components/Related'
 import { EventTimeline } from '../components/EventTimeline'
 import { ChevronDown, ChevronRight, RefreshIcon, SearchIcon, SparkIcon } from '../components/Icons'
 import { Meter } from '../components/Charts'
+import { PredictionChip, PredictionRow } from '../components/Prediction'
 import { useToast } from '../components/Toast'
 import {
   Banner,
@@ -35,6 +36,7 @@ import {
   useDebounced,
 } from '../components/ui'
 import { formatScore, humanize, pluralize } from '../lib/format'
+import { LIKELIHOOD_INFO, LIKELIHOODS, likelihoodOf, sortByPrediction } from '../lib/roofline'
 import { isActiveStatus, isTriageRunning, TRIAGE_STATUS_LABEL, TRIAGE_STEPS, triageStepState } from '../lib/stages'
 
 const MAX_PICK = 5
@@ -286,6 +288,8 @@ function RecommendationCard({ item, selected, disabledReason, onToggle, shortlis
             <GlanceStrip claim={item} explainer={explainer} project={project} fit={item.fit} blockers={item.blockers} />
           </div>
 
+          <PredictionRow prediction={item.prediction} className="mt-3" />
+
           <RelatedStrip related={item.related} claimId={item.claim_id} paperId={item.paper_id} className="mt-3" />
 
           <div className="mt-3 flex flex-wrap items-center gap-1.5">
@@ -503,6 +507,8 @@ export default function Recommendations() {
   const topic = params.get('topic') ?? ''
   const category = params.get('category') ?? ''
   const includeBlocked = params.get('blocked') === '1'
+  const predicted = params.get('pred') ?? ''
+  const sortByPredicted = params.get('sort') === 'predicted'
   const [search, setSearch] = useState(params.get('q') ?? '')
   const q = useDebounced(search.trim(), 450)
 
@@ -554,6 +560,11 @@ export default function Recommendations() {
   const [mode, setMode] = useState<ExperimentMode>('single')
   const create = useCreateExperiments()
   const lookup = useMemo(() => new Map((recs.data ?? []).map((item) => [item.claim_id, item])), [recs.data])
+  // Likelihood filter and order are client-side: the cost model's prediction rides along with each recommendation.
+  const shown = useMemo(() => {
+    const items = (recs.data ?? []).filter((item) => !predicted || likelihoodOf(item.prediction) === predicted)
+    return sortByPredicted ? sortByPrediction(items) : items
+  }, [recs.data, predicted, sortByPredicted])
 
   useEffect(() => {
     setSelected(new Map())
@@ -761,14 +772,48 @@ export default function Recommendations() {
         </EmptyState>
       ) : (
         <>
-          <div className="mb-2 flex items-center justify-between text-xs text-muted">
+          {project && !project.roofline && (
+            <div className="mb-3">
+              <Banner tone="muted" action={<Link to={`/projects?project=${project.id}`} className="text-sm">Measure roofline</Link>}>
+                <strong>Predictions are unknown</strong> until the engine’s roofline is measured — the cost model needs it to estimate each claim’s gain here.
+              </Banner>
+            </div>
+          )}
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-xs text-muted">
             <span>
-              {pluralize(recs.data.length, 'claim')} {recs.isFetching && '· updating…'}
+              {predicted ? `${pluralize(shown.length, 'claim')} of ${recs.data.length}` : pluralize(recs.data.length, 'claim')} {recs.isFetching && '· updating…'}
+              <span className="hidden sm:inline"> · suggested: pick 1–2 (max {MAX_PICK})</span>
             </span>
-            <span>Suggested: pick 1–2 (max {MAX_PICK})</span>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+              <span className="inline-flex items-center gap-1.5">
+              <label htmlFor="rec-predicted">Predicted</label>
+              <select id="rec-predicted" className="input h-7 w-auto py-0 text-xs" value={predicted} onChange={(e) => setParam('pred', e.target.value || null)}>
+                <option value="">any likelihood</option>
+                {LIKELIHOODS.map((value) => (
+                  <option key={value} value={value}>
+                    {LIKELIHOOD_INFO[value].label}
+                  </option>
+                ))}
+              </select>
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+              <label htmlFor="rec-sort">Sort</label>
+              <select id="rec-sort" className="input h-7 w-auto py-0 text-xs" value={sortByPredicted ? 'predicted' : ''} onChange={(e) => setParam('sort', e.target.value || null)}>
+                <option value="">match score</option>
+                <option value="predicted">predicted gain here</option>
+              </select>
+              </span>
+            </div>
           </div>
+          {!shown.length && (
+            <EmptyState title={`No claims predicted ${LIKELIHOOD_INFO[likelihoodOf({ likelihood: predicted, predicted_gain_pct: null })].label}`} icon={<SparkIcon size={28} />} action={<Button onClick={() => setParam('pred', null)}>Show all predictions</Button>}>
+              {predicted === 'unlikely' && !includeBlocked
+                ? 'Claims the cost model calls unlikely are blocked — tick “Include blocked” to see them.'
+                : 'Try another likelihood or include blocked claims.'}
+            </EmptyState>
+          )}
           <div className="space-y-3">
-            {recs.data.map((item) => (
+            {shown.map((item) => (
               <RecommendationCard
                 key={item.claim_id}
                 item={item}
@@ -829,8 +874,9 @@ export default function Recommendations() {
           {picks.map((item) => (
             <li key={item.claim_id} className="rounded-md border border-line-muted px-3 py-2">
               <div className="font-medium">{item.name}</div>
-              <div className="text-xs">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
                 <ClaimedEffect claim={item} />
+                <PredictionChip prediction={item.prediction} />
               </div>
               {item.blockers.length > 0 && (
                 <div className="mt-1 flex flex-wrap gap-1">

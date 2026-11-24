@@ -9,8 +9,10 @@ import { Chip, RelativeTime } from './ui'
 const JOB_TONE: Record<string, Tone> = { queued: 'attention', running: 'accent', done: 'success', failed: 'danger', cancelled: 'muted' }
 
 /** Status of one queued job: state, timing, result/error and its live progress events. */
-export function JobStatus({ job, title, action }: { job: Job; title: ReactNode; action?: ReactNode }) {
+export function JobStatus({ job, title, action, summary }: { job: Job; title: ReactNode; action?: ReactNode; summary?: ReactNode }) {
   const live = useLiveEvents()
+  // Nested result values (e.g. a roofline's decode stats) don't read well inline; callers pass a summary instead.
+  const scalars = Object.entries(job.result ?? {}).filter(([, value]) => value === null || typeof value !== 'object')
   const events = live.events.filter((event) => event.job_id === job.id)
   const active = job.status === 'queued' || job.status === 'running'
   return (
@@ -34,9 +36,9 @@ export function JobStatus({ job, title, action }: { job: Job; title: ReactNode; 
         </p>
       )}
       {job.error && <pre className="max-h-40 overflow-auto border-t border-line-muted bg-danger-subtle p-2 text-xs whitespace-pre-wrap text-danger">{job.error}</pre>}
-      {job.result && !job.error && (
+      {job.result && !job.error && (summary || scalars.length > 0) && (
         <p className="border-t border-line-muted px-3 py-2 text-xs text-muted">
-          Result: {Object.entries(job.result).map(([key, value]) => `${humanize(key)} ${String(value)}`).join(' · ')}
+          Result: {summary ?? scalars.map(([key, value]) => `${humanize(key)} ${String(value)}`).join(' · ')}
         </p>
       )}
       {(events.length > 0 || active) && (

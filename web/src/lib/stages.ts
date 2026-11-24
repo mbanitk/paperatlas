@@ -64,6 +64,18 @@ export const canCancel = (status: ExperimentStatus) => !isTerminalStatus(status)
 export const canRetry = (status: ExperimentStatus, error?: string | null) =>
   status === 'failed' || status === 'cancelled' || (status === 'blocked' && !!error)
 
+/** Statuses the backend lets you re-run (service.RERUNNABLE_STATUSES): a new experiment for the same claim on the current code. */
+export const RERUNNABLE_STATUSES: readonly ExperimentStatus[] = ['awaiting_decision', 'merged', 'dropped', 'rejected', 'failed', 'cancelled']
+export const canRerun = (status: ExperimentStatus) => RERUNNABLE_STATUSES.includes(status)
+
+/** Ids of the experiments that re-run `id`, oldest first. */
+export function rerunsOf(id: number, experiments: readonly { id: number; rerun_of_experiment_id?: number | null }[] | undefined): number[] {
+  return (experiments ?? [])
+    .filter((item) => item.rerun_of_experiment_id === id)
+    .map((item) => item.id)
+    .sort((a, b) => a - b)
+}
+
 export type Tone = 'neutral' | 'accent' | 'attention' | 'success' | 'danger' | 'done' | 'muted'
 
 export interface StatusInfo {

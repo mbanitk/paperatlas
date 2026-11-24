@@ -22,6 +22,7 @@ import {
 } from '../../lib/protocol'
 import { diffOverrides, FIELD_LABELS, rebaseForm, specToForm, validateSpecForm, type SpecForm } from '../../lib/spec'
 import { ProtocolEditor, ProtocolSummary } from './Protocol'
+import { PredictionPanel } from '../../components/Prediction'
 
 const fieldLabel = (field: EditableField | ProtocolField) => (isProtocolField(field) ? PROTOCOL_LABELS[field] : FIELD_LABELS[field])
 
@@ -377,6 +378,11 @@ export function SpecGate({ experiment, project }: { experiment: Experiment; proj
           )}
         </div>
 
+        {!v2 && spec.prediction && (
+          <div className="mt-5 border-t border-line-muted pt-4 md:max-w-xl">
+            <PredictionPanel prediction={spec.prediction} claimed={spec.claimed_gain_pct} />
+          </div>
+        )}
         {v2 && (
           <div className="mt-5 space-y-3 border-t border-line-muted pt-4">
             <ProtocolSummary spec={preview} changed={protocolChanged} />

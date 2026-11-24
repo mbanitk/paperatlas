@@ -13,6 +13,7 @@ import type {
   PaperSummary,
   PickBody,
   Recommendation,
+  RerunBody,
   SpecDecisionBody,
   Topic,
   TopicExplainer,
@@ -93,6 +94,23 @@ export const useMatchJobs = (projectId: number) =>
     queryKey: ['jobs', 'match', projectId] as const,
     queryFn: async () =>
       (await api.lab.jobs(200)).filter((job) => job.kind === 'match' && Number((job.payload ?? {}).project_id) === projectId),
+    refetchInterval: (query) => (query.state.data?.some((job) => ACTIVE_JOB.has(job.status)) ? 3_000 : 15_000),
+  })
+
+export const useMeasureRoofline = (id: number) => {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: ({ model, rematch }: { model?: string; rematch?: boolean } = {}) => api.lab.measureRoofline(id, model, rematch),
+    onSuccess: () => client.invalidateQueries({ queryKey: ['jobs'] }),
+  })
+}
+
+/** Roofline jobs of one project (newest first); polls quickly while one is queued or running. */
+export const useRooflineJobs = (projectId: number) =>
+  useQuery({
+    queryKey: ['jobs', 'roofline', projectId] as const,
+    queryFn: async () =>
+      (await api.lab.jobs(200)).filter((job) => job.kind === 'project.roofline' && Number((job.payload ?? {}).project_id) === projectId),
     refetchInterval: (query) => (query.state.data?.some((job) => ACTIVE_JOB.has(job.status)) ? 3_000 : 15_000),
   })
 
@@ -287,6 +305,23 @@ export const useMergeDecision = (id: number) =>
 export const useCancelExperiment = (id: number) => useExperimentMutation(id, () => api.lab.cancel(id))
 
 export const useRetryExperiment = (id: number) => useExperimentMutation(id, () => api.lab.retry(id))
+
+/** Starts a new experiment for the same claim; the old one only gains an event, so refresh it and the lists. */
+export const useRerunExperiment = (id: number) => {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: (body: RerunBody) => api.lab.rerun(id, body),
+    onError: () => client.invalidateQueries({ queryKey: keys.experiment(id), exact: true }),
+    onSuccess: (experiment) => {
+      client.setQueryData(keys.experiment(experiment.id), experiment)
+      client.invalidateQueries({ queryKey: keys.experiment(id), exact: true })
+      client.invalidateQueries({ queryKey: ['experiments'] })
+      client.invalidateQueries({ queryKey: keys.stats })
+      client.invalidateQueries({ queryKey: ['jobs'] })
+      client.invalidateQueries({ queryKey: ['recommendations'] })
+    },
+  })
+}
 
 export const useEditSpec = (id: number) => {
   const client = useQueryClient()

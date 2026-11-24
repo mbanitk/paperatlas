@@ -10,6 +10,8 @@ import { useToast } from '../../components/Toast'
 import { Button, Card, Chip, DefinitionList, Field, InlineError, cx, errorMessage } from '../../components/ui'
 import { displayValue, formatCI, formatNumber, formatPct, formatWorkload, humanize } from '../../lib/format'
 import { adoptionInfo, currentIteration, protocolOf } from '../../lib/protocol'
+import { predictionMatchesMetric } from '../../lib/roofline'
+import { PredictedLine } from '../../components/Prediction'
 import { DiagnosisCallout, IterationsTimeline, MechanismTableView, TuningTable, VerdictTiles } from './VerdictV2'
 
 const REPRODUCED_FRACTION_OF_CLAIM = 0.7
@@ -206,7 +208,7 @@ export function VerdictPanel({ experiment, verdict, project }: { experiment: Exp
               knobOrder={protocolOf(experiment.spec).knobs.map((knob) => knob.name)}
             />
           )}
-          <IterationsTimeline iterations={iterations} />
+          <IterationsTimeline iterations={iterations} kept={experiment.build.kept_iteration} />
         </div>
       ) : (
         <>
@@ -231,8 +233,17 @@ export function VerdictPanel({ experiment, verdict, project }: { experiment: Exp
       </div>
 
       <div className="mt-4 rounded-md border border-line-muted px-3 py-2">
-        <ImprovementChart median={verdict.median_delta_pct} low={verdict.ci_low_pct} high={verdict.ci_high_pct} claimed={claimed} threshold={threshold} target={target} />
+        <ImprovementChart
+          median={verdict.median_delta_pct}
+          low={verdict.ci_low_pct}
+          high={verdict.ci_high_pct}
+          claimed={claimed}
+          threshold={threshold}
+          target={target}
+          predicted={predictionMatchesMetric(experiment.spec.prediction, verdict.primary_metric) ? experiment.spec.prediction!.predicted_gain_pct : null}
+        />
       </div>
+      <PredictedLine prediction={experiment.spec.prediction} metric={verdict.primary_metric} className="mt-1.5" />
         </>
       )}
 

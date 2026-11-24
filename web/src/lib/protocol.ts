@@ -21,6 +21,8 @@ export const MAX_PAPER_PROMPTS = 6
 export const MAX_COUNTERS = 4
 export const MAX_KNOBS = 3
 export const MAX_CANDIDATES = 3
+/** keep-or-revert loop: build → measure → diagnose rounds (planner.ExperimentSpec.max_iterations, 1–5) */
+export const MAX_ITERATIONS = 5
 /** planner._normalize_protocol clamps new tokens to 16–256 and keeps prompts within a 1,200-token round. */
 export const MIN_NEW_TOKENS = 16
 export const MAX_NEW_TOKENS = 256
@@ -301,7 +303,8 @@ export function validateProtocol(form: ProtocolForm): ProtocolErrors {
     if (!candidates.length) errors[`knobs.${index}.candidates`] = 'List 1–3 values, the paper’s first.'
     else if (candidates.length > MAX_CANDIDATES) errors[`knobs.${index}.candidates`] = `At most ${MAX_CANDIDATES} values.`
   })
-  if (!Number.isInteger(form.max_iterations) || form.max_iterations < 1 || form.max_iterations > 3) errors.max_iterations = 'Between 1 and 3.'
+  if (!Number.isInteger(form.max_iterations) || form.max_iterations < 1 || form.max_iterations > MAX_ITERATIONS)
+    errors.max_iterations = `Between 1 and ${MAX_ITERATIONS}.`
   return errors
 }
 
