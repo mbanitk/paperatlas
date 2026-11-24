@@ -185,7 +185,66 @@ def _output_text(data: dict) -> str:
     raise LLMError("No text output found in LLM response.")
 
 
+class CopilotCliLLMClient(LLMClient):
+    """Uses the GitHub Copilot CLI (tools disabled) as the LLM: for when no OpenAI key/credits are available.
+
+    JSON output is requested by embedding the schema in the prompt and parsed from the reply; strict schema
+    enforcement is not available, so callers keep validating the shape they receive."""
+
+    def __init__(self, model: Optional[str] = None, timeout: float = 300.0, cache: Optional[LLMCache] = None) -> None:
+        super().__init__(LLMConfig(api_key="", model=f"copilot-cli:{model or 'default'}", timeout=timeout), cache)
+        self.cli_model = model
+
+    def _call(self, system_prompt: str, user_prompt: str, schema: Optional[tuple]) -> str:
+        import shutil
+        import subprocess
+
+        if not shutil.which("copilot"):
+            raise LLMError("copilot CLI is not on PATH")
+        prompt = f"{system_prompt}\n\n{user_prompt}"
+        if schema:
+            name, json_schema = schema
+            prompt += (
+                f"\n\nReply with ONLY one JSON object named {name} that validates against this JSON schema "
+                f"(every property required; no prose, no code fences):\n{json.dumps(json_schema)}"
+            )
+        command = ["copilot", "-p", prompt, "--available-tools=", "--no-ask-user", "--no-color", "--no-auto-update",
+                   "--no-custom-instructions", "-s"]
+        if self.cli_model:
+            command += ["--model", self.cli_model]
+        last_error = "no output"
+        for attempt in range(self.config.max_retries):
+            try:
+                done = subprocess.run(command, capture_output=True, text=True, timeout=self.config.timeout,
+                                      cwd="/tmp", stdin=subprocess.DEVNULL)
+            except subprocess.TimeoutExpired:
+                last_error = f"timed out after {self.config.timeout:.0f}s"
+                continue
+            text = (done.stdout or "").strip()
+            if done.returncode != 0 or not text:
+                last_error = f"exit {done.returncode}: {(done.stderr or text)[-300:]}"
+                time.sleep(2 * (attempt + 1))
+                continue
+            if not schema:
+                return text
+            start, end = text.find("{"), text.rfind("}")
+            if start >= 0 and end > start:
+                candidate = text[start : end + 1]
+                try:
+                    json.loads(candidate)
+                    return candidate
+                except json.JSONDecodeError as exc:
+                    last_error = f"invalid JSON: {exc}"
+            else:
+                last_error = "reply contained no JSON object"
+        raise LLMError(f"copilot CLI LLM failed: {last_error}")
+
+
 def build_default_llm_client(use_cache: bool = True) -> Optional[LLMClient]:
+    if (settings.env("PAPERATLAS_LLM_PROVIDER") or "").lower() == "copilot":
+        return CopilotCliLLMClient(
+            settings.env("PAPERATLAS_COPILOT_LLM_MODEL"), settings.llm_timeout(), LLMCache() if use_cache else None
+        )
     api_key = settings.llm_api_key()
     if not api_key:
         return None

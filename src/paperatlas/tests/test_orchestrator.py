@@ -528,3 +528,22 @@ def test_fixable_diagnosis_rebuilds_with_the_analysts_changes_then_waits_at_gate
     details = detail["verdict_detail"]["details"]
     assert [it["diagnosis"] for it in details["iterations"]] == ["implementation_suspect", "reproduced"]
     assert details["analysis"]["diagnosis"] == "reproduced" and details["adoption"]["verdict"] == "worth_adopting"
+
+
+def test_batch_runs_testable_claims_one_at_a_time(lab, monkeypatch):
+    from paperatlas.lab import batch
+
+    project_id = lab["project"]["id"]
+    seen = []
+
+    def fake_sleep(_):
+        seen.append([status for _, status in batch.busy_experiments(project_id)])
+        drain()
+
+    monkeypatch.setattr(batch.time, "sleep", fake_sleep)
+    started = batch.run_batch(project_id, limit=1, say=lambda message: None)
+    assert len(started) == 1
+    drain()
+    assert all(len(statuses) <= 1 for statuses in seen)
+    assert service.get_experiment(started[0]["id"])["status"] == "awaiting_decision"
+    assert batch.pending_claims(project_id) == []

@@ -278,6 +278,11 @@ def _symlink_problem(workdir: Path, path: str, protected: tuple[str, ...]) -> Op
     return None
 
 
+def _is_bytecode_cache(path: str) -> bool:
+    """Interpreter caches written by merely importing/testing code are not changes to the measurement setup."""
+    return "__pycache__/" in path or path.endswith((".pyc", ".pyo"))
+
+
 def protected_path_problems(workdir: Path, profile: dict[str, Any]) -> list[str]:
     """Problems if the measurement setup (lab.yaml, workloads, quality set) differs from the experiment base.
 
@@ -293,7 +298,9 @@ def protected_path_problems(workdir: Path, profile: dict[str, Any]) -> list[str]
     except WorkspaceError as exc:
         return [f"Could not verify the measurement files: {exc}"]
     touched = sorted(
-        {p for p in files if _is_protected(p, protected)} | set(filter(None, f"{drift}\0{extra}".split("\0")))
+        p
+        for p in {p for p in files if _is_protected(p, protected)} | set(filter(None, f"{drift}\0{extra}".split("\0")))
+        if not _is_bytecode_cache(p)
     )
     problems = [f"Measurement files must not change: {touched}"] if touched else []
     links = sorted(msg for msg in (_symlink_problem(workdir, p, protected) for p in files) if msg)

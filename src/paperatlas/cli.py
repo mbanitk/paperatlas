@@ -242,6 +242,17 @@ def cmd_digest(args: argparse.Namespace) -> None:
     print(f"digest written to {path}")
 
 
+def cmd_batch(args: argparse.Namespace) -> None:
+    from datetime import datetime
+
+    from paperatlas.lab.batch import run_batch
+
+    def say(message: str) -> None:
+        print(f"{datetime.now():%H:%M:%S} {message}", flush=True)
+
+    run_batch(_project_id(args.project), limit=args.limit, poll_s=args.poll, say=say)
+
+
 def cmd_report(args: argparse.Namespace) -> None:
     from paperatlas.lab.report import rerender_report
 
@@ -399,6 +410,14 @@ def build_parser() -> argparse.ArgumentParser:
     digest.add_argument("--project", required=True)
     digest.add_argument("--days", type=int, default=7)
     digest.set_defaults(func=cmd_digest)
+
+    batch = r2e_sub.add_parser(
+        "batch", help="run every claim testable on the project, one experiment at a time (auto-approves Gate 2)"
+    )
+    batch.add_argument("--project", required=True)
+    batch.add_argument("--limit", type=int, default=None)
+    batch.add_argument("--poll", type=float, default=20.0)
+    batch.set_defaults(func=cmd_batch)
 
     report = r2e_sub.add_parser("report", help="re-render an experiment's HTML report from stored results")
     report.add_argument("experiment", type=int)
