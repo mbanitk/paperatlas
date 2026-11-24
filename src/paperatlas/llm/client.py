@@ -1,4 +1,4 @@
-"""Small OpenAI Responses API client: text + strict JSON-schema output, retries, disk cache."""
+"""Small OpenAI Responses API client: text + strict JSON-schema output, retries, Postgres cache."""
 
 from __future__ import annotations
 
@@ -7,12 +7,17 @@ import json
 import logging
 import time
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Optional
 
 import httpx
+from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.exc import SQLAlchemyError
 
 from paperatlas import settings
+from paperatlas.db.engine import session_scope
+from paperatlas.db.schema import LLMCacheEntry
+from paperatlas.db.store import clean_text
 
 logger = logging.getLogger(__name__)
 
@@ -34,27 +39,36 @@ class LLMConfig:
 
 
 class LLMCache:
-    def __init__(self, cache_dir: str | Path | None = None) -> None:
-        self.cache_dir = Path(cache_dir) if cache_dir else settings.data_dir() / "llm_cache"
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
+    """LLM response cache in Postgres (`research.llm_cache`). Failures never block the LLM call."""
+
+    def __init__(self, database_url: Optional[str] = None) -> None:
+        self.database_url = database_url
 
     @staticmethod
     def key(*parts: Any) -> str:
         blob = json.dumps(parts, sort_keys=True, ensure_ascii=True, default=str)
         return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:32]
 
-    def get(self, key: str) -> Optional[Any]:
-        path = self.cache_dir / f"{key}.json"
-        if not path.exists():
+    def get(self, key: str) -> Optional[str]:
+        try:
+            with session_scope(self.database_url) as session:
+                return session.scalar(select(LLMCacheEntry.value).where(LLMCacheEntry.key == key))
+        except SQLAlchemyError as exc:
+            logger.warning("LLM cache read failed: %s", exc)
             return None
-        return json.loads(path.read_text(encoding="utf-8")).get("value")
 
-    def set(self, key: str, value: Any, meta: Optional[dict] = None) -> None:
-        path = self.cache_dir / f"{key}.json"
-        path.write_text(
-            json.dumps({"meta": meta or {}, "value": value}, ensure_ascii=True, indent=2),
-            encoding="utf-8",
+    def set(self, key: str, value: str, model: str, schema_name: Optional[str] = None) -> None:
+        row = {"key": key, "model": model, "schema_name": schema_name, "value": clean_text(value)}
+        statement = insert(LLMCacheEntry).values(**row)
+        statement = statement.on_conflict_do_update(
+            index_elements=[LLMCacheEntry.key],
+            set_={"model": row["model"], "schema_name": row["schema_name"], "value": row["value"]},
         )
+        try:
+            with session_scope(self.database_url) as session:
+                session.execute(statement)
+        except SQLAlchemyError as exc:
+            logger.warning("LLM cache write failed: %s", exc)
 
 
 class LLMClient:
@@ -92,7 +106,7 @@ class LLMClient:
                 return cached
         output = self._call(system_prompt, user_prompt, schema)
         if self.cache and key:
-            self.cache.set(key, output, {"model": self.config.model, "schema": schema and schema[0]})
+            self.cache.set(key, output, self.config.model, schema[0] if schema else None)
         return output
 
     def _payload(self, system_prompt: str, user_prompt: str, schema: Optional[tuple]) -> dict:
@@ -118,7 +132,9 @@ class LLMClient:
             "Content-Type": "application/json",
         }
         payload = self._payload(system_prompt, user_prompt, schema)
-        for attempt in range(1, self.config.max_retries + 1):
+        attempt = 0
+        while attempt < self.config.max_retries:
+            attempt += 1
             started = time.monotonic()
             try:
                 response = httpx.post(
@@ -133,7 +149,9 @@ class LLMClient:
                 time.sleep(2**attempt)
                 continue
             if response.status_code == 400 and "temperature" in response.text and "temperature" in payload:
+                # Model rejects `temperature`: resend without it; this does not use a retry.
                 payload.pop("temperature")
+                attempt -= 1
                 continue
             if response.status_code in _RETRY_STATUS and attempt < self.config.max_retries:
                 logger.warning("LLM %s, retrying (%d/%d)", response.status_code, attempt, self.config.max_retries)

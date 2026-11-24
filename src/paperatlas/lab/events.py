@@ -123,18 +123,33 @@ def enqueue(
     return job_id
 
 
+CLAIM_LOCK_KEY = 7_242_002
+JOB_LEASE_S = float(os.environ.get("PAPERATLAS_JOB_LEASE_S", "300"))
+_RESUMED = text("'{\"resumed\": true}'::jsonb")
+
+
 def claim_next_job(worker_id: str = WORKER_ID, kinds: Optional[list[str]] = None) -> Optional[dict[str, Any]]:
-    kind_filter = "AND kind = ANY(:kinds)" if kinds else ""
+    """Claim the oldest runnable job. Jobs of an experiment/triage that already has a running job
+    are skipped, so at most one graph execution per experiment runs at a time; claims are
+    serialized with a transaction-level advisory lock so two workers can't both pass that check."""
+    kind_filter = "AND j.kind = ANY(:kinds)" if kinds else ""
     with session_scope() as session:
+        session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": CLAIM_LOCK_KEY})
         row = session.execute(
             text(
                 f"""
                 UPDATE lab.jobs SET status = 'running', locked_by = :worker, started_at = now(),
-                       attempts = attempts + 1
+                       heartbeat_at = now(), attempts = attempts + 1
                 WHERE id = (
-                    SELECT id FROM lab.jobs
-                    WHERE status = 'queued' AND run_after <= now() {kind_filter}
-                    ORDER BY id
+                    SELECT j.id FROM lab.jobs j
+                    WHERE j.status = 'queued' AND j.run_after <= now() {kind_filter}
+                      AND NOT EXISTS (
+                        SELECT 1 FROM lab.jobs r
+                        WHERE r.status = 'running'
+                          AND ((j.experiment_id IS NOT NULL AND r.experiment_id = j.experiment_id)
+                               OR (j.triage_id IS NOT NULL AND r.triage_id = j.triage_id))
+                      )
+                    ORDER BY j.id
                     FOR UPDATE SKIP LOCKED
                     LIMIT 1
                 )
@@ -146,29 +161,85 @@ def claim_next_job(worker_id: str = WORKER_ID, kinds: Optional[list[str]] = None
     return row._asdict() if row else None
 
 
-def finish_job(job_id: int, result: Optional[dict] = None) -> None:
-    with session_scope() as session:
-        session.execute(
-            update(Job).where(Job.id == job_id).values(status="done", finished_at=_now(), result=result)
-        )
+def _owned(job_id: int, worker_id: str):
+    """Fence: only the worker that currently holds the job's lease may change its outcome."""
+    return update(Job).where(Job.id == job_id, Job.status == "running", Job.locked_by == worker_id)
 
 
-def fail_job(job_id: int, error: str) -> None:
+def finish_job(job_id: int, result: Optional[dict] = None, worker_id: str = WORKER_ID) -> bool:
     with session_scope() as session:
-        session.execute(
+        updated = session.execute(
+            _owned(job_id, worker_id).values(status="done", finished_at=_now(), result=result)
+        ).rowcount
+    if not updated:
+        logger.warning("Job %s finished but its lease was lost; outcome not recorded", job_id)
+    return bool(updated)
+
+
+def fail_job(job_id: int, error: str, worker_id: str = WORKER_ID) -> bool:
+    with session_scope() as session:
+        updated = session.execute(
+            _owned(job_id, worker_id).values(status="failed", finished_at=_now(), error=error[:8000])
+        ).rowcount
+    if not updated:
+        logger.warning("Job %s failed but its lease was lost; outcome not recorded", job_id)
+    return bool(updated)
+
+
+def requeue_job(job_id: int, worker_id: str = WORKER_ID) -> bool:
+    """Hand a job back to the queue (e.g. interrupted by a worker shutdown); resumes from checkpoints."""
+    with session_scope() as session:
+        updated = session.execute(
+            _owned(job_id, worker_id).values(
+                status="queued", locked_by=None, heartbeat_at=None, payload=Job.payload.op("||")(_RESUMED)
+            )
+        ).rowcount
+    return bool(updated)
+
+
+def heartbeat_jobs(job_ids: list[int], worker_id: str = WORKER_ID) -> int:
+    """Renew the lease of the jobs this worker is running."""
+    if not job_ids:
+        return 0
+    with session_scope() as session:
+        return session.execute(
             update(Job)
-            .where(Job.id == job_id)
-            .values(status="failed", finished_at=_now(), error=error[:8000])
-        )
+            .where(Job.id.in_(job_ids), Job.status == "running", Job.locked_by == worker_id)
+            .values(heartbeat_at=func.now())
+        ).rowcount or 0
 
 
-def requeue_stale_jobs() -> int:
-    """Jobs left 'running' by a worker that died are queued again (graphs resume from checkpoints)."""
+def _dead_local_workers(worker_ids: list[str]) -> list[str]:
+    """Workers on this host whose process is gone (their jobs can be reclaimed without waiting)."""
+    host = socket.gethostname()
+    dead = []
+    for worker_id in worker_ids:
+        worker_host, _, pid = (worker_id or "").rpartition(":")
+        if worker_host != host or not pid.isdigit() or int(pid) == os.getpid():
+            continue
+        try:
+            os.kill(int(pid), 0)
+        except ProcessLookupError:
+            dead.append(worker_id)
+        except PermissionError:
+            pass
+    return dead
+
+
+def requeue_stale_jobs(lease_s: Optional[float] = None) -> int:
+    """Re-queue running jobs whose lease expired (no heartbeat for `lease_s`) or whose worker
+    process on this host is gone; graphs resume from their checkpoints."""
+    lease_s = JOB_LEASE_S if lease_s is None else lease_s
     with session_scope() as session:
+        holders = session.scalars(select(Job.locked_by).where(Job.status == "running").distinct()).all()
+        dead = _dead_local_workers([holder for holder in holders if holder])
+        last_seen = func.coalesce(Job.heartbeat_at, Job.started_at, text("'-infinity'::timestamptz"))
+        expired = last_seen < func.now() - func.make_interval(0, 0, 0, 0, 0, 0, lease_s)
+        stale = (expired | Job.locked_by.in_(dead)) if dead else expired
         result = session.execute(
             update(Job)
-            .where(Job.status == "running")
-            .values(status="queued", locked_by=None, payload=Job.payload.op("||")(text("'{\"resumed\": true}'::jsonb")))
+            .where(Job.status == "running", stale)
+            .values(status="queued", locked_by=None, heartbeat_at=None, payload=Job.payload.op("||")(_RESUMED))
         )
         return result.rowcount or 0
 
@@ -186,6 +257,7 @@ def job_dict(job: Job) -> dict[str, Any]:
         "triage_id": job.triage_id,
         "created_at": job.created_at.isoformat() if job.created_at else None,
         "started_at": job.started_at.isoformat() if job.started_at else None,
+        "heartbeat_at": job.heartbeat_at.isoformat() if job.heartbeat_at else None,
         "finished_at": job.finished_at.isoformat() if job.finished_at else None,
     }
 

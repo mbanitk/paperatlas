@@ -156,7 +156,10 @@ export function layoutFlow(diagram: FlowDiagramData | null | undefined, metrics:
     const x2 = b.x
     const y2 = b.y + h / 2
     if (b.layer - a.layer > 1 && a.row === b.row) {
-      const high = Math.min(a.y, b.y) - arcRoom + 4
+      // Clear every node between the endpoints, not just the endpoints (branched flows put siblings higher).
+      let ceiling = Math.min(a.y, b.y)
+      for (const n of laidOut.values()) if (n.layer > a.layer && n.layer < b.layer) ceiling = Math.min(ceiling, n.y)
+      const high = ceiling - arcRoom + 4
       const sx = a.x + w / 2
       const ex = b.x + w / 2
       return { ...edge, route: 'arc', path: `M ${sx} ${a.y} C ${sx} ${high}, ${ex} ${high}, ${ex} ${b.y}`, labelX: (sx + ex) / 2, labelY: high + 6 }

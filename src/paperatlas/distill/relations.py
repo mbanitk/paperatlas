@@ -16,22 +16,28 @@ SYMMETRIC = {"complements": "complements", "alternative_to": "alternatives"}
 RELATED_KEYS = ("requires", "required_by", "builds_on", "extended_by", "complements", "alternatives", "evaluated_by", "evaluates")
 
 
-def _concept_rows(session, concept_ids: Iterable[int]) -> dict[int, dict[str, Any]]:
+def _concept_rows(
+    session, concept_ids: Iterable[int], project_id: Optional[int] = None
+) -> dict[int, dict[str, Any]]:
     rows = session.execute(
         select(Concept, Claim)
         .outerjoin(Claim, Claim.concept_id == Concept.id)
         .where(Concept.id.in_(list(concept_ids)))
     ).all()
     claim_ids = [claim.id for _, claim in rows if claim]
+    # Match data is per project; without a project, any project's match is used.
+    match_filter = [Match.claim_id.in_(claim_ids)]
+    if project_id is not None:
+        match_filter.append(Match.project_id == project_id)
     headlines = dict(
         session.execute(
             select(Match.claim_id, Match.explainer["headline"].astext).where(
-                Match.claim_id.in_(claim_ids), Match.explainer.is_not(None)
+                *match_filter, Match.explainer.is_not(None)
             )
         ).all()
     )
     testable_here = dict(
-        session.execute(select(Match.claim_id, Match.testable_here).where(Match.claim_id.in_(claim_ids))).all()
+        session.execute(select(Match.claim_id, Match.testable_here).where(*match_filter)).all()
     )
     return {
         concept.id: {
@@ -51,7 +57,9 @@ def _concept_rows(session, concept_ids: Iterable[int]) -> dict[int, dict[str, An
     }
 
 
-def related_for_claims(claim_ids: Iterable[int]) -> dict[int, dict[str, Any]]:
+def related_for_claims(
+    claim_ids: Iterable[int], project_id: Optional[int] = None
+) -> dict[int, dict[str, Any]]:
     """For each claim: concepts it requires / builds on / complements …, bundles and its position."""
     claim_ids = list(claim_ids)
     if not claim_ids:
@@ -77,7 +85,7 @@ def related_for_claims(claim_ids: Iterable[int]) -> dict[int, dict[str, Any]]:
         for concept_map in papers.values():
             for bundle in (concept_map or {}).get("bundles", []):
                 others.update(bundle["concept_ids"])
-        info = _concept_rows(session, others)
+        info = _concept_rows(session, others, project_id)
         totals = defaultdict(int)
         for paper_id, count in session.execute(
             select(Concept.paper_id, Concept.id).where(Concept.paper_id.in_(list(papers)))
@@ -116,12 +124,12 @@ def related_for_claims(claim_ids: Iterable[int]) -> dict[int, dict[str, Any]]:
             "role": me.get("role"),
             "concepts_in_paper": totals.get(paper_id, 0),
             "has_map": bool(concept_map),
-            "prerequisites": prerequisite_chain(claim_id),
+            "prerequisites": prerequisite_chain(claim_id, project_id),
         }
     return result
 
 
-def prerequisite_chain(claim_id: int) -> list[dict[str, Any]]:
+def prerequisite_chain(claim_id: int, project_id: Optional[int] = None) -> list[dict[str, Any]]:
     """Transitive `requires` closure for a claim, dependencies first (excludes the claim itself)."""
     with session_scope() as session:
         start = session.scalar(select(Claim.concept_id).where(Claim.id == claim_id))
@@ -150,17 +158,17 @@ def prerequisite_chain(claim_id: int) -> list[dict[str, Any]]:
 
         visit(start)
         chain = [cid for cid in ordered if cid != start]
-        info = _concept_rows(session, chain) if chain else {}
+        info = _concept_rows(session, chain, project_id) if chain else {}
     return [info[cid] for cid in chain if cid in info]
 
 
-def paper_concept_map(paper_id: str) -> Optional[dict[str, Any]]:
+def paper_concept_map(paper_id: str, project_id: Optional[int] = None) -> Optional[dict[str, Any]]:
     with session_scope() as session:
         concept_map = session.scalar(select(Paper.concept_map).where(Paper.paper_id == paper_id))
         concept_ids = session.scalars(select(Concept.id).where(Concept.paper_id == paper_id)).all()
         if not concept_ids:
             return None
-        info = _concept_rows(session, concept_ids)
+        info = _concept_rows(session, concept_ids, project_id)
         links = session.scalars(select(ConceptLink).where(ConceptLink.paper_id == paper_id)).all()
     order = (concept_map or {}).get("order") or sorted(concept_ids)
     nodes = [info[cid] for cid in order if cid in info] + [info[cid] for cid in concept_ids if cid not in order]

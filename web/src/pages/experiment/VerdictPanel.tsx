@@ -96,7 +96,8 @@ function DecisionDialog({ kind, onClose, experiment }: { kind: 'merge' | 'drop';
   const toast = useToast()
   const [comment, setComment] = useState('')
   const merge = kind === 'merge'
-  const submit = () =>
+  const submit = () => {
+    if (decide.isPending) return
     decide.mutate(
       { decision: kind, comment: comment.trim() || undefined },
       {
@@ -107,10 +108,12 @@ function DecisionDialog({ kind, onClose, experiment }: { kind: 'merge' | 'drop';
         onError: (error) => toast.error(errorMessage(error)),
       },
     )
+  }
   return (
     <Modal
       open
       onClose={onClose}
+      dismissable={!decide.isPending}
       size="sm"
       title={merge ? 'Merge this experiment?' : 'Drop this experiment?'}
       footer={
@@ -140,7 +143,7 @@ function DecisionDialog({ kind, onClose, experiment }: { kind: 'merge' | 'drop';
         )}
       </p>
       <Field label="Comment (optional)" htmlFor={`gate3-${kind}-comment`}>
-        <textarea id={`gate3-${kind}-comment`} className="input min-h-20" value={comment} onChange={(event) => setComment(event.target.value)} />
+        <textarea id={`gate3-${kind}-comment`} className="input min-h-20" value={comment} onChange={(event) => setComment(event.target.value)} disabled={decide.isPending} />
       </Field>
       <InlineError error={decide.error} />
     </Modal>

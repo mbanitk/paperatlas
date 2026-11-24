@@ -28,7 +28,7 @@ class TopicSettings(BaseModel):
 
 class RankingSettings(BaseModel):
     per_topic: int = 5
-    half_life_days: float = 90
+    half_life_days: float = Field(default=90, gt=0, allow_inf_nan=False)
     weights: dict[str, float] = Field(
         default_factory=lambda: {
             "relevance": 0.35,

@@ -2,17 +2,13 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any, Iterable, Optional
 
 from sqlalchemy import func, select
 
-from paperatlas import settings
 from paperatlas.concepts.extraction.models import canonical_concept_id
 from paperatlas.db.engine import session_scope
 from paperatlas.db.schema import Claim
@@ -34,7 +30,6 @@ class DistillStats:
     testable_claims: int = 0
     grouped: int = 0
     claim_ids: list[int] = field(default_factory=list)
-    log_path: Optional[Path] = None
 
 
 def concept_payload(concept: DistilledConcept, source: str, embedding: Any) -> dict[str, Any]:
@@ -74,7 +69,6 @@ class DistillPipeline:
         store: Optional[PaperStore] = None,
         extractor: Optional[ClaimExtractor] = None,
         use_llm: bool = True,
-        log_dir: Optional[Path] = None,
         concurrency: int = 4,
     ) -> None:
         self.concurrency = max(1, concurrency)
@@ -82,7 +76,6 @@ class DistillPipeline:
         self.extractor = extractor or ClaimExtractor(build_default_llm_client() if use_llm else None)
         if self.extractor.client is None:
             logger.warning("No LLM configured; falling back to heuristic concept extraction.")
-        self.log_dir = log_dir or settings.data_dir() / "distill"
 
     def distill_row(self, row: dict[str, Any]) -> list[int]:
         return self._persist(row, self.extractor.extract(row))
@@ -93,9 +86,7 @@ class DistillPipeline:
             concept_payload(concept, self.extractor.source, embeddings[index])
             for index, concept in enumerate(concepts)
         ]
-        claim_ids = self.store.save_distillation(row["paper_id"], payloads)
-        self._log(row, concepts)
-        return claim_ids
+        return self.store.save_distillation(row["paper_id"], payloads)
 
     def run(
         self,
@@ -109,9 +100,12 @@ class DistillPipeline:
         distilled: list[str] = []
         if paper_ids is not None:
             ids = list(paper_ids)
-            if reprocess:
-                self.store.reset_distillation(ids)
-            rows = [row for row in self.store.fetch_by_ids(ids) if reprocess or not row["distilled_at"]]
+            protected = self.store.reset_distillation(ids) if reprocess else set()
+            rows = [
+                row
+                for row in self.store.fetch_by_ids(ids)
+                if (reprocess and row["paper_id"] not in protected) or not row["distilled_at"]
+            ]
         else:
             if reprocess:
                 self.store.reset_distillation()
@@ -124,10 +118,10 @@ class DistillPipeline:
                 row = futures[future]
                 try:
                     concepts = future.result()
+                    claim_ids = self._persist(row, concepts)
                 except Exception:  # noqa: BLE001 - one bad paper must not stop the batch
                     logger.exception("Distilling %s failed", row["paper_id"])
                     continue
-                claim_ids = self._persist(row, concepts)
                 logger.info("[%d/%d] %s: %d claims — %s", index, len(rows), row["paper_id"], len(claim_ids), row["title"][:70])
                 stats.papers += 1
                 distilled.append(row["paper_id"])
@@ -144,7 +138,6 @@ class DistillPipeline:
             _run_all(lambda pid: map_paper(pid, self.extractor.client, force=True), distilled, self.concurrency, "concept maps", log)
             _run_all(lambda pid: explain_paper(pid, self.extractor.client, force=True), distilled, self.concurrency, "papers", log)
         stats.testable_claims = self._count_testable(stats.claim_ids)
-        stats.log_path = self._log_path
         return stats
 
     @staticmethod
@@ -155,22 +148,3 @@ class DistillPipeline:
             return session.scalar(
                 select(func.count()).where(Claim.id.in_(claim_ids), Claim.testable.is_(True))
             )
-
-    @property
-    def _log_path(self) -> Path:
-        if not hasattr(self, "_log_file"):
-            self.log_dir.mkdir(parents=True, exist_ok=True)
-            stamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
-            self._log_file = self.log_dir / f"claims_{stamp}.jsonl"
-        return self._log_file
-
-    def _log(self, row: dict[str, Any], concepts: list[DistilledConcept]) -> None:
-        with self._log_path.open("a", encoding="utf-8") as handle:
-            for concept in concepts:
-                handle.write(
-                    json.dumps(
-                        {"paper_id": row["paper_id"], **concept.model_dump(mode="json")},
-                        ensure_ascii=True,
-                    )
-                    + "\n"
-                )

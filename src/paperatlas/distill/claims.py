@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
@@ -39,7 +40,10 @@ CONCEPT_KINDS = (
 Category = Literal[CATEGORIES]  # type: ignore[valid-type]
 ConceptKind = Literal[CONCEPT_KINDS]  # type: ignore[valid-type]
 
-_PERCENT_UNITS = {"%", "percent", "pct", "percentage", "percentage points", "pp"}
+_PERCENT_UNITS = {"%", "percent", "pct", "percentage"}
+_POINT_UNITS = {"pp", "percentage points", "percentage point", "points", "pts", "p.p."}
+_BASELINE_PERCENT = re.compile(r"(\d+(?:\.\d+)?)\s*%")
+_BARE_NUMBER = re.compile(r"\s*(\d+(?:\.\d+)?)\s*")
 _RATIO_UNITS = {"x", "×", "times", "fold"}
 
 
@@ -63,11 +67,22 @@ class ClaimEffect(BaseModel):
         value = abs(self.value)
         if unit in _PERCENT_UNITS:
             return value
+        if unit in _POINT_UNITS:
+            # An absolute change in a %-valued metric (error 10% -> 8% is 2pp, a 20% gain);
+            # without a numeric baseline it cannot be made relative.
+            baseline = self.baseline_value()
+            return value / baseline * 100.0 if baseline else None
         if unit in _RATIO_UNITS and value > 0:
             if self.direction == "increase":
                 return (value - 1.0) * 100.0
             return (1.0 - (1.0 / value if value > 1 else value)) * 100.0
         return None
+
+    def baseline_value(self) -> Optional[float]:
+        """The baseline's own %-level, e.g. 10 for "10% error"; None if not stated."""
+        text = self.baseline or ""
+        match = _BASELINE_PERCENT.search(text) or _BARE_NUMBER.fullmatch(text)
+        return float(match.group(1)) if match else None
 
 
 class PaperSetup(BaseModel):

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { EditableField, ExperimentSpec } from '../api/types'
-import { diffOverrides, specToForm, validateSpecForm } from './spec'
+import { diffOverrides, rebaseForm, specToForm, validateSpecForm } from './spec'
 
 const FIELDS: EditableField[] = ['hypothesis', 'flag_name', 'primary_metric', 'success_threshold_pct', 'rounds', 'warmup', 'workload', 'model']
 const SPEC: Partial<ExperimentSpec> = {
@@ -43,5 +43,24 @@ describe('validateSpecForm', () => {
       options,
     )
     expect(Object.keys(errors).sort()).toEqual(['flag_name', 'rounds', 'success_threshold_pct', 'warmup', 'workload'])
+  })
+})
+
+describe('rebaseForm', () => {
+  const base = specToForm(SPEC, FIELDS)
+
+  it('keeps edits typed while a save was in flight and settles the saved ones', () => {
+    // saved rounds 20 and threshold "7.50"; the user then typed a new workload before the save returned
+    const form = { ...base, rounds: '20', success_threshold_pct: '7.50', workload: 'long_prompt' }
+    const saved = { ...SPEC, rounds: 20, success_threshold_pct: 7.5 }
+    const next = rebaseForm(base, form, saved, FIELDS)
+    expect(next).toEqual({ ...specToForm(saved, FIELDS), workload: 'long_prompt' })
+    expect(diffOverrides(saved, next, FIELDS)).toEqual({ workload: 'long_prompt' })
+  })
+
+  it('follows server changes to fields the user has not touched', () => {
+    const form = { ...base, model: 'other' }
+    const updated = { ...SPEC, warmup: 2 }
+    expect(rebaseForm(base, form, updated, FIELDS)).toEqual({ ...base, warmup: '2', model: 'other' })
   })
 })

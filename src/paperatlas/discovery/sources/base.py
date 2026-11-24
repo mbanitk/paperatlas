@@ -6,6 +6,7 @@ import logging
 import re
 import time
 from datetime import date
+from xml.etree import ElementTree
 from typing import Any, Optional, Protocol
 
 import httpx
@@ -54,7 +55,7 @@ class HttpSource:
             return []
         try:
             results = self._search(query, since, limit)
-        except (SourceError, httpx.HTTPError, ValueError) as exc:
+        except (SourceError, httpx.HTTPError, ValueError, ElementTree.ParseError) as exc:
             self._failures += 1
             logger.warning("%s search failed for %r: %s", self.name, query, exc)
             if not self.enabled:

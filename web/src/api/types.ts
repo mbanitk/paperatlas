@@ -38,7 +38,7 @@ export interface Stage {
 }
 
 export type Gate = 'approve_spec' | 'merge'
-export type VerdictName = 'reproduced' | 'partial' | 'not_reproduced' | 'regression'
+export type VerdictName = 'reproduced' | 'partial' | 'not_reproduced' | 'regression' | 'inconclusive'
 export type Effort = 'low' | 'medium' | 'high'
 
 export interface ClaimEffect {

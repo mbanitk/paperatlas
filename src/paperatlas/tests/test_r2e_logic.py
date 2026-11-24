@@ -81,7 +81,7 @@ def test_plan_without_llm_respects_claim_and_project():
     assert spec["primary_metric"] == "decode_tokens_per_s"
     assert spec["direction"] == "higher_is_better"
     assert spec["success_threshold_pct"] <= 8.0
-    assert spec["lossless"] and spec["guardrails"]["min_output_agreement"] == 0.95
+    assert spec["lossless"] and spec["guardrails"]["min_output_agreement"] == 1.0
     assert spec["flag_name"].isidentifier()
 
 
@@ -183,7 +183,7 @@ def test_claim_check_uses_the_papers_baseline_mode_and_adoption_uses_the_project
 def test_judge_fails_closed_without_quality_and_reports_mechanism_and_adoption():
     no_quality = bench_results([100, 101, 99, 100], [130, 131, 129, 130])
     no_quality["quality"] = {}
-    assert judge(no_quality, SPEC, PROFILE)["verdict"] == "regression"
+    assert judge(no_quality, SPEC, PROFILE)["verdict"] == "inconclusive"
 
     claim = bench_results([100, 101, 99, 100], [125, 126, 124, 125])
     claim["mechanism"] = {

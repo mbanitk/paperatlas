@@ -2,15 +2,26 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from datetime import UTC, datetime
 from typing import Any, Iterable, Optional, Sequence
 
-from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy import any_, delete, func, or_, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.orm import Session
 
-from paperatlas.concepts.extraction.models import PaperMetadata, PaperRecord
+from paperatlas.concepts.extraction.models import (
+    PaperMetadata,
+    PaperRecord,
+    arxiv_id_from_doi,
+    normalize_arxiv_id,
+    normalize_doi,
+)
 from paperatlas.db.engine import session_scope
-from paperatlas.db.schema import Claim, Concept, Paper
+from paperatlas.db.schema import Claim, Concept, Experiment, Paper
+
+logger = logging.getLogger(__name__)
 
 _MAX_FIELDS = ("citation_count", "influential_citation_count", "hf_upvotes")
 _FILL_FIELDS = (
@@ -74,6 +85,37 @@ def paper_row(paper: Paper) -> dict[str, Any]:
     return {field: getattr(paper, field) for field in PAPER_ROW_FIELDS}
 
 
+def _find_alias(session: Session, metadata: PaperMetadata) -> Optional[Paper]:
+    """An existing paper with the same DOI or arXiv id stored under another canonical id
+    (e.g. `doi:…` from a DOI-only source, then `arxiv:…` once the arXiv id is known)."""
+    if metadata.patent_number:
+        return None
+    doi = normalize_doi(metadata.doi)
+    arxiv = normalize_arxiv_id(metadata.arxiv_id) or arxiv_id_from_doi(doi)
+    conditions = []
+    if doi:
+        stored_doi = func.regexp_replace(
+            func.lower(func.trim(Paper.doi)), "^(https?://(dx\\.)?doi\\.org/|doi:)", ""
+        )
+        conditions.append(stored_doi == doi)
+    if arxiv:
+        stored_arxiv = func.regexp_replace(
+            func.lower(func.trim(Paper.arxiv_id)), "^arxiv:|v[0-9]+$", "", "g"
+        )
+        conditions += [stored_arxiv == arxiv, Paper.paper_id == f"arxiv:{arxiv}"]
+    if doi:
+        conditions.append(Paper.paper_id == f"doi:{doi}")
+    if not conditions:
+        return None
+    return session.scalars(
+        select(Paper)
+        .where(or_(*conditions), Paper.doc_type == metadata.doc_type)
+        .order_by(Paper.paper_id.like("arxiv:%").desc(), Paper.ingested_at)
+        .limit(1)
+        .with_for_update()
+    ).first()
+
+
 class PaperStore:
     def __init__(self, url: Optional[str] = None) -> None:
         self.url = url
@@ -97,26 +139,43 @@ class PaperStore:
         raw_texts: Optional[dict[str, Optional[str]]] = None,
         source_payload: Optional[dict] = None,
     ) -> list[str]:
-        """Insert new papers or merge new metadata into existing rows. Returns paper ids."""
+        """Insert new papers or merge new metadata into existing rows. Returns paper ids.
+
+        Safe under concurrent writers: new rows go in with ON CONFLICT DO NOTHING and every
+        row is then merged under a row lock. Papers already stored under another canonical
+        id with the same DOI / arXiv id are merged into that row (its id is returned)."""
         raw_texts = raw_texts or {}
-        ids: list[str] = []
+        ids: list[Optional[str]] = [None] * len(items)
+        source_payload = clean_json(source_payload)
+        # Lock rows in a stable order so concurrent batches cannot deadlock.
+        order = sorted(range(len(items)), key=lambda index: items[index].canonical_id())
         with session_scope(self.url) as session:
-            for metadata in items:
-                paper_id = metadata.canonical_id()
-                data = metadata.model_dump(mode="json")
-                paper = session.get(Paper, paper_id)
+            for index in order:
+                metadata = items[index]
+                canonical = metadata.canonical_id()
+                data = clean_json(metadata.model_dump(mode="json"))
+                paper = session.get(Paper, canonical, with_for_update=True)
                 if paper is None:
-                    paper = Paper(
-                        paper_id=paper_id,
-                        title=clean_text(metadata.title),
-                        doc_type=metadata.doc_type,
-                        source=metadata.source,
-                        sources=[metadata.source],
-                        authors=data.get("authors") or [],
-                        source_payload=source_payload,
+                    paper = _find_alias(session, metadata)
+                if paper is None:
+                    session.execute(
+                        pg_insert(Paper)
+                        .values(
+                            paper_id=canonical,
+                            title=clean_text(metadata.title),
+                            doc_type=metadata.doc_type,
+                            source=metadata.source,
+                            sources=[],
+                            authors=data.get("authors") or [],
+                            source_payload=source_payload,
+                        )
+                        .on_conflict_do_nothing(index_elements=[Paper.paper_id])
                     )
-                    session.add(paper)
-                elif metadata.source not in (paper.sources or []):
+                    paper = session.get(
+                        Paper, canonical, with_for_update=True, populate_existing=True
+                    )
+                paper_id = paper.paper_id
+                if metadata.source not in (paper.sources or []):
                     paper.sources = [*(paper.sources or []), metadata.source]
                 for field in _FILL_FIELDS:
                     value = getattr(metadata, field)
@@ -132,14 +191,14 @@ class PaperStore:
                         setattr(paper, field, max(value, getattr(paper, field) or 0))
                 if not paper.authors and data.get("authors"):
                     paper.authors = data["authors"]
-                raw_text = clean_text(raw_texts.get(paper_id))
+                raw_text = clean_text(raw_texts.get(canonical))
                 if raw_text:
                     paper.raw_text = raw_text
                     paper.text_fetched_at = _now()
                 paper.updated_at = _now()
                 session.flush()
-                ids.append(paper_id)
-        return ids
+                ids[index] = paper_id
+        return ids  # type: ignore[return-value]
 
     def get(self, paper_id: str) -> Optional[dict[str, Any]]:
         with session_scope(self.url) as session:
@@ -218,12 +277,44 @@ class PaperStore:
             papers = session.scalars(select(Paper).where(Paper.paper_id.in_(ids))).all()
             return [paper_row(paper) for paper in papers]
 
-    def reset_distillation(self, paper_ids: Optional[Iterable[str]] = None) -> None:
+    @staticmethod
+    def _with_experiments(session: Session, paper_ids: Optional[Iterable[str]] = None) -> set[str]:
+        query = (
+            select(Claim.paper_id)
+            .join(
+                Experiment,
+                or_(Experiment.claim_id == Claim.id, Claim.id == any_(Experiment.bundle_claim_ids)),
+            )
+            .distinct()
+        )
+        if paper_ids is not None:
+            query = query.where(Claim.paper_id.in_(list(paper_ids)))
+        return set(session.scalars(query).all())
+
+    def papers_with_experiments(self, paper_ids: Optional[Iterable[str]] = None) -> set[str]:
+        """Papers whose claims back lab experiments: their distillation must not be replaced
+        (deleting the claims would cascade into experiments, runs, verdicts and jobs)."""
         with session_scope(self.url) as session:
+            return self._with_experiments(session, paper_ids)
+
+    def reset_distillation(self, paper_ids: Optional[Iterable[str]] = None) -> set[str]:
+        """Mark papers for re-distillation, skipping (and returning) those with experiments."""
+        with session_scope(self.url) as session:
+            ids = list(paper_ids) if paper_ids is not None else None
+            protected = self._with_experiments(session, ids)
+            if protected:
+                logger.warning(
+                    "Not re-distilling %d paper(s) whose claims have lab experiments: %s",
+                    len(protected),
+                    ", ".join(sorted(protected)[:10]),
+                )
             statement = update(Paper).values(distilled_at=None)
-            if paper_ids is not None:
-                statement = statement.where(Paper.paper_id.in_(list(paper_ids)))
+            if ids is not None:
+                statement = statement.where(Paper.paper_id.in_(ids))
+            if protected:
+                statement = statement.where(Paper.paper_id.not_in(protected))
             session.execute(statement)
+        return protected
 
     def save_distillation(
         self,
@@ -232,30 +323,41 @@ class PaperStore:
     ) -> list[int]:
         """Replace a paper's concepts + claims. Each concept dict carries a `claim` dict.
 
-        Returns the new claim ids.
+        Returns the new claim ids. A paper whose claims back lab experiments keeps its
+        existing distillation (nothing is deleted) and an empty list is returned.
         """
         claim_ids: list[int] = []
         with session_scope(self.url) as session:
+            session.get(Paper, paper_id, with_for_update=True)
+            if self._with_experiments(session, [paper_id]):
+                logger.warning(
+                    "Keeping the existing distillation of %s: its claims have lab experiments",
+                    paper_id,
+                )
+                session.execute(
+                    update(Paper)
+                    .where(Paper.paper_id == paper_id, Paper.distilled_at.is_(None))
+                    .values(distilled_at=_now())
+                )
+                return []
             session.execute(delete(Concept).where(Concept.paper_id == paper_id))
             for concept_data in concepts:
                 concept = Concept(
                     paper_id=paper_id,
                     concept_key=concept_data["concept_key"],
-                    name=concept_data["name"],
-                    kind=concept_data.get("kind"),
-                    summary=concept_data.get("summary"),
-                    key_points=concept_data.get("key_points") or [],
+                    name=clean_json(concept_data["name"]),
+                    kind=clean_json(concept_data.get("kind")),
+                    summary=clean_json(concept_data.get("summary")),
+                    key_points=clean_json(concept_data.get("key_points") or []),
                     source=concept_data.get("source", "llm"),
                 )
                 session.add(concept)
                 session.flush()
-                concept.summary = clean_text(concept.summary)
                 claim_data = concept_data.get("claim")
                 if claim_data:
                     claim_data = {
                         key: (item if key == "embedding" else clean_json(item)) for key, item in claim_data.items()
                     }
-                if claim_data:
                     claim = Claim(
                         paper_id=paper_id, concept_id=concept.id, **claim_data
                     )

@@ -9,7 +9,7 @@ from typing import Callable, Iterator, Optional
 
 import psycopg
 
-from paperatlas.lab.process import Cancelled
+from paperatlas.lab.process import Cancelled, WorkerShutdown, shutting_down
 from paperatlas.settings import libpq_url
 
 GPU_LOCK_KEY = 7_242_001
@@ -27,6 +27,8 @@ def gpu_lock(
             if not waited and on_wait:
                 on_wait()
             waited = True
+            if shutting_down():
+                raise WorkerShutdown("worker is shutting down")
             if should_cancel and should_cancel():
                 raise Cancelled("cancelled while waiting for the GPU")
             time.sleep(poll_s)

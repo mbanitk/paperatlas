@@ -44,12 +44,11 @@ def run(args: argparse.Namespace) -> None:
         group=not args.no_group,
     )
     logger.info(
-        "Distilled %d papers → %d concepts, %d testable claims, %d grouped. Log: %s",
+        "Distilled %d papers → %d concepts, %d testable claims, %d grouped.",
         stats.papers,
         stats.concepts,
         stats.testable_claims,
         stats.grouped,
-        stats.log_path,
     )
 
 

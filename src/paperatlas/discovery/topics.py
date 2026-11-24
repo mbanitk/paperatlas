@@ -11,7 +11,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any, Callable, Optional, Sequence
 
 import numpy as np
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 
 from paperatlas.concepts.extraction.models import PaperMetadata
 from paperatlas.db.engine import session_scope
@@ -71,6 +71,8 @@ def collect_pool(
 
 
 def _minmax(values: Sequence[float]) -> list[float]:
+    if not values:
+        return []
     low, high = min(values), max(values)
     if high - low < 1e-9:
         return [0.5 for _ in values]
@@ -120,7 +122,9 @@ def cluster_papers(
 ) -> list[Cluster]:
     from sklearn.cluster import KMeans
 
-    n_clusters = max(2, min(40, len(paper_ids) // 8))
+    if len(paper_ids) == 0:
+        return []
+    n_clusters = min(len(paper_ids), max(2, min(40, len(paper_ids) // 8)))
     labels = KMeans(n_clusters=n_clusters, n_init=5, random_state=0).fit_predict(vectors)
     clusters = []
     for index in range(n_clusters):
@@ -284,6 +288,12 @@ def persist_topics(clusters: list[Cluster], config: R2EConfig) -> list[int]:
             topic.refreshed_at = now
             session.add(topic)
             session.flush()
+            # The topic's membership is exactly the current cluster: drop papers that left it.
+            session.execute(
+                delete(PaperTopic).where(
+                    PaperTopic.topic_id == topic.id, PaperTopic.paper_id.not_in(cluster.paper_ids)
+                )
+            )
             for pid in cluster.paper_ids:
                 link = session.get(PaperTopic, (pid, topic.id)) or PaperTopic(paper_id=pid, topic_id=topic.id)
                 link.relevance = cluster.relevance[pid]
@@ -307,7 +317,14 @@ def refresh_topics(
     items, seeds_by_paper = collect_pool(config, sources, since, report)
     if not items:
         raise RuntimeError("No papers found from any source; check network / API keys.")
-    paper_ids = list(dict.fromkeys(store.upsert_many(items)))
+    stored_ids = store.upsert_many(items)
+    # A paper may be stored under an alias id (same DOI / arXiv id); key seed votes by it.
+    stored_as = {metadata.canonical_id(): stored_id for metadata, stored_id in zip(items, stored_ids)}
+    stored_seeds: dict[str, Counter] = defaultdict(Counter)
+    for canonical, votes in seeds_by_paper.items():
+        stored_seeds[stored_as.get(canonical, canonical)].update(votes)
+    seeds_by_paper = stored_seeds
+    paper_ids = list(dict.fromkeys(stored_ids))
     report("discover", f"Pool: {len(paper_ids)} unique papers/patents", {"papers": len(paper_ids)})
     ensure_paper_embeddings(store, report)
 
@@ -316,6 +333,9 @@ def refresh_topics(
     papers = _paper_signals(ids)
     score_clusters(clusters, papers, config.ranking.half_life_days)
     top = select_top(clusters, config.topics.count, config.topics.max_per_seed)
+    if not top:
+        report("discover", f"No topic clusters among {len(ids)} papers; keeping the current topics", None)
+        return list_topics()
     llm = llm if llm is not None else (build_default_llm_client() if use_llm else None)
     label_clusters(top, papers, llm)
     topic_ids = persist_topics(top, config)

@@ -100,6 +100,7 @@ export const VERDICT_INFO: Record<VerdictName, { label: string; tone: Tone; desc
   partial: { label: 'Partial', tone: 'attention', description: 'Significant improvement, but below the target.' },
   not_reproduced: { label: 'Not reproduced', tone: 'neutral', description: 'No significant change (95% CI includes 0).' },
   regression: { label: 'Regression', tone: 'danger', description: 'Got worse, or a quality / memory guardrail failed.' },
+  inconclusive: { label: 'Inconclusive', tone: 'attention', description: 'Not enough complete measurements (missing rounds or quality metrics) to judge.' },
 }
 
 export function verdictInfo(verdict: string) {

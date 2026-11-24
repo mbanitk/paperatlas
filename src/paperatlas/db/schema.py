@@ -391,6 +391,7 @@ class Job(Base):
     run_after: Mapped[datetime] = _now()
     locked_by: Mapped[Optional[str]] = mapped_column(Text)
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    heartbeat_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     error: Mapped[Optional[str]] = mapped_column(Text)
     result: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB)
@@ -427,4 +428,17 @@ class Event(Base):
     level: Mapped[str] = mapped_column(Text, server_default="info")
     message: Mapped[str] = mapped_column(Text)
     data: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = _now()
+
+
+class LLMCacheEntry(Base):
+    """Cached LLM responses keyed by a hash of (model, prompts, schema)."""
+
+    __tablename__ = "llm_cache"
+    __table_args__ = {"schema": RESEARCH}
+
+    key: Mapped[str] = mapped_column(Text, primary_key=True)
+    model: Mapped[str] = mapped_column(Text)
+    schema_name: Mapped[Optional[str]] = mapped_column(Text)
+    value: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = _now()

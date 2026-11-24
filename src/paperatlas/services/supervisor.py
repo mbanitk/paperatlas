@@ -75,4 +75,8 @@ def up(only: Optional[list[str]] = None, host: str = "127.0.0.1", reload: bool =
             process.wait(timeout=max(0.1, deadline - time.monotonic()))
         except subprocess.TimeoutExpired:
             process.kill()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                print(f"process {process.pid} did not exit after SIGKILL", flush=True)
     return exit_code

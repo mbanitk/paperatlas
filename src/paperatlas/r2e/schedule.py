@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import plistlib
+import shlex
 import shutil
 import subprocess
 import sys
@@ -13,9 +14,10 @@ LABEL = "com.paperatlas.r2e-weekly-scan"
 
 def plist_for(project: str, weekday: int, hour: int, workdir: Path) -> dict:
     executable = shutil.which("paperatlas") or str(Path(sys.executable).with_name("paperatlas"))
+    run, name = shlex.quote(executable), shlex.quote(project)
     script = (
-        f"cd {workdir} && {executable} r2e scan --project {project} --refresh-topics --inline "
-        f"&& {executable} r2e digest --project {project}"
+        f"cd {shlex.quote(str(workdir))} && {run} r2e scan --project {name} --refresh-topics --inline "
+        f"&& {run} r2e digest --project {name}"
     )
     logs = workdir / "data" / "r2e" / "schedule.log"
     return {

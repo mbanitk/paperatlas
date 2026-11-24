@@ -57,12 +57,13 @@ def _parse_sets(values: list[str]) -> dict[str, Any]:
 def _drain(experiment_id: int | None = None) -> None:
     from paperatlas.lab.events import claim_next_job
     from paperatlas.lab.orchestrator import setup_checkpointer
-    from paperatlas.services.worker import execute
+    from paperatlas.services.worker import execute, lease_keeper
 
     setup_checkpointer()
-    while (job := claim_next_job()) is not None:
-        print(f"→ running job {job['id']} ({job['kind']})", flush=True)
-        execute(job)
+    with lease_keeper():
+        while (job := claim_next_job()) is not None:
+            print(f"→ running job {job['id']} ({job['kind']})", flush=True)
+            execute(job)
 
 
 # ---- command handlers ------------------------------------------------------------------

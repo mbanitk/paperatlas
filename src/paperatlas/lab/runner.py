@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import shlex
 from datetime import UTC, datetime
 from pathlib import Path
@@ -15,8 +16,10 @@ from paperatlas.db.engine import session_scope
 from paperatlas.db.schema import Experiment, Run
 from paperatlas.lab.events import Reporter
 from paperatlas.lab.gpu import gpu_lock
+from paperatlas.lab.planner import SAFE_WORKLOAD, _workload_names
 from paperatlas.lab.process import run_command
 from paperatlas.lab.protocol import comparison_arms, tune_configs, uses_paper_baseline, workload_file
+from paperatlas.lab.safety import redact
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +38,22 @@ def validate_results(results: dict[str, Any]) -> list[str]:
     elif arms.count("baseline") != arms.count("variant"):
         problems.append(f"unequal rounds per arm: baseline {arms.count('baseline')}, variant {arms.count('variant')}")
     return problems
+
+
+def check_workload(workload: str, profile: dict[str, Any]) -> str:
+    allowed = _workload_names(profile)
+    if allowed and workload not in allowed:
+        raise RunFailed(f"workload {workload!r} is not one of the profile's workloads {allowed}")
+    if not allowed and not SAFE_WORKLOAD.fullmatch(str(workload)):
+        raise RunFailed(f"workload {workload!r} must match {SAFE_WORKLOAD.pattern} (the profile lists no workloads)")
+    return str(workload)
+
+
+def render_command(template: str, **values: Any) -> str:
+    """Fill the profile's command template with every substituted value shell-quoted (it runs via the shell)."""
+    for name in values:
+        template = re.sub(rf"""(["'])\{{{name}\}}\1""", f"{{{name}}}", template)
+    return template.format(**{name: shlex.quote(str(value)) for name, value in values.items()})
 
 
 def _set_status(experiment_id: int, status: str) -> None:
@@ -77,15 +96,16 @@ def run_benchmark(
     if uses_paper_baseline(spec) and comparison == "claim" and "{baseline_flags}" not in template:
         raise RunFailed("The claim check needs the paper's baseline mode, but bench_ab has no {baseline_flags} placeholder")
     paper_workload = workload_file(spec, artifacts) if comparison == "claim" else None
-    workload = str(paper_workload) if paper_workload else spec["workload"]
+    workload = str(paper_workload) if paper_workload else check_workload(spec["workload"], profile)
     workload_label = "paper regime" if paper_workload else spec["workload"]
-    command = template.format(
+    command = render_command(
+        template,
         model="smoke" if kind == "smoke" else spec["model"],
         flags=",".join(arms["variant_flags"]),
         baseline_flags=",".join(arms["baseline_flags"]),
-        workload=shlex.quote(workload),
+        workload=workload,
         rounds=int(rounds),
-        out=shlex.quote(str(out)),
+        out=out,
         warmup=int(spec.get("warmup", 1)),
     )
     if "{warmup}" not in template and spec.get("warmup") is not None and "--warmup" not in command:
@@ -123,11 +143,11 @@ def run_benchmark(
                 timeout_s=spec.get("smoke_timeout_s" if kind == "smoke" else "eval_timeout_s", 3600),
                 env=env,
                 should_cancel=should_cancel,
-                on_progress=lambda line: report(stage, line[:300], None),
+                on_progress=lambda line: report(stage, redact(line)[:300], None),
                 progress_every_s=15,
             )
         if not result.ok:
-            raise RunFailed(f"{kind} benchmark failed (exit {result.returncode}):\n{result.tail[-2000:]}")
+            raise RunFailed(f"{kind} benchmark failed (exit {result.returncode}):\n{redact(result.tail[-2000:])}")
         if not out.exists():
             raise RunFailed(f"{kind} benchmark produced no results file at {out}")
         results = json.loads(out.read_text(encoding="utf-8"))

@@ -22,21 +22,22 @@ from datetime import UTC, datetime
 from functools import wraps
 from typing import Any, Callable, Iterator, Optional, TypedDict
 
+import psycopg
 from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
-from sqlalchemy import select, update
+from sqlalchemy import case, select, update
 
 from paperatlas.db.engine import session_scope
 from paperatlas.db.schema import Experiment, Run, Topic, Triage, Verdict
 from paperatlas.lab import service
 from paperatlas.lab.analyst import analyse, fidelity_notes
-from paperatlas.lab.builder import build_experiment
+from paperatlas.lab.builder import build_experiment, ensure_protected_paths
 from paperatlas.lab.events import reporter
 from paperatlas.lab.judge import judge
 from paperatlas.lab.planner import plan_experiment
 from paperatlas.lab.profiler import register_project
-from paperatlas.lab.process import Cancelled
+from paperatlas.lab.process import Cancelled, WorkerShutdown, shutting_down
 from paperatlas.lab.report import render_report
 from paperatlas.lab.protocol import needs_adoption_run, spec_defaults
 from paperatlas.lab.runner import run_benchmark, tune
@@ -77,7 +78,23 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+CANCEL_STATUSES = ("cancelling", "cancelled")
+
+
+def _guarded_status(status: str):
+    """Status writes from graph nodes never overwrite a user's cancel (a failure while cancelling
+    becomes 'cancelled'; a completed merge/drop still wins) and never move an experiment out of 'merged'."""
+    keep = Experiment.status
+    if status in ("merged", "dropped"):
+        # The repo already reflects the outcome, so it wins over a late cancel.
+        return case((Experiment.status == "merged", keep), else_=status)
+    on_cancel = "cancelled" if status in ("failed", "cancelled") else keep
+    return case((Experiment.status == "merged", keep), (Experiment.status.in_(CANCEL_STATUSES), on_cancel), else_=status)
+
+
 def set_experiment(experiment_id: int, **values: Any) -> None:
+    if "status" in values:
+        values["status"] = _guarded_status(values["status"])
     with session_scope() as session:
         session.execute(
             update(Experiment).where(Experiment.id == experiment_id).values(updated_at=_now(), **values)
@@ -98,6 +115,37 @@ def cancel_checker(experiment_id: int) -> Callable[[], bool]:
     return should_cancel
 
 
+def _raise_if_cancelled(experiment_id: int) -> None:
+    if shutting_down():
+        raise WorkerShutdown("worker is shutting down")
+    if cancel_checker(experiment_id)():
+        raise Cancelled("cancelled by user")
+
+
+EXPERIMENT_LOCK_NS = 7_242
+
+
+@contextmanager
+def experiment_lock(experiment_id: int, poll_s: float = 2.0) -> Iterator[None]:
+    """At most one graph execution per experiment, even if a stale job was reclaimed while its
+    old executor is still alive (the queue already avoids claiming jobs of a busy experiment)."""
+    with psycopg.connect(libpq_url(), autocommit=True) as conn:
+        waited = False
+        while not conn.execute(
+            "SELECT pg_try_advisory_lock(%s, %s)", (EXPERIMENT_LOCK_NS, experiment_id)
+        ).fetchone()[0]:
+            if not waited:
+                logger.warning("Experiment %s is being advanced by another executor; waiting", experiment_id)
+                waited = True
+            if shutting_down():
+                raise WorkerShutdown("worker is shutting down")
+            time.sleep(poll_s)
+        try:
+            yield
+        finally:
+            conn.execute("SELECT pg_advisory_unlock(%s, %s)", (EXPERIMENT_LOCK_NS, experiment_id))
+
+
 def experiment_step(stage: str) -> Callable:
     """Record failures/cancellation on the experiment row and in events, then re-raise
     so the job fails and the checkpoint stays before this step (retry continues here)."""
@@ -108,8 +156,12 @@ def experiment_step(stage: str) -> Callable:
             experiment_id = state["experiment_id"]
             report = reporter(experiment_id=experiment_id)
             try:
+                _raise_if_cancelled(experiment_id)
                 set_experiment(experiment_id, error=None)
                 return func(state, report)
+            except WorkerShutdown:
+                report(stage, f"Interrupted during {stage} by a worker shutdown; it resumes here", None, level="warning")
+                raise
             except Cancelled as exc:
                 set_experiment(experiment_id, status="cancelled", error=f"{stage}: {exc}")
                 report(stage, f"Cancelled during {stage}", None, level="warning")
@@ -156,15 +208,36 @@ def node_plan(state: ExperimentState, report) -> dict:
         companions=context["bundle"],
         baseline_flags=context["prerequisite_flags"],
     )
+    _raise_if_cancelled(experiment_id)
     set_experiment(experiment_id, spec=spec, flag_name=spec["flag_name"], status="awaiting_approval")
     report("approve", "Spec ready — waiting for approval (Gate 2)", {"spec": spec})
     return {"feedback": None}
 
 
+def _gate_cancel_check(experiment_id: int, stage: str) -> None:
+    try:
+        _raise_if_cancelled(experiment_id)
+    except WorkerShutdown:
+        raise
+    except Cancelled as exc:
+        set_experiment(experiment_id, status="cancelled", error=f"{stage}: {exc}")
+        reporter(experiment_id=experiment_id)(stage, f"Cancelled before {stage}", None, level="warning")
+        raise
+
+
+def _gate_response(response: Any, gate: str, decisions: tuple[str, ...]) -> dict:
+    """run_experiment only resumes a gate with a payload for that gate; this is a last check."""
+    if not isinstance(response, dict) or response.get("gate") != gate or response.get("decision") not in decisions:
+        raise ValueError(f"resume payload {response!r} does not match gate {gate!r} (expected one of {decisions})")
+    return response
+
+
 def node_gate_spec(state: ExperimentState) -> dict:
     experiment_id = state["experiment_id"]
+    _gate_cancel_check(experiment_id, "approve")
     set_experiment(experiment_id, status="awaiting_approval")
     response = interrupt({"gate": "approve_spec", "experiment_id": experiment_id})
+    response = _gate_response(response, "approve_spec", ("approve", "revise", "reject"))
     decision = response.get("decision")
     report = reporter(experiment_id=experiment_id)
     if decision == "approve":
@@ -230,6 +303,7 @@ def node_smoke(state: ExperimentState, report) -> dict:
     experiment_id = state["experiment_id"]
     context = service.experiment_context(experiment_id)
     set_experiment(experiment_id, status="smoke_testing")
+    ensure_protected_paths(context["worktree"], context["profile"])
     results = run_benchmark(
         experiment_id,
         "smoke",
@@ -279,6 +353,7 @@ def node_run(state: ExperimentState, report) -> dict:
     experiment_id = state["experiment_id"]
     context = service.experiment_context(experiment_id)
     set_experiment(experiment_id, status="running")
+    ensure_protected_paths(context["worktree"], context["profile"])
     spec = spec_defaults(context["spec"])
     tuning = (context["experiment"].get("build") or {}).get("tuning") or {}
     common = dict(
@@ -445,31 +520,52 @@ def _maybe_open_pr(context: dict, verdict: dict, report) -> Optional[str]:
 
 def node_gate_merge(state: ExperimentState) -> dict:
     experiment_id = state["experiment_id"]
+    _gate_cancel_check(experiment_id, "decide")
     set_experiment(experiment_id, status="awaiting_decision")
     response = interrupt({"gate": "merge", "experiment_id": experiment_id})
+    response = _gate_response(response, "merge", ("merge", "drop"))
     return {"decision": response.get("decision"), "feedback": response.get("comment")}
+
+
+def _merge_message(flag_name: str, experiment_id: int) -> str:
+    return f"r2e: merge {flag_name} (experiment {experiment_id})"
+
+
+def _existing_merge(repo: str, branch: Optional[str], base: str, message: str) -> Optional[str]:
+    """The merge commit of an earlier, interrupted finalize (branch already merged into base)."""
+    if not branch or not git(repo, "branch", "--list", "--merged", base, branch, check=False):
+        return None
+    return git(repo, "log", base, "--merges", "-F", f"--grep={message}", "--format=%H", "-1", check=False) or None
 
 
 @experiment_step("finalize")
 def node_finalize(state: ExperimentState, report) -> dict:
     experiment_id = state["experiment_id"]
+    decision = state.get("decision")
+    if decision not in ("merge", "drop"):
+        raise ValueError(f"unknown Gate 3 decision {decision!r}; expected merge or drop")
     context = service.experiment_context(experiment_id)
     experiment = context["experiment"]
     repo = context["project"]["repo_path"]
     base = (context["profile"].get("repo") or {}).get("branch") or "main"
-    if state.get("decision") == "merge":
-        if context["worktree"] and context["worktree"].exists():
-            commit_all(context["worktree"], f"r2e: finalize {context['spec']['flag_name']} (experiment {experiment_id})")
-        sha = merge_branch(
-            repo,
-            experiment["branch"],
-            f"r2e: merge {context['spec']['flag_name']} (experiment {experiment_id})",
-            base,
-        )
-        remove_worktree(repo, experiment.get("worktree_path"), experiment["branch"], delete_branch=False)
-        set_experiment(experiment_id, status="merged", build={**(experiment.get("build") or {}), "merge_sha": sha})
+    if decision == "merge":
+        build = experiment.get("build") or {}
+        message = _merge_message(context["spec"]["flag_name"], experiment_id)
+        sha = build.get("merge_sha") or _existing_merge(repo, experiment["branch"], base, message)
+        if sha:
+            report("decide", f"Already merged into {base} at {sha[:10]}", {"sha": sha})
+        else:
+            if context["worktree"] and context["worktree"].exists():
+                commit_all(context["worktree"], f"r2e: finalize {context['spec']['flag_name']} (experiment {experiment_id})")
+                ensure_protected_paths(context["worktree"], context["profile"])
+            sha = merge_branch(repo, experiment["branch"], message, base)
+        set_experiment(experiment_id, status="merged", build={**build, "merge_sha": sha})
         report("decide", f"Merged into {base} at {sha[:10]} (flag stays off by default)", {"sha": sha})
-        register_project(repo, context["project"]["name"])
+        try:
+            remove_worktree(repo, experiment.get("worktree_path"), experiment["branch"], delete_branch=False)
+            register_project(repo, context["project"]["name"])
+        except Exception as exc:  # noqa: BLE001 - the merge stands; dependents re-profile before planning
+            report("decide", f"Merged, but cleanup/re-profiling failed: {exc}", None, level="warning")
         service.release_dependents(experiment_id, merged=True)
     else:
         remove_worktree(repo, experiment.get("worktree_path"), experiment["branch"], delete_branch=True)
@@ -514,6 +610,9 @@ REHYDRATE_AFTER = {
     "judging": ("run", {}),
     "awaiting_decision": ("judge", {}),
     "finalizing": ("judge", {}),
+    "rejected": ("gate_spec", {"decision": "reject"}),
+    "merged": ("finalize", {}),
+    "dropped": ("finalize", {}),
 }
 STAGE_REHYDRATE = {
     "approve": ("plan", {}),
@@ -550,26 +649,56 @@ def run_experiment(experiment_id: int, resume: Optional[dict] = None) -> str:
     with session_scope() as session:
         thread_id = session.scalar(select(Experiment.thread_id).where(Experiment.id == experiment_id))
     config = {"configurable": {"thread_id": thread_id}}
-    with checkpointer() as saver:
+    with experiment_lock(experiment_id), checkpointer() as saver:
         graph = build_experiment_graph().compile(checkpointer=saver)
         snapshot = graph.get_state(config)
+        rehydrated = False
         if not snapshot.values:
             as_node, values = rehydration_point(experiment_id)
             if as_node:
+                rehydrated = True
                 graph.update_state(config, {"experiment_id": experiment_id, **values}, as_node=as_node)
                 reporter(experiment_id=experiment_id)(
                     "recover", f"Rebuilt orchestration state after step '{as_node}'", None, level="warning"
                 )
-                if graph.get_state(config).next[:1] in (("gate_spec",), ("gate_merge",)):
+                if graph.get_state(config).next[:1] == ("rejected",):
                     graph.invoke(None, config)
                 snapshot = graph.get_state(config)
-        interrupted = any(task.interrupts for task in snapshot.tasks)
-        if resume is not None and interrupted:
-            graph.invoke(Command(resume=resume), config)
+        pending = [i for task in snapshot.tasks for i in task.interrupts]
+        if not pending and snapshot.next[:1] in (("gate_spec",), ("gate_merge",)):
+            # Run up to the gate's interrupt so a decision can be applied to it.
+            graph.invoke(None, config)
+            snapshot = graph.get_state(config)
+            pending = [i for task in snapshot.tasks for i in task.interrupts]
+        if resume is not None and pending:
+            gate = (pending[0].value or {}).get("gate")
+            if resume.get("gate") == gate:
+                graph.invoke(Command(resume=resume), config)
+            else:
+                # A stale/replayed decision for another gate must never act on this one.
+                reporter(experiment_id=experiment_id)(
+                    "recover",
+                    f"Ignored a decision for gate {resume.get('gate')!r} while waiting at gate {gate!r}",
+                    {"resume": resume},
+                    level="warning",
+                )
+        elif resume is not None and not rehydrated:
+            # The gate this decision was for has already been passed: either a replayed job, or a
+            # resume job re-queued mid-step (shutdown / expired lease). Don't re-apply the decision,
+            # but continue the graph from its checkpoint so the experiment isn't left stranded.
+            if snapshot.next:
+                reporter(experiment_id=experiment_id)(
+                    "recover", f"Gate {resume.get('gate')!r} already decided; continuing from checkpoint", None, level="warning"
+                )
+                set_experiment(experiment_id, error=None)
+                graph.invoke(None, config)
+            else:
+                reporter(experiment_id=experiment_id)(
+                    "recover", f"Ignored a decision for gate {resume.get('gate')!r}: no gate is pending", None, level="warning"
+                )
         elif not snapshot.values:
             graph.invoke({"experiment_id": experiment_id}, config)
         elif snapshot.next:
-            pending = [i for task in snapshot.tasks for i in task.interrupts]
             if pending:
                 gate = (pending[0].value or {}).get("gate")
                 set_experiment(
@@ -580,6 +709,8 @@ def run_experiment(experiment_id: int, resume: Optional[dict] = None) -> str:
             else:
                 set_experiment(experiment_id, error=None)
                 graph.invoke(None, config)
+    if service.experiment_status(experiment_id) == "cancelling":
+        set_experiment(experiment_id, status="cancelled")
     return service.experiment_status(experiment_id)
 
 

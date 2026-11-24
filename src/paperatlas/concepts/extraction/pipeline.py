@@ -17,7 +17,6 @@ from .models import (
 )
 from .pdf_parser import PdfParser
 from .sources import ArxivClient
-from .storage import JsonPaperStore
 
 logger = logging.getLogger(__name__)
 
@@ -27,15 +26,12 @@ class IngestionPipeline:
         self,
         arxiv_client: Optional[ArxivClient] = None,
         parser: Optional[PdfParser] = None,
-        json_store: Optional[JsonPaperStore] = None,
         store: Optional[PaperStore] = None,
-        use_db: bool = True,
         database_url: Optional[str] = None,
     ) -> None:
         self.arxiv_client = arxiv_client or ArxivClient()
         self.parser = parser or PdfParser()
-        self.json_store = json_store or JsonPaperStore()
-        self.store = store or (PaperStore(database_url) if use_db else None)
+        self.store = store or PaperStore(database_url)
 
     def ingest_identifiers(
         self,
@@ -138,9 +134,7 @@ class IngestionPipeline:
         return PaperRecord(metadata=metadata, raw_text=raw_text)
 
     def _persist(self, record: PaperRecord) -> None:
-        self.json_store.save(record)
-        if self.store:
-            self.store.save(record)
+        self.store.save(record)
 
 
 def download_pdf_text(pdf_url: str, parser: Optional[PdfParser] = None) -> Optional[str]:

@@ -95,7 +95,7 @@ def verdict_priors(project_id: int) -> dict[str, float]:
             .where(Experiment.project_id == project_id)
             .group_by(Claim.category, Verdict.verdict)
         ).all()
-    weight = {"reproduced": 1.0, "partial": 0.5, "not_reproduced": -1.0, "regression": -1.0}
+    weight = {"reproduced": 1.0, "partial": 0.5, "not_reproduced": -1.0, "regression": -1.0, "inconclusive": 0.0}
     totals: dict[str, list[float]] = {}
     for category, verdict, count in rows:
         totals.setdefault(category, []).extend([weight.get(verdict, 0.0)] * count)

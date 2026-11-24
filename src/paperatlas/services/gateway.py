@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import AsyncIterator
+from urllib.parse import quote
 
 import httpx
 from fastapi import Request
@@ -20,6 +22,23 @@ app = create_app("gateway", "Web console + API gateway.")
 client = httpx.AsyncClient(timeout=httpx.Timeout(60.0, read=None))
 
 
+def _raw_subpath(request: Request, service: str, path: str) -> str:
+    """The still-percent-encoded path after /api/{service}/ (so %23 / %3F in ids survive)."""
+    raw = request.scope.get("raw_path")
+    prefix = f"/api/{service}/".encode()
+    if raw and raw.startswith(prefix):
+        return raw[len(prefix):].decode("latin-1")
+    return quote(path, safe="/:@!$&'()*+,;=-._~")
+
+
+async def _stream(response: httpx.Response) -> AsyncIterator[bytes]:
+    try:
+        async for chunk in response.aiter_raw():
+            yield chunk
+    finally:
+        await response.aclose()
+
+
 @app.api_route("/api/{service}/{path:path}", methods=["GET", "POST", "PATCH", "PUT", "DELETE"])
 async def proxy(service: str, path: str, request: Request):
     base = BACKENDS.get(service)
@@ -27,7 +46,7 @@ async def proxy(service: str, path: str, request: Request):
         return JSONResponse({"detail": f"unknown service '{service}'"}, status_code=404)
     upstream = client.build_request(
         request.method,
-        f"{base}/{path}",
+        f"{base}/{_raw_subpath(request, service, path)}",
         params=request.query_params,
         headers={k: v for k, v in request.headers.items() if k.lower() not in HOP_HEADERS},
         content=await request.body(),
@@ -37,7 +56,7 @@ async def proxy(service: str, path: str, request: Request):
     except httpx.ConnectError:
         return JSONResponse({"detail": f"{service} service is not reachable at {base}"}, status_code=502)
     return StreamingResponse(
-        response.aiter_raw(),
+        _stream(response),
         status_code=response.status_code,
         headers={k: v for k, v in response.headers.items() if k.lower() not in HOP_HEADERS},
         background=BackgroundTask(response.aclose),

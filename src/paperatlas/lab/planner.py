@@ -21,6 +21,9 @@ from paperatlas.llm.client import LLMClient, LLMError
 
 logger = logging.getLogger(__name__)
 
+SAFE_WORKLOAD = re.compile(r"[A-Za-z0-9_.-]+")
+FLAG_MAX_LEN = 41
+
 EDITABLE_FIELDS = (
     "hypothesis",
     "flag_name",
@@ -96,6 +99,8 @@ def apply_overrides(spec: dict[str, Any], overrides: dict[str, Any], profile: di
         raise ValueError(f"primary_metric must be one of {sorted(metrics)}")
     if workloads and merged.workload not in workloads:
         raise ValueError(f"workload must be one of {workloads}")
+    if not workloads and not SAFE_WORKLOAD.fullmatch(merged.workload):
+        raise ValueError("workload must be letters, digits, '_', '.' or '-' (the profile lists no workloads)")
     merged.direction = _direction(metrics[merged.primary_metric])
     return merged.model_dump()
 
@@ -305,16 +310,20 @@ def plan_experiment(
     if claimed is not None and spec.success_threshold_pct > claimed:
         spec.success_threshold_pct = round(max(1.0, claimed * 0.5), 2)
     if spec.lossless:
-        spec.guardrails.min_output_agreement = 0.95
-    existing = {t.get("name") for t in profile.get("techniques") or []}
-    base_name, suffix = spec.flag_name, 2
-    while spec.flag_name in existing:
-        tail = f"_v{suffix}"
-        spec.flag_name = base_name[: 41 - len(tail)] + tail
-        suffix += 1
+        spec.guardrails.min_output_agreement = 1.0
+    spec.flag_name = unique_flag_name(spec.flag_name, {t.get("name") for t in profile.get("techniques") or []})
     if not spec.knobs:
         spec.tune = False
     return spec.model_dump()
+
+
+def unique_flag_name(name: str, existing: set[Any]) -> str:
+    candidate, counter = name, 2
+    while candidate in existing:
+        suffix = f"_v{counter}"
+        candidate = name[: FLAG_MAX_LEN - len(suffix)].rstrip("_") + suffix
+        counter += 1
+    return candidate
 
 
 def _normalize_protocol(draft: dict[str, Any]) -> None:

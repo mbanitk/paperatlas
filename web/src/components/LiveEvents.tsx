@@ -17,9 +17,21 @@ const LiveEventsContext = createContext<LiveEventsValue>({ events: [], status: '
 
 const FEED_SIZE = 80
 
+/** Research caches (list and detail query-key roots) refreshed by events of each pipeline stage. */
+const STAGE_QUERY_GROUPS: Record<string, string[]> = {
+  topics: ['topics', 'topic'],
+  // new papers land in the paper lists and the topic pages
+  discover: ['papers', 'paper', 'topics', 'topic'],
+  distill: ['recommendations', 'claims', 'claim', 'papers', 'paper', 'topic'],
+  match: ['recommendations', 'claims', 'claim', 'papers'],
+  pick: ['recommendations', 'claims', 'claim', 'papers'],
+  // explainer backfill: claim, paper and topic explainers plus concept maps
+  explain: ['recommendations', 'claims', 'claim', 'papers', 'paper', 'topics', 'topic'],
+}
+
 /**
  * One app-wide subscription to /api/lab/events/stream?after=-1: feeds the activity list and invalidates
- * cached queries touched by new events (experiments, triage, stats, jobs, recommendations).
+ * cached queries touched by new events (experiments, triage, stats, jobs and the research lists/details per stage).
  */
 export function LiveEventsProvider({ children }: { children: ReactNode }) {
   const client = useQueryClient()
@@ -60,12 +72,7 @@ export function LiveEventsProvider({ children }: { children: ReactNode }) {
           target.triage.add(event.triage_id)
           target.keys.add('triage')
         }
-        if (['match', 'pick', 'distill'].includes(event.stage)) {
-          target.keys.add('recommendations')
-          target.keys.add('claims')
-          target.keys.add('papers')
-        }
-        if (event.stage === 'topics') target.keys.add('topics')
+        for (const group of STAGE_QUERY_GROUPS[event.stage] ?? []) target.keys.add(group)
       }
       clearTimeout(timer.current)
       timer.current = setTimeout(flushInvalidations, 400)

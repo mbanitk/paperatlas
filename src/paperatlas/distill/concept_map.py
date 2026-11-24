@@ -118,8 +118,20 @@ def build_prompt(paper: Paper, concepts: list[tuple[Concept, Optional[Claim]]]) 
     return "\n".join(lines)
 
 
+def _reaches(graph: dict[int, set[int]], start: int, goal: int) -> bool:
+    stack, visited = [start], set()
+    while stack:
+        node = stack.pop()
+        if node == goal:
+            return True
+        if node not in visited:
+            visited.add(node)
+            stack.extend(graph.get(node, ()))
+    return False
+
+
 def parse_concept_map(payload: dict[str, Any], concept_ids: list[int]) -> dict[str, Any]:
-    """Validate indices, drop self/duplicate links, normalise symmetric relations."""
+    """Validate indices, drop self/duplicate/cyclic-`requires` links, normalise symmetric relations."""
     count = len(concept_ids)
 
     def concept_id(index: Any) -> Optional[int]:
@@ -129,6 +141,7 @@ def parse_concept_map(payload: dict[str, Any], concept_ids: list[int]) -> dict[s
     order += [cid for cid in concept_ids if cid not in order]
     roles = {cid: item["role"] for item in payload.get("roles") or [] if (cid := concept_id(item.get("concept"))) and item.get("role") in ROLES}
     links, seen = [], set()
+    requires: dict[int, set[int]] = {}
     for item in payload.get("links") or []:
         source, target, relation = concept_id(item.get("from")), concept_id(item.get("to")), item.get("relation")
         if not source or not target or source == target or relation not in RELATIONS:
@@ -138,7 +151,11 @@ def parse_concept_map(payload: dict[str, Any], concept_ids: list[int]) -> dict[s
         key = (source, target, relation)
         if key in seen:
             continue
+        if relation == "requires" and _reaches(requires, target, source):
+            continue  # keep `requires` acyclic (first-seen wins) so it has a valid topological order
         seen.add(key)
+        if relation == "requires":
+            requires.setdefault(source, set()).add(target)
         links.append({"source": source, "target": target, "relation": relation, "why": item.get("why"), "evidence": item.get("evidence")})
     bundles = []
     for item in payload.get("bundles") or []:

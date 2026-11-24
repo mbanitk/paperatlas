@@ -61,6 +61,18 @@ export function diffOverrides(
   return overrides
 }
 
+/**
+ * Form state after the server spec changed from the one `base` was derived from: fields the user has not
+ * touched (or whose edit the new spec now contains, e.g. after a save) follow the server; other edits are kept.
+ */
+export function rebaseForm(base: SpecForm, form: SpecForm, spec: Partial<ExperimentSpec>, fields: readonly EditableField[]): SpecForm {
+  const next = specToForm(spec, fields)
+  const dirty = diffOverrides(spec, form, fields)
+  const rebased = { ...form }
+  for (const field of fields) if (!(field in dirty) || form[field] === base[field]) rebased[field] = next[field]
+  return rebased
+}
+
 /** Client-side validation mirroring ExperimentSpec (planner.py). Returns field → message. */
 export function validateSpecForm(form: Partial<SpecForm>, options?: { metrics?: string[]; workloads?: string[]; models?: string[] }) {
   const errors: Partial<Record<EditableField, string>> = {}

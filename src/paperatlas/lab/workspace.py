@@ -30,30 +30,77 @@ def branch_name(experiment_id: int, flag_name: str) -> str:
     return f"r2e/exp-{experiment_id}-{flag_name.replace('_', '-')}"
 
 
+BASE_MARKER = "r2e-base"
+
+
 def create_worktree(repo: str | Path, experiment_id: int, flag_name: str, base: str = "main") -> tuple[Path, str]:
     branch = branch_name(experiment_id, flag_name)
     path = settings.data_dir().resolve() / "r2e" / "worktrees" / f"exp-{experiment_id}"
     if path.exists() and (path / ".git").exists():
+        if _read_base(path) is None:
+            _record_base(path, git(path, "merge-base", base, "HEAD", check=False) or git(repo, "rev-parse", base))
         return path, branch
     path.parent.mkdir(parents=True, exist_ok=True)
     existing = git(repo, "branch", "--list", branch)
     if existing:
         git(repo, "worktree", "add", str(path), branch)
+        base_sha = git(repo, "merge-base", base, branch, check=False) or git(repo, "rev-parse", f"{base}^{{commit}}")
     else:
-        git(repo, "worktree", "add", "-b", branch, str(path), base)
+        base_sha = git(repo, "rev-parse", f"{base}^{{commit}}")
+        git(repo, "worktree", "add", "-b", branch, str(path), base_sha)
+    _record_base(path, base_sha)
     return path, branch
 
 
+def _marker_path(worktree: str | Path) -> Path:
+    marker = Path(git(worktree, "rev-parse", "--git-path", BASE_MARKER))
+    return marker if marker.is_absolute() else Path(worktree) / marker
+
+
+def _record_base(worktree: str | Path, sha: str) -> None:
+    _marker_path(worktree).write_text(sha.strip() + "\n", encoding="utf-8")
+
+
+def _read_base(worktree: str | Path) -> Optional[str]:
+    try:
+        sha = _marker_path(worktree).read_text(encoding="utf-8").strip()
+    except (OSError, WorkspaceError):
+        return None
+    if sha and git(worktree, "cat-file", "-t", sha, check=False) == "commit":
+        return sha
+    return None
+
+
+def base_ref(worktree: str | Path, fallback: str = "main") -> str:
+    """The commit the experiment branch was created from (recorded at worktree creation).
+
+    Falls back to the merge-base with ``fallback`` (the profiled base branch) for older worktrees."""
+    return _read_base(worktree) or git(worktree, "merge-base", fallback, "HEAD", check=False) or fallback
+
+
+def _split_z(output: str) -> list[str]:
+    return [item for item in output.split("\0") if item]
+
+
 def changed_files(worktree: str | Path, base: str = "main") -> list[str]:
-    output = git(worktree, "diff", "--name-only", f"{base}...HEAD")
-    pending = git(worktree, "status", "--porcelain")
-    files = set(filter(None, output.splitlines()))
-    files.update(line[3:] for line in pending.splitlines() if line.strip())
+    """Files changed since the recorded base: committed, staged, unstaged and untracked (no rename folding)."""
+    ref = base_ref(worktree, base)
+    committed = _split_z(_git_raw(worktree, "diff", "--name-only", "-z", "--no-renames", f"{ref}...HEAD"))
+    pending = _split_z(_git_raw(worktree, "status", "--porcelain", "-z", "--untracked-files=all", "--no-renames"))
+    files = set(committed)
+    files.update(entry[3:] for entry in pending if len(entry) > 3)
     return sorted(files)
 
 
 def diff_stat(worktree: str | Path, base: str = "main") -> str:
-    return git(worktree, "diff", "--stat", f"{base}...HEAD", check=False)
+    return git(worktree, "diff", "--stat", f"{base_ref(worktree, base)}...HEAD", check=False)
+
+
+def _git_raw(repo: str | Path, *args: str) -> str:
+    result = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, timeout=300)
+    if result.returncode != 0:
+        raise WorkspaceError(f"git {' '.join(args)} failed: {result.stderr.strip() or result.stdout.strip()}")
+    return result.stdout
 
 
 def commit_all(worktree: str | Path, message: str) -> Optional[str]:
