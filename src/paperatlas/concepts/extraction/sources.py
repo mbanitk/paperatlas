@@ -30,6 +30,7 @@ class ArxivClient:
         query: str,
         max_results: int = 5,
         from_date: Optional[str] = None,
+        sort_by: Optional[str] = None,
     ) -> List[PaperMetadata]:
         if max_results <= 0:
             return []
@@ -44,26 +45,22 @@ class ArxivClient:
                 break
             batch_size = min(page_size, remaining)
             params = {
-                "search_query": f"all:{query}",
+                "search_query": query if ":" in query else f"all:{query}",
                 "start": start,
                 "max_results": batch_size,
             }
+            if sort_by:
+                params.update({"sortBy": sort_by, "sortOrder": "descending"})
             data = self._get_text(ARXIV_API_URL, params=params)
             batch = self._parse_feed_entry(data) if data else []
             if not batch:
                 break
             if from_date:
-                try:
-                    from_year = int(from_date.split("-", 1)[0])
-                except (ValueError, AttributeError):
-                    from_year = None
-                if from_year:
-                    batch = [
-                        item
-                        for item in batch
-                        if item.publication_year
-                        and item.publication_year >= from_year
-                    ]
+                batch = [
+                    item
+                    for item in batch
+                    if item.publication_date and item.publication_date.isoformat() >= from_date
+                ]
             collected.extend(batch)
             start += batch_size
         return collected[:max_results]
@@ -103,6 +100,7 @@ class ArxivClient:
                 namespaces=namespace,
             )
             year = int(published[:4]) if published else None
+            published_date = published[:10] if published else None
             arxiv_id = normalize_arxiv_id(
                 entry.findtext(
                     "atom:id",
@@ -129,6 +127,7 @@ class ArxivClient:
                     abstract=summary,
                     authors=authors,
                     publication_year=year,
+                    publication_date=published_date,
                     venue=_first(_arxiv_categories(entry, namespace)),
                     arxiv_id=arxiv_id,
                     url=entry.findtext(

@@ -1,0 +1,123 @@
+@import 'tailwindcss';
+
+@theme {
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+
+  --color-fg: #1f2328;
+  --color-muted: #59636e;
+  --color-subtle: #818b98;
+  --color-line: #d1d9e0;
+  --color-line-muted: #e3e8ee;
+  --color-canvas: #ffffff;
+  --color-canvas-subtle: #f6f8fa;
+  --color-canvas-inset: #eff2f5;
+
+  --color-accent: #0969da;
+  --color-accent-emphasis: #0757b8;
+  --color-accent-subtle: #ddf4ff;
+  --color-success: #1a7f37;
+  --color-success-emphasis: #1f883d;
+  --color-success-subtle: #dafbe1;
+  --color-attention: #9a6700;
+  --color-attention-subtle: #fff8c5;
+  --color-attention-emphasis: #bf8700;
+  --color-danger: #d1242f;
+  --color-danger-emphasis: #cf222e;
+  --color-danger-subtle: #ffebe9;
+  --color-done: #8250df;
+  --color-done-subtle: #fbefff;
+  --color-neutral-subtle: #eff2f5;
+}
+
+@layer base {
+  html {
+    color: var(--color-fg);
+    background: var(--color-canvas-subtle);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body {
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  a {
+    color: var(--color-accent);
+  }
+
+  a:hover {
+    text-decoration: underline;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  dialog::backdrop {
+    background: rgb(31 35 40 / 0.45);
+  }
+
+  code,
+  kbd,
+  pre {
+    font-family: var(--font-mono);
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-lg border border-line bg-canvas;
+  }
+
+  .card-header {
+    @apply flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-line-muted px-4 py-3;
+  }
+
+  .card-title {
+    @apply text-sm font-semibold text-fg;
+  }
+
+  .input {
+    @apply w-full rounded-md border border-line bg-canvas px-3 py-1.5 text-sm text-fg shadow-[inset_0_1px_0_rgb(208_215_222/0.2)] placeholder:text-subtle focus:border-accent focus:outline-none focus:ring-3 focus:ring-accent/25 disabled:bg-canvas-subtle disabled:text-muted;
+  }
+
+  .label {
+    @apply mb-1 block text-xs font-semibold text-fg;
+  }
+
+  .chip {
+    @apply inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium whitespace-nowrap;
+  }
+
+  .code-inline {
+    @apply rounded bg-canvas-inset px-1.5 py-0.5 font-mono text-[12px];
+  }
+
+  .link-quiet {
+    @apply text-fg hover:text-accent hover:no-underline;
+  }
+}
+
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.animate-pulse-dot {
+  animation: pulse-dot 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-pulse-dot,
+  .animate-spin {
+    animation: none;
+  }
+}

@@ -1,0 +1,446 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Research → Experiment — Plan</title>
+<style>
+  :root{
+    --ink:#1f2328;--muted:#59636e;--line:#d1d9e0;--bg:#f6f8fa;--card:#fff;
+    --p1:#1a7f37;--p2:#0969da;--p3:#8250df;--p4:#bc4c00;--p5:#cf222e;--p6:#57606a;--gate:#9a6700;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;color:var(--ink);background:var(--bg)}
+  main{max-width:1140px;margin:0 auto;padding:32px 24px 64px}
+  h1{font-size:30px;margin:0 0 6px}
+  h2{font-size:20px;margin:44px 0 14px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+  h3{margin:0}
+  code{font:12.5px ui-monospace,SFMono-Regular,Menlo,monospace;background:#eef1f4;padding:1px 5px;border-radius:4px}
+  .lead{color:var(--muted);font-size:17px;margin:0 0 16px;max-width:780px}
+  .chips{display:flex;gap:8px;flex-wrap:wrap}
+  .chip{background:var(--card);border:1px solid var(--line);border-radius:999px;padding:4px 12px;font-size:13px}
+  .chip b{color:var(--p1)}
+
+  /* ---- Loop diagram ---- */
+  .flow{display:flex;align-items:stretch}
+  .step{flex:1;min-width:0;background:var(--card);border:1px solid var(--line);border-top:5px solid var(--c);
+        border-radius:10px;padding:12px 12px 10px;position:relative}
+  .step .n{font-size:11.5px;font-weight:700;color:var(--c);text-transform:uppercase;letter-spacing:.05em}
+  .step h3{font-size:16px;margin:2px 0 6px}
+  .step p{margin:0 0 8px;font-size:13px;color:var(--muted)}
+  .out{font-size:12px;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:2px 8px;display:inline-block}
+  .gate{display:block;margin-top:6px;font-size:12px;color:var(--gate);font-weight:600}
+  .arrow{flex:0 0 26px;display:flex;align-items:center;justify-content:center;color:#8c959f;font-size:20px}
+  .badge{position:absolute;top:10px;right:10px;font-size:10.5px;font-weight:700;padding:1px 8px;border-radius:999px}
+  .done{background:#dafbe1;color:var(--p1)}
+  .part{background:#fff8c5;color:var(--gate)}
+  .new{background:#eef1f4;color:var(--muted)}
+  .loop{margin:0 60px;height:38px;border:2px dashed #afb8c1;border-top:none;border-radius:0 0 16px 16px;position:relative;text-align:center}
+  .loop:before{content:"";position:absolute;left:-8px;top:-12px;border:7px solid transparent;border-bottom:10px solid #afb8c1}
+  .loop span{position:relative;top:27px;background:var(--bg);padding:0 10px;font-size:13px;color:var(--muted)}
+
+  /* ---- Walkthrough ---- */
+  .story{list-style:none;padding:0;margin:0;display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+  .story li{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--c);border-radius:8px;padding:10px 12px;font-size:13.5px}
+  .story b{display:block;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--c)}
+
+  /* ---- Phase cards ---- */
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;border-top:4px solid var(--c)}
+  .card h3{font-size:16px;color:var(--c);margin-bottom:4px}
+  .card ul{margin:6px 0 8px;padding-left:18px;font-size:13.5px}
+  .card li{margin:2px 0}
+  .status{font-size:12px;color:var(--muted)}
+
+  /* ---- Architecture ---- */
+  .arch{display:flex;flex-direction:column;gap:6px}
+  .layer{display:flex;align-items:center;gap:10px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+  .layer .lbl{flex:0 0 120px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+  .boxes{display:flex;flex-wrap:wrap;gap:8px}
+  .bx{border:1px solid var(--line);background:var(--bg);border-radius:7px;padding:5px 10px;font-size:13px}
+  .bx small{display:block;color:var(--muted);font-size:11px}
+  .bx.hl{border-color:var(--c);background:color-mix(in srgb,var(--c) 8%,#fff)}
+  .down{text-align:center;color:#8c959f;font-size:14px;line-height:1}
+
+  /* ---- Data chain ---- */
+  .chain{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:13.5px}
+  .chain .bx{background:var(--card)}
+  .chain i{color:#8c959f;font-style:normal}
+
+  /* ---- Lists / table ---- */
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 16px}
+  .panel h3{font-size:15px;margin-bottom:6px}
+  .panel ul{margin:0;padding-left:18px;font-size:13.5px}
+  .panel li{margin:4px 0}
+  table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;font-size:13.5px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{background:#eef1f4;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+  td.rec{color:var(--p1);font-weight:600}
+  .ms{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+  .ms div{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px;font-size:13.5px}
+  .ms b{display:block;color:var(--p2)}
+  footer{margin-top:40px;color:var(--muted);font-size:12.5px}
+  @media (max-width:900px){
+    .flow{flex-direction:column}.arrow{transform:rotate(90deg);flex-basis:22px}.loop{display:none}
+    .grid,.story,.ms,.two{grid-template-columns:1fr}
+  }
+
+  /* ---- Status ---- */
+  .status-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+  .st{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;font-size:13px}
+  .st h4{margin:0 0 6px;font-size:13.5px;display:flex;align-items:center;gap:8px}
+  .st ul{margin:0;padding-left:16px}.st li{margin:2px 0}
+  .pill{font-size:10.5px;font-weight:700;padding:1px 8px;border-radius:999px;white-space:nowrap}
+  .p-done{background:#dafbe1;color:var(--p1)}.p-wip{background:#ddf4ff;color:var(--p2)}.p-next{background:#fff8c5;color:var(--gate)}.p-you{background:#ffebe9;color:var(--p5)}
+  .kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:14px}
+  .kpi{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+  .kpi b{display:block;font-size:22px}.kpi span{font-size:12px;color:var(--muted)}
+  .result{display:grid;grid-template-columns:auto 1fr;gap:16px;align-items:center;background:var(--card);border:1px solid var(--line);border-left:4px solid var(--p5);border-radius:10px;padding:12px 16px;margin-top:12px}
+  .bars{display:flex;flex-direction:column;gap:6px;min-width:260px}
+  .bar{display:grid;grid-template-columns:120px 1fr 64px;gap:8px;align-items:center;font-size:12.5px}
+  .bar i{display:block;height:10px;border-radius:6px}
+  @media (max-width:900px){.status-grid,.kpis{grid-template-columns:1fr 1fr}.result{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<main>
+
+  <div style="font-size:12px;font-weight:700;letter-spacing:.08em;color:var(--muted)">PAPERATLAS</div>
+  <h1>Research → Experiment</h1>
+  <p class="lead">Find new research, break it into testable ideas, try the best 1–2 in <em>your</em> project,
+     and prove whether the claimed gain is real.</p>
+  <div class="chips">
+    <span class="chip"><b>Live:</b> 1,088 papers · 10 topics · 404 claim cards · 1 verdict</span>
+    <span class="chip">Agents do the work · you approve at 3 gates</span>
+    <span class="chip">Runs on your M5 Pro · 64 GB</span>
+    <span class="chip">Every verdict backed by repeated A/B runs</span>
+  </div>
+
+  <!-- ===================== STATUS ===================== -->
+  <h2>Status <span style="font-weight:400;color:var(--muted);font-size:14px">· updated Nov 23, 2026</span></h2>
+  <div class="kpis">
+    <div class="kpi"><b>10</b><span>trending topics</span></div>
+    <div class="kpi"><b>1,088</b><span>papers pooled · 50 distilled</span></div>
+    <div class="kpi"><b>404</b><span>claim cards · 305 testable</span></div>
+    <div class="kpi"><b>51</b><span>testable on inference-lab</span></div>
+    <div class="kpi"><b>35</b><span>backend tests passing</span></div>
+  </div>
+  <div class="status-grid">
+    <div class="st"><h4>Done <span class="pill p-done">M0–M7</span></h4><ul>
+      <li>Postgres 18 + pgvector (MySQL kept, Neo4j removed)</li>
+      <li>5 sources, auto top‑10 topics, ranking</li>
+      <li>Claim cards (no LinkedIn posts)</li>
+      <li><code>inference-lab</code>: Qwen3‑30B‑A3B int8, ~25 tok/s, ~31 GB</li>
+      <li>LangGraph loop + 3 gates, Copilot CLI builder</li>
+      <li>Microservices + React console</li>
+      <li>Digest + weekly schedule (opt‑in)</li>
+    </ul></div>
+    <div class="st"><h4>In progress <span class="pill p-wip">now</span></h4><ul>
+      <li>Explainers on topics, papers/patents and claim cards (plain‑language + approach diagram)</li>
+      <li>Clean infographics: trend bars, source mix, result tiles, at‑a‑glance strip</li>
+      <li>Checkpoint‑loss recovery (done, being shipped)</li>
+    </ul></div>
+    <div class="st"><h4>Next <span class="pill p-next">queued</span></h4><ul>
+      <li>Backfill explainers for 10 topics, 50 papers, top claims</li>
+      <li>Restart services so the worker runs the latest code</li>
+      <li>Pick the next 1–2 claims (e.g. a KV‑cache or scheduling idea)</li>
+    </ul></div>
+    <div class="st"><h4>Needs you <span class="pill p-you">action</span></h4><ul>
+      <li><b>Gate 3</b> for experiment #1: merge or drop</li>
+      <li><b>Rotate the OpenAI key</b> (it was in the public repo history)</li>
+      <li>Optional keys: Semantic Scholar, OpenAlex, USPTO</li>
+    </ul></div>
+  </div>
+  <div class="result">
+    <div>
+      <div style="font-size:12px;color:var(--muted)">First end‑to‑end experiment · #1</div>
+      <div style="font-weight:700;font-size:15px">DLoop confidence‑gated speculative decoding</div>
+      <div style="font-size:12.5px;color:var(--muted)">Copilot CLI built it in 18 min · tests + smoke passed · 8 ABBA rounds on Qwen3‑30B‑A3B</div>
+      <div style="margin-top:6px"><span class="pill p-you">REGRESSION</span> <span style="font-size:12.5px">outputs identical, but MoE target + small draft = more work per token on MPS</span></div>
+    </div>
+    <div class="bars">
+      <div class="bar"><span>Paper (H100)</span><i style="background:#8250df;width:41%"></i><b style="color:#8250df">+41%</b></div>
+      <div class="bar"><span>Your M5 Pro</span><i style="background:#cf222e;width:66.8%"></i><b style="color:#cf222e">−66.8%</b></div>
+      <div class="bar"><span>Decode tok/s</span><span style="font-size:12px;color:var(--muted)">24.4 → 8.1 (95% CI −67.2…−66.4%)</span><span></span></div>
+    </div>
+  </div>
+
+  <!-- ===================== LOOP ===================== -->
+  <h2>The loop</h2>
+  <div class="flow">
+    <div class="step" style="--c:var(--p1)">
+      <span class="badge done">LIVE</span>
+      <div class="n">Phase 1</div><h3>Discover</h3>
+      <p>Top‑10 topics → papers &amp; patents from the outside world</p>
+      <span class="out">→ ranked papers</span>
+    </div>
+    <div class="arrow">➜</div>
+    <div class="step" style="--c:var(--p2)">
+      <span class="badge done">LIVE</span>
+      <div class="n">Phase 2</div><h3>Distill</h3>
+      <p>Each paper → 5–10 technical concepts → testable claim cards</p>
+      <span class="out">→ claim cards</span>
+    </div>
+    <div class="arrow">➜</div>
+    <div class="step" style="--c:var(--p3)">
+      <span class="badge done">LIVE</span>
+      <div class="n">Phase 3</div><h3>Match &amp; Plan</h3>
+      <p>Score claims against your project, write the experiment</p>
+      <span class="out">→ experiment spec</span>
+      <span class="gate">✋ you pick 1–2 · approve spec</span>
+    </div>
+    <div class="arrow">➜</div>
+    <div class="step" style="--c:var(--p4)">
+      <span class="badge done">LIVE</span>
+      <div class="n">Phase 4</div><h3>Build &amp; Run</h3>
+      <p>Coding agent implements on a branch, sandbox A/B runs</p>
+      <span class="out">→ branch + metrics</span>
+    </div>
+    <div class="arrow">➜</div>
+    <div class="step" style="--c:var(--p5)">
+      <span class="badge done">LIVE</span>
+      <div class="n">Phase 5</div><h3>Validate &amp; Learn</h3>
+      <p>Statistics vs the paper's claim → verdict + report</p>
+      <span class="out">→ verdict + PR</span>
+      <span class="gate">✋ you merge or drop</span>
+    </div>
+  </div>
+  <div class="loop"><span>Phase 6 (later): run continuously — new papers + past verdicts feed the next round</span></div>
+
+  <!-- ===================== WALKTHROUGH ===================== -->
+  <h2>One claim, end to end <span style="font-weight:400;color:var(--muted);font-size:14px">(illustrative numbers)</span></h2>
+  <ol class="story">
+    <li style="--c:var(--p1)"><b>1 · Discover</b>Topic “LLM inference”. A new paper says <em>technique T gives +10% throughput</em>.</li>
+    <li style="--c:var(--p2)"><b>2 · Distill</b>Claim card: metric = tokens/s, claimed +10%, setup = A100 · 7B model · batch 32, effort = medium.</li>
+    <li style="--c:var(--p3)"><b>3 · Match</b>Your server: Qwen3‑30B‑A3B on the M5 Pro, batch 1–4. Fit score 0.72 → shortlisted. ✋ You pick it.</li>
+    <li style="--c:var(--p3)"><b>3 · Plan</b>Hypothesis: “T raises tokens/s ≥ 5% with no quality drop.” 20 interleaved runs per arm. ✋ You approve.</li>
+    <li style="--c:var(--p4)"><b>4 · Build &amp; run</b>Coding agent adds T behind a flag on a branch, tests pass, baseline vs T benchmarked in the sandbox.</li>
+    <li style="--c:var(--p5)"><b>5 · Verdict</b>+4.1% (95% CI +2.8 to +5.3), quality unchanged → <b style="display:inline;text-transform:none;letter-spacing:0">Partly reproduced</b>. Report + PR. ✋ Merge or drop.</li>
+  </ol>
+
+  <!-- ===================== PHASE DETAILS ===================== -->
+  <h2>What each phase does</h2>
+  <div class="grid">
+    <div class="card" style="--c:var(--p1)">
+      <h3>1 · Discover</h3>
+      <ul>
+        <li>Auto‑pick the top‑10 trending topics inside your seed areas</li>
+        <li>Pull papers &amp; patents per topic: arXiv ✅, Semantic Scholar, OpenAlex, Hugging Face Papers, USPTO patents</li>
+        <li>Rank by recency, citations, code available</li>
+      </ul>
+      <div class="status">Done: arXiv search + PDF text · To do: topics, more sources, ranking</div>
+    </div>
+    <div class="card" style="--c:var(--p2)">
+      <h3>2 · Distill</h3>
+      <ul>
+        <li>Split each paper into 5–10 technical concepts ✅</li>
+        <li>Turn each concept into a <b>claim card</b>: what to change, claimed gain, test setup, effort, risk</li>
+        <li>Plain technical language with evidence quotes — no marketing / social‑post style</li>
+        <li>Merge the same idea across papers</li>
+      </ul>
+      <div class="status">Done: concept split · To do: replace the post‑style prompt with structured claim cards</div>
+    </div>
+    <div class="card" style="--c:var(--p3)">
+      <h3>3 · Match &amp; Plan</h3>
+      <ul>
+        <li>Profile your project: stack, hot paths, benchmarks, metrics</li>
+        <li>Score claims: fit × expected gain ÷ effort; flag blockers (“needs CUDA”, “needs GPU cluster”)</li>
+        <li>Experiment spec: hypothesis, baseline, workload, runs, success bar, guardrails</li>
+      </ul>
+      <div class="status">✋ Gates: pick 1–2 claims · approve spec</div>
+    </div>
+    <div class="card" style="--c:var(--p4)">
+      <h3>4 · Build &amp; Run</h3>
+      <ul>
+        <li>Coding agent works on a new branch, adds the idea behind a flag</li>
+        <li>Adds a benchmark if missing; existing tests must pass</li>
+        <li>Runs baseline vs variant: same machine, warm‑up, interleaved, N times</li>
+      </ul>
+      <div class="status">Output: branch, diff, raw metrics, logs</div>
+    </div>
+    <div class="card" style="--c:var(--p5)">
+      <h3>5 · Validate &amp; Learn</h3>
+      <ul>
+        <li>Median change + 95% confidence interval</li>
+        <li>Verdict vs claim: <b>Reproduced · Partial · Not reproduced · Regression</b></li>
+        <li>HTML report + PR; links Paper → Claim → Verdict in Postgres</li>
+      </ul>
+      <div class="status">✋ Gate: merge or drop</div>
+    </div>
+    <div class="card" style="--c:var(--p6)">
+      <h3>6 · Run continuously <span style="font-weight:400">(later)</span></h3>
+      <ul>
+        <li>Scheduled scans for new papers on your topics</li>
+        <li>Auto‑triage new claims against your project</li>
+        <li>Weekly digest; learn which kinds of claims hold up</li>
+      </ul>
+      <div class="status">Output: an always‑on research radar</div>
+    </div>
+  </div>
+
+  <h2>Your setup</h2>
+  <div class="two">
+    <div class="panel">
+      <h3>Target project: <code>inference-lab</code> <span style="font-weight:400;color:var(--muted)">(new repo, outside PaperAtlas)</span></h3>
+      <ul>
+        <li>LLM inference server: PyTorch + Hugging Face on the Apple GPU, OpenAI‑style API</li>
+        <li>Model: <b>Qwen3‑30B‑A3B</b> (30.5B total, 3.3B active) with 8‑bit weights ≈ 31 GB</li>
+        <li>Fallback if 8‑bit is unstable on Apple GPU: Qwen3‑14B in bf16 ≈ 28 GB</li>
+        <li>Agent iterates on a tiny Qwen3‑0.6B; only the final A/B uses the 30B model</li>
+        <li>Built‑in benchmark: time to first token, tokens/s, p50/p95 latency, memory, quality check</li>
+        <li>Each research idea = a feature flag, so baseline vs variant is one switch</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <h3>Seed areas <span style="font-weight:400;color:var(--muted)">(top‑10 topics auto‑picked from trending papers)</span></h3>
+      <ul>
+        <li>LLM inference engineering · LLM observability</li>
+        <li>KV‑cache management &amp; compression · speculative decoding · quantization</li>
+        <li>Batching &amp; scheduling (continuous batching, chunked prefill)</li>
+        <li>Request routing &amp; load balancing · cost &amp; energy efficiency</li>
+        <li>Quality‑regression detection &amp; evals</li>
+        <li style="color:var(--muted)">Tracked, not tested (need a GPU cluster): disaggregated prefill/decode, NCCL/RDMA. Multi‑GPU scaling is out of scope for now.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ===================== STORAGE ===================== -->
+  <h2>Storage: PostgreSQL 18 + pgvector <span style="font-weight:400;color:var(--muted);font-size:14px">(chosen · one database you can reuse for other AI projects)</span></h2>
+  <table>
+    <tr><th style="width:18%"></th><th style="background:#dafbe1;color:var(--p1)">PostgreSQL 18 + pgvector ★</th><th>SurrealDB</th><th>MongoDB 8 + Search</th></tr>
+    <tr><td>Data model</td><td>Tables + JSON columns</td><td>Documents + graph + vectors in one engine</td><td>JSON documents</td></tr>
+    <tr><td>Vector search</td><td>pgvector (HNSW)</td><td>Built‑in (HNSW)</td><td><code>$vectorSearch</code> via mongot</td></tr>
+    <tr><td>Keyword search</td><td>Built‑in full‑text, hybrid with vectors</td><td>Built‑in BM25</td><td><code>$search</code> via mongot</td></tr>
+    <tr><td>Graph links</td><td>Edge tables + recursive SQL (Neo4j optional)</td><td>Native graph edges — replaces Neo4j</td><td>Basic (<code>$graphLookup</code>)</td></tr>
+    <tr><td>LangGraph (Python)</td><td>Official checkpointer + long‑term memory store</td><td>Official adapter is JS‑first</td><td>Official checkpointer + store</td></tr>
+    <tr><td>Install on your Mac</td><td><code>brew</code>, no Docker</td><td><code>brew</code> tap</td><td>Docker or extra mongot process</td></tr>
+    <tr><td>Reuse &amp; ecosystem</td><td>Widest: every cloud, agent framework, MCP server</td><td>Newer, moving fast</td><td>Mature; best on Atlas cloud</td></tr>
+    <tr><td>Best when</td><td class="rec">One reliable store for records, search, and agent memory</td><td>You want one engine and to drop Neo4j</td><td>You prefer documents over tables</td></tr>
+  </table>
+  <p class="status" style="margin-top:8px">Migration is easy: today's 5 papers are re‑ingested and re‑distilled into claim cards. Neo4j is dropped; MySQL stays installed and running for your other work.</p>
+
+  <!-- ===================== ARCHITECTURE ===================== -->
+  <h2>How it's built</h2>
+  <div class="arch">
+    <div class="layer"><span class="lbl">You</span>
+      <div class="boxes">
+        <span class="bx hl" style="--c:var(--p2)">Web console<small>React · recommendations · live progress · gate buttons</small></span>
+        <span class="bx">CLI <code>paperatlas r2e …</code></span>
+        <span class="bx">HTML reports</span>
+      </div>
+    </div>
+    <div class="down">▼</div>
+    <div class="layer"><span class="lbl">Services</span>
+      <div class="boxes">
+        <span class="bx">gateway :8100<small>UI + API proxy</small></span>
+        <span class="bx">research-api :8101<small>topics · papers · claims · search</small></span>
+        <span class="bx">lab-api :8102<small>recommendations · experiments · gates · SSE</small></span>
+        <span class="bx">worker<small>Postgres job queue · 1 GPU job at a time</small></span>
+      </div>
+    </div>
+    <div class="down">▼</div>
+    <div class="layer"><span class="lbl">Orchestrator</span>
+      <div class="boxes">
+        <span class="bx hl" style="--c:var(--p2)">LangGraph state machine per experiment<small>resumable · pauses at human gates · time &amp; cost budgets</small></span>
+      </div>
+    </div>
+    <div class="down">▼</div>
+    <div class="layer"><span class="lbl">Agents</span>
+      <div class="boxes">
+        <span class="bx hl" style="--c:var(--p1)">Scout<small>phase 1</small></span>
+        <span class="bx hl" style="--c:var(--p2)">Distiller<small>phase 2</small></span>
+        <span class="bx hl" style="--c:var(--p3)">Matcher<small>phase 3</small></span>
+        <span class="bx hl" style="--c:var(--p3)">Planner<small>phase 3</small></span>
+        <span class="bx hl" style="--c:var(--p4)">Builder<small>phase 4</small></span>
+        <span class="bx hl" style="--c:var(--p4)">Runner<small>phase 4</small></span>
+        <span class="bx hl" style="--c:var(--p5)">Judge<small>phase 5</small></span>
+      </div>
+    </div>
+    <div class="down">▼</div>
+    <div class="layer"><span class="lbl">Tools</span>
+      <div class="boxes">
+        <span class="bx">Source connectors<small>arXiv · S2 · OpenAlex · HF · USPTO</small></span>
+        <span class="bx">Repo profiler</span>
+        <span class="bx">Coding‑agent adapter<small>Copilot CLI · swappable</small></span>
+        <span class="bx">Sandbox<small>git worktree + venv on your Mac</small></span>
+        <span class="bx">Benchmark harness</span>
+        <span class="bx">Stats</span>
+      </div>
+    </div>
+    <div class="down">▼</div>
+    <div class="layer"><span class="lbl">Storage</span>
+      <div class="boxes">
+        <span class="bx hl" style="--c:var(--p1)">PostgreSQL 18<small>records · JSON claim cards · graph edges</small></span>
+        <span class="bx hl" style="--c:var(--p1)">pgvector + full‑text<small>hybrid search for dedup &amp; matching</small></span>
+        <span class="bx hl" style="--c:var(--p1)">LangGraph checkpoints + memory<small>same database</small></span>
+        <span class="bx">Artifacts folder<small>diffs · logs · reports</small></span>
+      </div>
+    </div>
+  </div>
+
+  <h3 style="font-size:15px;margin:22px 0 8px">Data model</h3>
+  <div class="chain">
+    <span class="bx">Topic</span><i>→</i><span class="bx">Paper ✅</span><i>→</i><span class="bx">Concept ✅</span><i>→</i>
+    <span class="bx">Claim</span><i>→</i><span class="bx">Experiment</span><i>←</i><span class="bx">Project</span>
+    <i>·</i><span class="bx">Experiment</span><i>→</i><span class="bx">Run</span><i>→</i><span class="bx">Verdict</span>
+  </div>
+
+  <!-- ===================== GUARDRAILS / RISKS ===================== -->
+  <h2>Guardrails &amp; watch‑outs</h2>
+  <div class="two">
+    <div class="panel">
+      <h3>Guardrails</h3>
+      <ul>
+        <li>Agent code lives on a branch — nothing reaches <code>main</code> without your merge.</li>
+        <li>Experiments run isolated, with time and cost caps.</li>
+        <li>A speed win that hurts quality counts as a <b>regression</b>.</li>
+        <li>Fair comparisons: same machine, same workload, warm‑up, interleaved runs.</li>
+        <li>Every verdict links back to the paper sentence that made the claim.</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <h3>Watch‑outs</h3>
+      <ul>
+        <li>A 30B model in full precision (≈61 GB) won't fit beside macOS → 8‑bit weights. 8‑bit on Apple GPU is still maturing, so task 1 is a fit‑and‑speed test.</li>
+        <li>Many inference papers assume NVIDIA GPUs / CUDA kernels — labeled “not testable on Mac” up front.</li>
+        <li>Docker on macOS can't use the Apple GPU, so runs use an isolated venv.</li>
+        <li>The baseline is already 8‑bit, so quantization claims are measured against 8‑bit, not bf16.</li>
+        <li>Laptop benchmarks are noisy (thermal throttling) — enough runs + confidence intervals.</li>
+        <li>LLM cost: today it's ~1 call per concept; the new extractor makes one structured call per paper. Patents need a free USPTO PatentsView API key.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ===================== DECISIONS ===================== -->
+  <h2>Decisions (confirmed)</h2>
+  <table>
+    <tr><th style="width:26%">Question</th><th>Decision</th></tr>
+    <tr><td>Target project</td><td class="rec">New <code>inference-lab</code> repo · PyTorch + Hugging Face on Apple GPU · Qwen ~30B · built‑in benchmark</td></tr>
+    <tr><td>Coding agent</td><td class="rec">GitHub Copilot CLI, behind a swappable adapter</td></tr>
+    <tr><td>Agent framework</td><td class="rec">LangGraph</td></tr>
+    <tr><td>Where experiments run</td><td class="rec">Local Mac only (M5 Pro, 64 GB)</td></tr>
+    <tr><td>Sources</td><td class="rec">arXiv ✅ · Semantic Scholar · OpenAlex · Hugging Face Papers · USPTO patents</td></tr>
+    <tr><td>Top‑10 topics</td><td class="rec">Automatic from trending papers, inside the seed areas above</td></tr>
+    <tr><td>Storage</td><td class="rec">PostgreSQL 18 + pgvector · Neo4j dropped · MySQL kept running</td></tr>
+    <tr><td>GPU scaling</td><td class="rec">Out of scope for now</td></tr>
+    <tr><td>Autonomy</td><td class="rec">Three gates: pick claims · approve spec · merge — as buttons in the web console (or CLI)</td></tr>
+    <tr><td>Web console</td><td class="rec">React + TS + Vite · FastAPI services as local processes · Postgres jobs + SSE · localhost, no login</td></tr>
+  </table>
+
+  <!-- ===================== MILESTONES ===================== -->
+  <h2>Milestones</h2>
+  <div class="ms" style="grid-template-columns:repeat(4,1fr)">
+    <div><b>M1 · New storage + topics</b>Postgres + pgvector, drop Neo4j, quiet logs, 4 new sources, trending top‑10 topics, paper ranking.</div>
+    <div><b>M2 · Claim cards</b>Claim schema, one technical extraction call per paper (no posts), hybrid search, cross‑paper merge, backfill.</div>
+    <div><b>M3 · inference-lab</b>Model fit test, server with feature flags + metrics, benchmark harness, repo profiler.</div>
+    <div><b>M4 · Agent loop</b>LangGraph orchestrator, Matcher, Planner, Copilot CLI builder, local runner.</div>
+    <div><b>M5 · Verdicts</b>Stats + verdict rules, HTML report + PR, verdicts feed matching, first end‑to‑end run.</div>
+    <div><b>M6 · Web console</b>Microservice APIs, job queue + live events, React UI with the 3 gates.</div>
+    <div><b>M7 · Always‑on</b>Scheduled scans, triage, weekly digest.</div>
+  </div>
+
+  <footer>Plan v3 · all milestones live · status above is the source of truth.</footer>
+</main>
+</body>
+</html>

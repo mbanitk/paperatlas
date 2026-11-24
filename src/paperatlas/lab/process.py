@@ -1,0 +1,163 @@
+"""Subprocess helper with log capture, cancellation and periodic progress callbacks."""
+
+from __future__ import annotations
+
+import os
+import queue
+import signal
+import subprocess
+import threading
+import time
+from collections import deque
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Callable, Optional, Sequence
+
+from paperatlas.lab.safety import redact, scrubbed_env
+
+
+class Cancelled(RuntimeError):
+    pass
+
+
+class WorkerShutdown(Cancelled):
+    """The worker is stopping: the step is interrupted and its job re-queued (not a user cancel)."""
+
+
+_shutdown = threading.Event()
+
+
+def request_shutdown() -> None:
+    """Make every running and future run_command kill its process group and raise WorkerShutdown."""
+    _shutdown.set()
+
+
+def shutting_down() -> bool:
+    return _shutdown.is_set()
+
+
+def _check_interrupt(should_cancel: Optional[Callable[[], bool]]) -> Optional[Cancelled]:
+    if _shutdown.is_set():
+        return WorkerShutdown("worker is shutting down")
+    if should_cancel and should_cancel():
+        return Cancelled("cancelled by user")
+    return None
+
+
+@dataclass
+class CommandResult:
+    returncode: int
+    tail: str
+    duration_s: float
+    log_path: Path
+
+    @property
+    def ok(self) -> bool:
+        return self.returncode == 0
+
+
+def run_command(
+    command: Sequence[str] | str,
+    cwd: str | Path,
+    log_path: Path,
+    timeout_s: Optional[float] = None,
+    env: Optional[dict[str, str]] = None,
+    should_cancel: Optional[Callable[[], bool]] = None,
+    on_progress: Optional[Callable[[str], None]] = None,
+    progress_every_s: float = 20.0,
+    tail_lines: int = 60,
+) -> CommandResult:
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    started = time.monotonic()
+    last_progress = started
+    last_reported = ""
+    tail: deque[str] = deque(maxlen=tail_lines)
+    shell = isinstance(command, str)
+    full_env = {**scrubbed_env(), **(env or {})}
+    full_env.pop("VIRTUAL_ENV", None)
+    lines: queue.Queue[Optional[str]] = queue.Queue()
+    if (interrupt := _check_interrupt(should_cancel)) is not None:
+        raise interrupt
+
+    with log_path.open("a", encoding="utf-8") as log:
+        log.write(redact(f"$ {command if shell else ' '.join(command)}\n"))
+        log.flush()
+        process = subprocess.Popen(
+            command,
+            cwd=str(cwd),
+            shell=shell,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            text=True,
+            errors="replace",
+            bufsize=1,
+            env=full_env,
+            start_new_session=True,
+        )
+
+        def pump() -> None:
+            assert process.stdout is not None
+            for line in process.stdout:
+                lines.put(line)
+            lines.put(None)
+
+        threading.Thread(target=pump, daemon=True).start()
+        finished_reading = False
+        while True:
+            if finished_reading:
+                # stdout is closed but the process (or a daemon that closed its stdout) may still
+                # run: keep enforcing the deadline and cancellation while waiting for it to exit.
+                try:
+                    process.wait(timeout=0.5)
+                    break
+                except subprocess.TimeoutExpired:
+                    pass
+            else:
+                try:
+                    line = lines.get(timeout=0.5)
+                except queue.Empty:
+                    line = ""
+                if line is None:
+                    finished_reading = True
+                    continue
+                if line:
+                    log.write(redact(line))
+                    tail.append(redact(line.rstrip()))
+            now = time.monotonic()
+            if (interrupt := _check_interrupt(should_cancel)) is not None:
+                _kill(process)
+                log.write(f"[{'interrupted' if isinstance(interrupt, WorkerShutdown) else 'cancelled'}]\n")
+                raise interrupt
+            if timeout_s and now - started > timeout_s:
+                _kill(process)
+                tail.append(f"[timeout after {timeout_s:.0f}s]")
+                log.write(tail[-1] + "\n")
+                return CommandResult(124, "\n".join(tail), now - started, log_path)
+            if on_progress and now - last_progress > progress_every_s:
+                latest = next((entry for entry in reversed(tail) if entry.strip()), "")
+                if latest and latest != last_reported:
+                    on_progress(latest)
+                    last_reported = latest
+                elif now - last_progress > progress_every_s * 3:
+                    on_progress(f"still running ({now - started:.0f}s elapsed)")
+                else:
+                    continue
+                last_progress = now
+        log.write(f"[exit {process.returncode}]\n")
+    return CommandResult(process.returncode, "\n".join(tail), time.monotonic() - started, log_path)
+
+
+def _kill(process: subprocess.Popen) -> None:
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+        process.wait(timeout=15)
+    except (ProcessLookupError, subprocess.TimeoutExpired):
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass

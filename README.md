@@ -1,86 +1,131 @@
 # PaperAtlas
 
-PaperAtlas is a modular research assistant stack for:
-- extracting concepts from papers,
-- embedding text/papers/concepts,
-- building/querying a knowledge graph,
-- training ranking/graph models,
-- serving search/recommendations via an API.
+PaperAtlas finds new research, turns it into testable claims, tries the best ones in **your**
+project, and checks whether the claimed gain is real.
 
-This repo is intentionally scaffolded with **minimal stubs** so you can iterate module-by-module.
+**Research → Experiment** loop (plan: [`.docs/research-to-experiment-plan.html`](.docs/research-to-experiment-plan.html)):
 
-## Quickstart (dev)
-
-1. Create a virtualenv and install your preferred deps (FastAPI, Pydantic, etc.).
-2. Run the API (after installing FastAPI + Uvicorn):
-
-```bash
-uvicorn paperatlas.api.main:app --reload
+```mermaid
+flowchart LR
+  D[1 · Discover<br/>top-10 trending topics<br/>papers + patents] --> S[2 · Distill<br/>5–10 concepts per paper<br/>→ claim cards]
+  S --> M[3 · Match &amp; Plan<br/>score vs project<br/>experiment spec]
+  M -->|"✋ Gate 1: pick 1–2<br/>✋ Gate 2: approve spec"| B[4 · Build &amp; Run<br/>coding agent on a branch<br/>interleaved A/B bench]
+  B --> V[5 · Validate<br/>median Δ + 95% CI<br/>verdict + report]
+  V -->|"✋ Gate 3: merge or drop"| D
 ```
 
-## LLM Configuration
+- **Discover** — auto-picks the top trending topics inside the seed areas in
+  [`src/paperatlas/config/r2e.yaml`](src/paperatlas/config/r2e.yaml) using arXiv, Semantic Scholar,
+  OpenAlex, Hugging Face Papers and USPTO patents; ranks papers per topic and fetches full text.
+- **Distill** — one structured LLM call per paper produces technical concepts, each with a
+  *claim card*: technique, change required, claimed effects (value/unit/direction/baseline),
+  paper setup, prerequisites (CUDA, multi-GPU, training), effort, risks and a verbatim evidence quote.
+  Near-duplicate claims across papers are grouped.
+- **Match & Plan** — claims are scored against the target project's profile (`lab.yaml`): fit,
+  claimed gain, effort, hardware blockers and past verdicts. A planner writes the experiment spec
+  (hypothesis, flag, metric, workload, rounds, success bar, guardrails).
+- **Build & Run** — a coding agent (GitHub Copilot CLI by default, Codex supported) implements the
+  technique behind a feature flag in a git worktree; tests and a smoke A/B must pass; then an
+  interleaved (ABBA) A/B benchmark runs on the eval model. Only one benchmark uses the GPU at a time.
+- **Validate** — paired deltas, bootstrap 95% CI and quality guardrails give a verdict:
+  `reproduced`, `partial`, `not_reproduced` or `regression`, with an HTML report (and a draft PR if
+  the target repo has a GitHub remote).
 
-LLM credentials and model defaults are configured in code for Phase 2.
+## Architecture
 
-## Phase 1 Ingestion
+| Service | Port | Role |
+|---|---|---|
+| `gateway` | 8100 | Web console (`web/`) + proxy for `/api/research/*` and `/api/lab/*` |
+| `research-api` | 8101 | Topics, papers, claim cards, hybrid search; queues discover/distill jobs |
+| `lab-api` | 8102 | Projects, recommendations, experiments, the three gates, live events (SSE) |
+| `worker` | — | Executes jobs from the Postgres queue; runs LangGraph graphs until the next gate |
 
-Phase 1 ingests paper metadata, downloads PDFs when available, stores JSON/MySQL
-records, and optionally writes to Neo4j.
-
-Example commands:
-
-```bash
-# Search-based ingestion
-python -m paperatlas.concepts.extraction.ingest --query "graph neural networks"
-
-# Search only the last year
-python -m paperatlas.concepts.extraction.ingest \
-  --query "graph neural networks" \
-  --last-days 365 \
-  --max-results 50
-
-# Ingest by identifiers
-python -m paperatlas.concepts.extraction.ingest --doi 10.1038/s41586-020-2649-2
-python -m paperatlas.concepts.extraction.ingest --arxiv 2106.09685
-
-# Override MySQL or Neo4j connection strings
-python -m paperatlas.concepts.extraction.ingest \
-  --query "graph neural networks" \
-  --mysql-host "localhost" \
-  --mysql-user "root" \
-  --mysql-password "" \
-  --mysql-database "paperatlas" \
-  --neo4j-bolt-url "bolt://neo4j:root@localhost:7687"
-
-# Disable MySQL or Neo4j if not running
-python -m paperatlas.concepts.extraction.ingest --query "graph neural networks" --no-mysql
-python -m paperatlas.concepts.extraction.ingest --query "graph neural networks" --no-neo4j
-```
-
-## Phase 2 Concept Extraction
-
-Run the Phase 2 pipeline (pulls from MySQL, extracts concepts, writes logs):
-
-```bash
-python -m paperatlas.concepts.extraction.generate --limit 500 --batch-size 50
-```
-
-Optional flags:
-- `--offset 0` for pagination
-- `--no-neo4j` to skip graph writes
-- `--no-llm` or `--offline` to skip LLM calls (heuristics only)
-- `--log-dir data/concepts/phase2` to customize output logs
-
-## Notes
-
-- Many modules use **optional dependencies** (MySQL, Neo4j driver, FAISS, PyTorch, Transformers). If they are not installed, the code raises helpful errors at runtime rather than failing on import.
-- Configuration lives in `config/settings.yaml` and `config/model.yaml`.
-
+Storage is **PostgreSQL 18 + pgvector**: `research.*` (topics, papers, concepts, claims, groups),
+`lab.*` (projects, matches, triage, experiments, runs, verdicts, jobs, events) and `agent.*`
+(LangGraph checkpoints). Hybrid search fuses full-text (`tsvector`) and vector (HNSW) rankings
+with reciprocal-rank fusion.
 
 ## Setup
+
 ```bash
-uv venv
-source .venv/bin/activate
+brew install uv postgresql@18 pgvector node
+brew services start postgresql@18
+createdb paperatlas
+
+uv venv --python 3.12 && source .venv/bin/activate
 uv pip install -e .
-uvicorn paperatlas.api.main:app --reload
+cp .env.example .env          # add OPENAI_API_KEY (and optional source API keys)
+paperatlas db upgrade
+(cd web && npm install && npm run build)
 ```
+
+## Run the web console
+
+```bash
+paperatlas services up        # http://127.0.0.1:8100
+```
+
+For frontend development run `npm run dev` in `web/` (Vite proxies `/api` to the gateway).
+
+## Command line
+
+The CLI uses the same service layer and job queue as the console, so either can approve a gate.
+
+```bash
+paperatlas r2e project add ~/development/inference-lab     # target project with a lab.yaml
+paperatlas r2e scan --project inference-lab --refresh-topics  # topics → discover → distill → match
+paperatlas r2e recommend --project inference-lab           # ranked claim cards
+paperatlas r2e pick 42 --project inference-lab             # Gate 1
+paperatlas r2e show 1                                      # spec, stages, events
+paperatlas r2e approve 1 --set rounds=12                   # Gate 2 (or: revise --comment …, reject)
+paperatlas r2e watch 1                                     # follow progress to the next gate
+paperatlas r2e merge 1                                     # Gate 3 (or: drop)
+paperatlas r2e status --filter needs_you
+```
+
+Without `paperatlas services up`, run jobs with `paperatlas r2e worker` (or add `--inline`).
+Individual stages: `paperatlas r2e topics refresh`, `paperatlas r2e discover`,
+`paperatlas r2e distill`, `paperatlas r2e claims --q "kv cache"`, `paperatlas r2e match`,
+`paperatlas r2e digest --project inference-lab` (weekly HTML digest).
+
+## Target project contract
+
+A target project describes itself in a `lab.yaml` at its root: `hardware` (e.g. `cuda: false`),
+`models` (`smoke` and `eval`), `metrics` (name + `higher_is_better`/`lower_is_better`),
+`workloads`, `extension_points`, `constraints`, and `commands` (`install`, `test`, `list_flags`,
+`bench_ab` with `{model}` `{flags}` `{workload}` `{rounds}` `{out}` placeholders). `bench_ab` must
+write a JSON file with interleaved per-round metrics per arm, quality results and environment info
+(see `paperatlas.lab.runner.validate_results`). Each research technique is a feature flag that is
+off by default.
+
+## Configuration
+
+Environment variables (or `.env`, see [`.env.example`](.env.example)):
+`OPENAI_API_KEY`/`PAPERATLAS_LLM_API_KEY`, `PAPERATLAS_LLM_MODEL`, `PAPERATLAS_DATABASE_URL`,
+`PAPERATLAS_S2_API_KEY`, `PAPERATLAS_OPENALEX_API_KEY`, `PAPERATLAS_USPTO_API_KEY`,
+`PAPERATLAS_BUILDER` (`copilot`/`codex`), service ports and worker concurrency.
+Without source keys, Semantic Scholar is rate limited and patents are skipped.
+
+## Paper ingestion (single papers)
+
+```bash
+python -m paperatlas.concepts.extraction.ingest --query "graph neural networks" --last-days 365 --max-results 50
+python -m paperatlas.concepts.extraction.ingest --arxiv 2106.09685
+python -m paperatlas.concepts.extraction.generate --limit 50               # same as `paperatlas r2e distill`
+```
+
+Papers, claim cards and the LLM response cache (`research.llm_cache`) all live in PostgreSQL;
+`PAPERATLAS_DATA_DIR` only holds experiment worktrees, run logs/artifacts, reports and digests.
+
+## Tests
+
+```bash
+createdb paperatlas_test
+python -m pytest src/paperatlas        # DB tests use PAPERATLAS_TEST_DATABASE_URL (default: local paperatlas_test)
+```
+
+## Other modules
+
+The original scaffold (embeddings, GNN/ranking models, recommender and the stub API in
+`paperatlas.api`, run with `uvicorn paperatlas.api.main:app`) is unchanged and independent of the
+Research → Experiment services.

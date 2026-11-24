@@ -42,15 +42,10 @@ Each client returns a `PaperMetadata` object that the pipeline can use directly.
 The parser can run in `auto` mode, trying PyMuPDF first and falling back to GROBID
 if PyMuPDF is unavailable.
 
-#### Storage (`src/paperatlas/concepts/extraction/storage.py`)
-Two storage backends are provided:
-- `JsonPaperStore` stores each paper as a JSON file in `data/papers/`, using a
-  filename-safe version of the canonical paper ID.
-- `MySQLPaperStore` stores each paper in a `papers` table with JSON metadata
-  and raw text. This backend is optional and only used if MySQL credentials are
-  available.
-
-Both backends rely on the same `PaperRecord` schema for consistent data output.
+#### Storage
+Papers are stored in PostgreSQL through `paperatlas.db.store.PaperStore`
+(`research.papers`, with metadata and raw text). The former JSON file store
+(`data/papers/`) has been removed.
 
 #### Ingestion Pipeline (`src/paperatlas/concepts/extraction/pipeline.py`)
 `IngestionPipeline` coordinates metadata fetching, PDF parsing, storage, and graph

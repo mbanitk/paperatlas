@@ -1,16 +1,19 @@
 from .models import PaperAuthor, PaperIdentifier, PaperMetadata, PaperRecord
-from .pipeline import IngestionPipeline, ConceptExtractionPipeline
 from .sources import ArxivClient
-from .storage import JsonPaperStore, MySQLPaperStore
 
 __all__ = [
     "ArxivClient",
     "IngestionPipeline",
-    "ConceptExtractionPipeline",
-    "JsonPaperStore",
     "PaperAuthor",
     "PaperIdentifier",
     "PaperMetadata",
     "PaperRecord",
-    "MySQLPaperStore",
 ]
+
+
+def __getattr__(name: str):
+    if name == "IngestionPipeline":
+        from .pipeline import IngestionPipeline
+
+        return IngestionPipeline
+    raise AttributeError(name)

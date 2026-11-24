@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import re
+from datetime import date
 from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field, HttpUrl
@@ -17,20 +19,31 @@ class PaperMetadata(BaseModel):
     abstract: Optional[str] = None
     authors: List[PaperAuthor] = Field(default_factory=list)
     publication_year: Optional[int] = None
+    publication_date: Optional[date] = None
     venue: Optional[str] = None
+    doc_type: str = "paper"
     doi: Optional[str] = None
     arxiv_id: Optional[str] = None
     openalex_id: Optional[str] = None
     crossref_id: Optional[str] = None
+    s2_id: Optional[str] = None
+    patent_number: Optional[str] = None
     url: Optional[HttpUrl] = None
     pdf_url: Optional[HttpUrl] = None
+    code_url: Optional[str] = None
+    citation_count: Optional[int] = None
+    influential_citation_count: Optional[int] = None
+    hf_upvotes: Optional[int] = None
+    keywords: List[str] = Field(default_factory=list)
     source: str
 
     def canonical_id(self) -> str:
+        if self.patent_number:
+            return f"patent:{self.patent_number.strip().upper()}"
         return canonical_paper_id(
             doi=self.doi,
             arxiv_id=self.arxiv_id,
-            fallback=self.openalex_id or self.crossref_id or self.title,
+            fallback=self.openalex_id or self.s2_id or self.crossref_id or self.title,
         )
 
 
@@ -38,28 +51,6 @@ class PaperRecord(BaseModel):
     metadata: PaperMetadata
     raw_text: Optional[str] = None
     source_payload: Optional[Dict] = None
-
-
-class ConceptCandidate(BaseModel):
-    name: str
-    source: str
-    evidence: Optional[str] = None
-    post: Optional[str] = None
-
-
-class ConceptSummary(BaseModel):
-    paragraph: str
-    bullets: List[str]
-
-
-class ConceptRecord(BaseModel):
-    concept_id: str
-    paper_id: str
-    name: str
-    summary: str
-    bullets: List[str]
-    source: str
-
 
 
 class PaperIdentifier(BaseModel):
@@ -70,12 +61,11 @@ class PaperIdentifier(BaseModel):
 
 def canonical_paper_id(doi: Optional[str], arxiv_id: Optional[str], fallback: str) -> str:
     normalized_doi = normalize_doi(doi)
-    if normalized_doi:
-        return f"doi:{normalized_doi}"
-
-    normalized_arxiv = normalize_arxiv_id(arxiv_id)
+    normalized_arxiv = normalize_arxiv_id(arxiv_id) or arxiv_id_from_doi(normalized_doi)
     if normalized_arxiv:
         return f"arxiv:{normalized_arxiv}"
+    if normalized_doi:
+        return f"doi:{normalized_doi}"
 
     digest = hashlib.sha1(fallback.encode("utf-8")).hexdigest()
     return f"hash:{digest}"
@@ -103,6 +93,14 @@ def normalize_arxiv_id(arxiv_id: Optional[str]) -> Optional[str]:
     cleaned = arxiv_id.strip().lower()
     if cleaned.startswith("arxiv:"):
         cleaned = cleaned[len("arxiv:") :]
-    if "abs/" in cleaned:
-        cleaned = cleaned.split("abs/", 1)[-1]
-    return cleaned.split("v", 1)[0] or None
+    for marker in ("abs/", "pdf/"):
+        if marker in cleaned:
+            cleaned = cleaned.split(marker, 1)[-1]
+    cleaned = cleaned.removesuffix(".pdf")
+    return re.sub(r"v\d+$", "", cleaned) or None
+
+
+def arxiv_id_from_doi(doi: Optional[str]) -> Optional[str]:
+    if doi and doi.startswith("10.48550/arxiv."):
+        return normalize_arxiv_id(doi[len("10.48550/arxiv.") :])
+    return None
