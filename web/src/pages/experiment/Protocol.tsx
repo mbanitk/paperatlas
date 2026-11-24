@@ -1,9 +1,10 @@
 import { useState, type ReactNode } from 'react'
-import type { ExperimentSpec, FidelityLevel, PaperBaselineKind, ProtocolField } from '../../api/types'
+import type { ExperimentSpec, FidelityLevel, PaperBaselineKind, Project, ProtocolField } from '../../api/types'
+import { CodeToken, MetricName, OutcomeBadge } from '../../components/Badges'
 import { AlertIcon, ChevronDown, ChevronRight, MinusIcon, XIcon } from '../../components/Icons'
 import { PredictionPanel } from '../../components/Prediction'
-import { Button, Checkbox, Chip, cx, Field } from '../../components/ui'
-import { formatPct } from '../../lib/format'
+import { AnswerBlock, Button, Checkbox, Chip, cx, Disclosure, Field, IconButton } from '../../components/ui'
+import { formatRange, formatSigned } from '../../lib/format'
 import {
   BASELINE_KIND_LABELS,
   claimTarget,
@@ -16,6 +17,7 @@ import {
   maxPrompts,
   MIN_NEW_TOKENS,
   needsAdoptionCheck,
+  plainDuration,
   protocolOf,
   tuneConfigs,
   workloadSummary,
@@ -41,10 +43,10 @@ export function FidelityBadge({ level, className }: { level: FidelityLevel; clas
   )
 }
 
-function CheckCard({ question, title, children, tone }: { question: string; title: string; children: ReactNode; tone: 'claim' | 'adopt' }) {
+function CheckCard({ question, title, children }: { question: string; title: string; children: ReactNode }) {
   return (
-    <section className={cx('min-w-0 rounded-lg border px-3 py-2.5', tone === 'claim' ? 'border-done/30 bg-done-subtle/30' : 'border-success/30 bg-success-subtle/30')}>
-      <div className={cx('text-[11px] font-semibold tracking-wide uppercase', tone === 'claim' ? 'text-done' : 'text-success')}>{title}</div>
+    <section className="min-w-0 rounded-lg border border-line bg-canvas px-3 py-2.5">
+      <div className="text-xs font-semibold text-muted">{title}</div>
       <div className="text-sm font-semibold text-fg">{question}</div>
       <dl className="mt-2 space-y-1.5 text-sm">{children}</dl>
     </section>
@@ -60,13 +62,131 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
   )
 }
 
-const changedRing = (changed: boolean) => (changed ? 'rounded-md ring-2 ring-attention-emphasis/50 ring-offset-1' : '')
+/** Long planner prose: three lines, then "more". */
+function MoreText({ children }: { children: string }) {
+  const [open, setOpen] = useState(false)
+  const long = children.length > 200
+  return (
+    <span className="mt-0.5 block">
+      <span className={long && !open ? 'line-clamp-3' : 'block'}>{children}</span>
+      {long && (
+        <button type="button" className="min-h-6 text-xs font-medium text-info-fg hover:underline" onClick={() => setOpen(!open)} aria-expanded={open}>
+          {open ? 'less' : 'more'}
+        </button>
+      )}
+    </span>
+  )
+}
+
+const changedRing = (changed: boolean) => (changed ? 'rounded-md ring-2 ring-caution-emphasis/50 ring-offset-1' : '')
+
+function modelLabel(project: Project | undefined, alias: string | undefined) {
+  if (!alias) return null
+  const model = project?.models?.[alias]
+  const id = typeof model === 'string' ? model : model?.id
+  return id ? `${alias} (${id})` : alias
+}
+
+function Fact({ label, children, hint }: { label: string; children: ReactNode; hint?: ReactNode }) {
+  return (
+    <div className="min-w-0 rounded-lg border border-line bg-canvas px-3 py-2">
+      <dt className="text-xs font-medium text-muted">{label}</dt>
+      <dd className="mt-0.5 text-sm font-semibold text-fg [overflow-wrap:anywhere]">{children}</dd>
+      {hint && <dd className="mt-0.5 text-xs text-muted">{hint}</dd>}
+    </div>
+  )
+}
 
 /**
- * "How we'll test the paper's claim": the claim check (method vs the paper's baseline on a paper-like workload),
- * the adoption check (method vs the project default on its workload), counters, knobs and fidelity.
+ * Gate 2's answer first (docs/ux-review.md X-12): what we'll test, the success bar, the workload and model, the
+ * sample size and time budget, what to expect, and how closely it follows the paper. Everything else is a
+ * disclosure away.
  */
-export function ProtocolSummary({ spec, changed = [], className }: { spec: Partial<ExperimentSpec>; changed?: ProtocolField[]; className?: string }) {
+export function TestPlanGlance({ spec, project, className }: { spec: Partial<ExperimentSpec>; project?: Project; className?: string }) {
+  const protocol = protocolOf(spec)
+  const adoption = needsAdoptionCheck(spec)
+  const target = claimTarget(spec.claimed_gain_pct, spec.success_threshold_pct)
+  const prediction = spec.prediction
+  const range = prediction?.predicted_gain_pct
+  const timeouts = [spec.build_timeout_s, spec.smoke_timeout_s, spec.eval_timeout_s].filter((value): value is number => typeof value === 'number' && value > 0)
+  const budget = timeouts.reduce((sum, value) => sum + value, 0)
+  const runs = adoption ? 'two A/B tests' : 'an A/B test'
+  return (
+    <div className={cx('space-y-3', className)}>
+      <div>
+        <h3 className="text-xs font-semibold text-muted">What we’ll test</h3>
+        <p className="mt-0.5 max-w-3xl text-body-lg text-fg">{spec.hypothesis || 'The planner didn’t write a hypothesis.'}</p>
+        <p className="mt-1 max-w-3xl text-sm text-muted">
+          On approval, a coding agent builds the technique behind the flag {spec.flag_name ? <CodeToken>{spec.flag_name}</CodeToken> : 'for this claim'} on its own branch, then
+          we run {runs}{adoption ? ': one against the paper’s setup (does the claim hold?) and one on your default workload (is it worth adopting here?)' : ' on your default workload'}.
+          Nothing is merged without your decision at Gate 3.
+        </p>
+      </div>
+      <dl className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+        <Fact
+          label="Success bar"
+          hint={[
+            adoption && target !== null && target !== spec.success_threshold_pct ? `Claim check needs ${formatSigned(target, { digits: 1 })}` : null,
+            typeof spec.claimed_gain_pct === 'number' ? `Paper reports ${formatSigned(spec.claimed_gain_pct, { digits: 0 })}` : 'Paper gives no number',
+          ]
+            .filter(Boolean)
+            .join(' · ')}
+        >
+          {formatSigned(adoption ? spec.success_threshold_pct : target, { digits: 1, fallback: 'Not set' })} or better on <MetricName metric={spec.primary_metric} />
+        </Fact>
+        <Fact label="Workload and model" hint={adoption && protocol.paper_workload ? 'Claim check uses a paper-like workload' : undefined}>
+          {spec.workload ?? 'Not set'} · {modelLabel(project, spec.model) ?? 'Not set'}
+        </Fact>
+        <Fact label="Sample size" hint={protocol.max_iterations > 1 ? `Up to ${protocol.max_iterations} iterations if the result looks fixable` : undefined}>
+          {spec.rounds ?? '?'} rounds per side{spec.warmup ? `, ${spec.warmup} warm-up` : ''}
+        </Fact>
+        <Fact label="Time limit" hint={timeouts.length ? `Build ${plainDuration(spec.build_timeout_s)} · smoke ${plainDuration(spec.smoke_timeout_s)} · A/B ${plainDuration(spec.eval_timeout_s)}` : undefined}>
+          {budget ? `Up to ${plainDuration(budget)}` : 'Not set'}
+        </Fact>
+      </dl>
+      {(range || prediction || protocol.version >= 2) && (
+        <div className="grid gap-2 sm:grid-cols-2">
+          {prediction && (
+            <AnswerBlock
+              register="predicted"
+              size="md"
+              label="Expected here (cost model)"
+              value={formatRange(range?.low, range?.high)}
+              badge={<OutcomeBadge kind="likelihood" value={prediction.likelihood} explain />}
+              confidence={prediction.reasons?.[0]}
+            />
+          )}
+          {protocol.version >= 2 && (
+            <div className="min-w-0 rounded-lg border border-line bg-canvas px-3 py-2">
+              <div className="text-xs font-medium text-muted">How close to the paper</div>
+              <div className="mt-1 flex flex-wrap items-center gap-2">
+                <FidelityBadge level={protocol.fidelity.level} />
+                <span className="text-sm text-fg">
+                  {protocol.fidelity.gaps.length ? `${protocol.fidelity.gaps.length} known gap${protocol.fidelity.gaps.length > 1 ? 's' : ''} to the paper` : 'No known gaps'}
+                </span>
+              </div>
+              {protocol.fidelity.gaps[0] && <p className="mt-1 line-clamp-2 text-xs text-muted">{protocol.fidelity.gaps[0]}</p>}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * "How we'll test the paper's claim": the claim check (method vs the paper's baseline on a paper-like workload)
+ * and the adoption check (method vs the project default on its workload), in plain words; counters, knobs and
+ * known gaps are one click away.
+ */
+export function ProtocolSummary({ spec, changed = [], className, showPrediction = true, showFidelity = true }: {
+  spec: Partial<ExperimentSpec>
+  changed?: ProtocolField[]
+  className?: string
+  /** Off when the prediction is already shown nearby (Gate 2's plan at a glance). */
+  showPrediction?: boolean
+  showFidelity?: boolean
+}) {
   const protocol = protocolOf(spec)
   const adoption = needsAdoptionCheck(spec)
   const target = claimTarget(spec.claimed_gain_pct, spec.success_threshold_pct)
@@ -74,35 +194,47 @@ export function ProtocolSummary({ spec, changed = [], className }: { spec: Parti
   const configs = tuneConfigs(protocol.knobs)
   const tuned = protocol.tune && configs.length >= 2
   const is = (field: ProtocolField) => changed.includes(field)
-  const metric = spec.primary_metric ? <code className="code-inline">{spec.primary_metric}</code> : 'the primary metric'
-  const prediction = spec.prediction
+  const metric = spec.primary_metric ? <MetricName metric={spec.primary_metric} /> : 'the primary metric'
+  const prediction = showPrediction ? spec.prediction : null
+  const expertChanged = is('mechanism') || is('knobs') || is('tune') || is('lossless') || is('max_iterations')
 
   return (
     <div className={cx('space-y-3', className)}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-sm font-semibold">How we’ll test the paper’s claim</h3>
-        <span className={changedRing(is('fidelity'))}>
-          <FidelityBadge level={protocol.fidelity.level} />
-        </span>
+        {showFidelity && (
+          <span className={changedRing(is('fidelity'))}>
+            <FidelityBadge level={protocol.fidelity.level} />
+          </span>
+        )}
       </div>
+      <p className="max-w-3xl text-sm text-muted">
+        {adoption
+          ? 'Two A/B tests with the same build. The claim check recreates the paper’s comparison to see whether its claim holds; the adoption check measures the change on your project’s default setup to see whether it’s worth keeping.'
+          : 'One A/B test with the change on and off, on your project’s default setup. It answers both questions: does the claim hold here, and is it worth keeping?'}
+      </p>
       <div className={cx('grid gap-3', (adoption || prediction) && 'md:grid-cols-2')}>
-        <CheckCard tone="claim" title="Claim check" question="Does the paper’s claim hold?">
+        <CheckCard title="Claim check" question="Does the paper’s claim hold?">
           <Row label="Compares">
             <span className={changedRing(is('paper_baseline'))}>
-              method vs{' '}
+              the method vs{' '}
               {protocol.paper_baseline.kind === 'technique_mode' ? (
                 <>
                   <strong>the paper’s baseline</strong> <span className="text-xs whitespace-nowrap text-muted">(same flag, mode=baseline)</span>
                   {protocol.paper_baseline.description && (
-                    <span className="mt-0.5 line-clamp-4 text-[13px] text-fg" title={protocol.paper_baseline.description}>
-                      {protocol.paper_baseline.description}
+                    <span className="block text-sm text-fg">
+                      <MoreText>{protocol.paper_baseline.description}</MoreText>
                     </span>
                   )}
                 </>
               ) : (
                 <>
-                  <strong>the project default</strong> <span className="text-xs text-muted">(flag off)</span>
-                  {protocol.paper_baseline.description && <span className="block text-xs text-muted">paper: {protocol.paper_baseline.description}</span>}
+                  <strong>your project’s default</strong> <span className="text-xs text-muted">(flag off)</span>
+                  {protocol.paper_baseline.description && (
+                    <span className="block text-xs text-muted">
+                      <MoreText>{`The paper compared against: ${protocol.paper_baseline.description}`}</MoreText>
+                    </span>
+                  )}
                 </>
               )}
             </span>
@@ -112,118 +244,118 @@ export function ProtocolSummary({ spec, changed = [], className }: { spec: Parti
               {workload ? (
                 <>
                   <strong>Paper-like</strong>
-                  {workload.matches && <> — mirrors {workload.matches}</>}
+                  {workload.matches && <>, mirrors {workload.matches}</>}
                   <span className="block text-xs text-muted">{workloadSummary(workload)}</span>
                 </>
               ) : (
                 <>
-                  project workload <code className="code-inline">{spec.workload}</code>
-                  <span className="block text-xs text-muted">no paper-like workload set</span>
+                  your workload <CodeToken>{spec.workload}</CodeToken>
+                  <span className="block text-xs text-muted">No paper-like workload set</span>
                 </>
               )}
             </span>
           </Row>
           <Row label="Passes if">
-            {metric} improves ≥ {formatPct(target, 1)}
-            {typeof spec.claimed_gain_pct === 'number' && <span className="text-xs text-muted"> · 70% of the paper’s {formatPct(spec.claimed_gain_pct, 0)}</span>}
+            {metric} improves by {formatSigned(target, { digits: 1, fallback: 'the target' })} or more
+            {typeof spec.claimed_gain_pct === 'number' && <span className="block text-xs text-muted">70% of the paper’s {formatSigned(spec.claimed_gain_pct, { digits: 0 })}</span>}
           </Row>
         </CheckCard>
         {adoption && (
-          <CheckCard tone="adopt" title="Adoption check" question="Is it worth adopting here?">
+          <CheckCard title="Adoption check" question="Is it worth adopting here?">
             <Row label="Compares">
-              method vs <strong>the project default</strong> <span className="text-xs text-muted">(flag off)</span>
+              the method vs <strong>your project’s default</strong> <span className="text-xs text-muted">(flag off)</span>
             </Row>
             <Row label="Workload">
-              project workload <code className="code-inline">{spec.workload}</code>
+              your workload <CodeToken>{spec.workload}</CodeToken>
             </Row>
             <Row label="Worth it if">
-              {metric} improves ≥ {formatPct(spec.success_threshold_pct, 1)} <span className="text-xs text-muted">· success bar</span>
+              {metric} improves by {formatSigned(spec.success_threshold_pct, { digits: 1, fallback: 'the success bar' })} or more{' '}
+              <span className="block text-xs text-muted">Your success bar, with quality intact</span>
             </Row>
           </CheckCard>
         )}
         {prediction && <PredictionPanel prediction={prediction} claimed={spec.claimed_gain_pct} className={adoption ? 'md:col-span-2' : undefined} />}
       </div>
-      {!adoption && protocol.version >= 2 && (
-        <p className="text-xs text-muted">The claim check already uses the project default and workload, so it also answers whether the technique is worth adopting.</p>
-      )}
 
-      <div className="grid gap-3 md:grid-cols-2">
-        <section className={cx('min-w-0', changedRing(is('mechanism')))}>
-          <h4 className="mb-1 text-xs font-semibold text-muted">Mechanism counters</h4>
-          {protocol.mechanism.length ? (
-            <ul className="space-y-1">
-              {protocol.mechanism.map((counter) => (
-                <li key={counter.name} className="text-sm">
-                  <code className="code-inline">{counter.name}</code>
-                  {counter.meaning && <span className="text-muted"> — {counter.meaning}</span>}
-                  {counter.paper_value && <span className="ml-1 text-xs text-done">paper: {counter.paper_value}</span>}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="flex gap-1.5 text-xs text-attention">
-              <AlertIcon size={14} className="mt-px shrink-0" /> None — a miss can’t be told apart from a broken build.
-            </p>
-          )}
-        </section>
-        <section className={cx('min-w-0', changedRing(is('knobs') || is('tune')))}>
-          <h4 className="mb-1 flex flex-wrap items-center gap-2 text-xs font-semibold text-muted">
-            Knobs
-            {protocol.knobs.length > 0 && (
-              <Chip tone={tuned ? 'accent' : 'muted'}>{tuned ? `will be tuned · ${configs.length} configs × ${protocol.tune_rounds} round` : 'not tuned'}</Chip>
-            )}
-          </h4>
-          {protocol.knobs.length ? (
-            <ul className="space-y-1">
-              {protocol.knobs.map((knob) => (
-                <li key={knob.name} className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-sm">
-                  <code className="code-inline">{knob.name}</code>
-                  {knob.candidates.map((value, index) => (
-                    <span
-                      key={formatKnobValue(value)}
-                      className={cx(
-                        'rounded-full border px-1.5 text-xs tabular-nums',
-                        index === 0 ? 'border-done/40 bg-done-subtle text-done' : 'border-line bg-canvas text-muted',
-                      )}
-                      title={index === 0 ? 'The paper’s setting (tried first)' : 'Alternative tried while tuning'}
-                    >
-                      {formatKnobValue(value)}
-                    </span>
+      <Disclosure label="Counters, settings and known gaps" meta=" · for experts" defaultOpen={expertChanged}>
+        <div className="space-y-3">
+          <div className="grid gap-3 md:grid-cols-2">
+            <section className={cx('min-w-0', changedRing(is('mechanism')))}>
+              <h4 className="mb-1 text-xs font-semibold text-muted">Mechanism counters: what the technique should change</h4>
+              {protocol.mechanism.length ? (
+                <ul className="space-y-1">
+                  {protocol.mechanism.map((counter) => (
+                    <li key={counter.name} className="text-sm">
+                      <CodeToken>{counter.name}</CodeToken>
+                      {counter.meaning && <span className="text-muted"> · {counter.meaning}</span>}
+                      {counter.paper_value && <span className="ml-1 text-xs text-fg">(paper: {counter.paper_value})</span>}
+                    </li>
                   ))}
-                  {knob.paper_value && <span className="text-xs text-muted">paper: {knob.paper_value}</span>}
-                  {knob.meaning && <span className="basis-full text-xs text-muted">{knob.meaning}</span>}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-xs text-muted">None — the paper’s setting is used as is.</p>
+                </ul>
+              ) : (
+                <p className="flex gap-1.5 text-xs text-caution-fg">
+                  <AlertIcon size={14} className="mt-px shrink-0" /> None: a miss can’t be told apart from a broken build.
+                </p>
+              )}
+            </section>
+            <section className={cx('min-w-0', changedRing(is('knobs') || is('tune')))}>
+              <h4 className="mb-1 flex flex-wrap items-center gap-2 text-xs font-semibold text-muted">
+                Settings to tune
+                {protocol.knobs.length > 0 && (
+                  <Chip tone={tuned ? 'info' : 'neutral'}>{tuned ? `Tuned first · ${configs.length} settings × ${protocol.tune_rounds} round` : 'Not tuned'}</Chip>
+                )}
+              </h4>
+              {protocol.knobs.length ? (
+                <ul className="space-y-1">
+                  {protocol.knobs.map((knob) => (
+                    <li key={knob.name} className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-sm">
+                      <CodeToken>{knob.name}</CodeToken>
+                      {knob.candidates.map((value, index) => (
+                        <span
+                          key={formatKnobValue(value)}
+                          className={cx('rounded-full border px-1.5 text-xs tabular-nums', index === 0 ? 'border-fg/40 bg-canvas-subtle font-semibold text-fg' : 'border-line bg-canvas text-muted')}
+                        >
+                          {formatKnobValue(value)}
+                          {index === 0 && <span className="sr-text"> (the paper’s setting, tried first)</span>}
+                        </span>
+                      ))}
+                      {knob.paper_value && <span className="text-xs text-muted">paper: {knob.paper_value}</span>}
+                      {knob.meaning && <span className="basis-full text-xs text-muted">{knob.meaning}</span>}
+                    </li>
+                  ))}
+                  <li className="text-xs text-muted">The first value is the paper’s setting.</li>
+                </ul>
+              ) : (
+                <p className="text-xs text-muted">None: the paper’s setting is used as is.</p>
+              )}
+            </section>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-1.5 text-xs">
+            <span className={changedRing(is('lossless'))}>
+              <Chip tone="neutral">{protocol.lossless ? 'Lossless: outputs must match' : 'Approximate: the quality guardrail applies'}</Chip>
+            </span>
+            <span className={changedRing(is('max_iterations'))}>
+              <Chip tone="neutral">
+                Up to {protocol.max_iterations} iteration{protocol.max_iterations > 1 ? 's' : ''}
+                {protocol.max_iterations > 1 && ' · analyse, fix, measure again'}
+              </Chip>
+            </span>
+            {spec.baseline_flags && spec.baseline_flags.length > 0 && <Chip tone="neutral">Baseline keeps {spec.baseline_flags.join(', ')} on</Chip>}
+          </div>
+
+          {protocol.fidelity.gaps.length > 0 && (
+            <div className={cx('rounded-md border border-line-muted px-3 py-2', changedRing(is('fidelity')))}>
+              <h4 className="mb-1 text-xs font-semibold text-muted">Known gaps to the paper</h4>
+              <ul className="list-disc space-y-0.5 pl-4 text-sm">
+                {protocol.fidelity.gaps.map((gap) => (
+                  <li key={gap}>{gap}</li>
+                ))}
+              </ul>
+            </div>
           )}
-        </section>
-      </div>
-
-      <div className="flex flex-wrap items-center gap-1.5 text-xs">
-        <span className={changedRing(is('lossless'))}>
-          <Chip tone={protocol.lossless ? 'success' : 'neutral'}>{protocol.lossless ? 'lossless: outputs must match' : 'approximate: quality guardrail applies'}</Chip>
-        </span>
-        <span className={changedRing(is('max_iterations'))}>
-          <Chip tone="neutral">
-            up to {protocol.max_iterations} iteration{protocol.max_iterations > 1 ? 's' : ''}
-            {protocol.max_iterations > 1 && ' · diagnose → fix → re-run'}
-          </Chip>
-        </span>
-        {spec.baseline_flags && spec.baseline_flags.length > 0 && <Chip tone="neutral">baseline keeps {spec.baseline_flags.join(', ')} on</Chip>}
-      </div>
-
-      {protocol.fidelity.gaps.length > 0 && (
-        <div className={cx('rounded-md border border-line-muted px-3 py-2', changedRing(is('fidelity')))}>
-          <h4 className="mb-1 text-xs font-semibold text-muted">Known gaps to the paper</h4>
-          <ul className="list-disc space-y-0.5 pl-4 text-sm">
-            {protocol.fidelity.gaps.map((gap) => (
-              <li key={gap}>{gap}</li>
-            ))}
-          </ul>
         </div>
-      )}
+      </Disclosure>
     </div>
   )
 }
@@ -231,18 +363,7 @@ export function ProtocolSummary({ spec, changed = [], className }: { spec: Parti
 // ---- editor -----------------------------------------------------------------------------------
 
 function RemoveButton({ label, onClick, disabled }: { label: string; onClick: () => void; disabled?: boolean }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      aria-label={label}
-      title={label}
-      className="inline-flex size-8 shrink-0 items-center justify-center rounded-md text-muted hover:bg-danger-subtle hover:text-danger disabled:opacity-50"
-    >
-      <XIcon size={14} />
-    </button>
-  )
+  return <IconButton label={label} onClick={onClick} disabled={disabled} icon={<XIcon size={14} />} className="hover:bg-negative-subtle hover:text-negative-fg" />
 }
 
 function Section({ title, hint, changed, children }: { title: string; hint?: ReactNode; changed: boolean; children: ReactNode }) {
@@ -284,8 +405,8 @@ export function ProtocolEditor({ form, onChange, errors, changed, fields, disabl
         aria-controls="protocol-editor"
       >
         {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-        Edit protocol
-        <span className="font-normal text-muted">baseline, paper workload, counters, knobs, fidelity</span>
+        Edit the test protocol
+        <span className="font-normal text-muted">baseline, paper workload, counters, settings, fidelity</span>
         {edited > 0 && <Chip tone="attention" className="ml-auto">{edited} edited</Chip>}
       </button>
       {open && (
@@ -422,7 +543,7 @@ export function ProtocolEditor({ form, onChange, errors, changed, fields, disabl
           {has('mechanism') && (
             <Section title="Mechanism counters" changed={is('mechanism')} hint="Counters the technique reports, so the verdict can say why a number moved (e.g. verify passes, accepted tokens).">
               {form.mechanism.length > 0 && (
-                <div className="mb-1 hidden gap-1.5 text-[11px] text-muted sm:grid sm:grid-cols-[minmax(0,11rem)_minmax(0,1fr)_minmax(0,8rem)_2rem]">
+                <div className="mb-1 hidden gap-1.5 text-xs text-muted sm:grid sm:grid-cols-[minmax(0,11rem)_minmax(0,1fr)_minmax(0,8rem)_2rem]">
                   <span>Name</span>
                   <span>Meaning</span>
                   <span>Paper value</span>
@@ -459,7 +580,7 @@ export function ProtocolEditor({ form, onChange, errors, changed, fields, disabl
           {has('knobs') && (
             <Section title="Knobs" changed={is('knobs')} hint="Hyperparameters to tune before the measured runs: list the paper’s value first, then up to two alternatives.">
               {form.knobs.length > 0 && (
-                <div className="mb-1 hidden gap-1.5 text-[11px] text-muted sm:grid sm:grid-cols-[minmax(0,11rem)_minmax(0,1fr)_minmax(0,6rem)_minmax(0,7rem)_2rem]">
+                <div className="mb-1 hidden gap-1.5 text-xs text-muted sm:grid sm:grid-cols-[minmax(0,11rem)_minmax(0,1fr)_minmax(0,6rem)_minmax(0,7rem)_2rem]">
                   <span>Name</span>
                   <span>Meaning</span>
                   <span>Paper value</span>

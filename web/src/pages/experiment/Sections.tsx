@@ -2,8 +2,11 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useExperimentLog } from '../../api/queries'
 import type { BuildInfo, Experiment, Project, RunInfo } from '../../api/types'
 import { BranchIcon, ChevronDown, ChevronRight, LogIcon, MergeIcon, RefreshIcon } from '../../components/Icons'
+import { CodeToken, MetricName, Tag } from '../../components/Badges'
+import { TableScroll } from '../../components/Table'
 import { Button, Card, Checkbox, Chip, DefinitionList, EmptyState, ErrorState, ExternalLink, Loading, RelativeTime, cx } from '../../components/ui'
-import { displayValue, durationBetween, formatDuration, formatNumber, tailLines } from '../../lib/format'
+import { displayValue, durationBetween, formatDuration, formatNumber, formatSigned, tailLines } from '../../lib/format'
+import { sentenceCase } from '../../lib/semantics'
 import { formatConfig, runKindLabel } from '../../lib/protocol'
 
 export function BuildCard({ experiment }: { experiment: Experiment }) {
@@ -15,7 +18,7 @@ export function BuildCard({ experiment }: { experiment: Experiment }) {
   return (
     <Card title="Build" actions={build.builder ? <Chip tone="neutral">coding agent: {build.builder}</Chip> : undefined}>
       {!hasBuild && !experiment.branch ? (
-        <p className="text-sm text-muted">Nothing built yet — the coding agent starts after Gate 2.</p>
+        <p className="text-sm text-muted">Nothing built yet. The coding agent starts after you approve the plan (Gate 2).</p>
       ) : (
         <div className="space-y-4 text-sm">
           <DefinitionList
@@ -25,13 +28,13 @@ export function BuildCard({ experiment }: { experiment: Experiment }) {
                 experiment.branch ? (
                   <span className="inline-flex items-center gap-1">
                     <BranchIcon size={14} className="text-muted" />
-                    <code className="code-inline">{experiment.branch}</code>
+                    <CodeToken>{experiment.branch}</CodeToken>
                   </span>
                 ) : (
-                  '—'
+                  'Not created yet'
                 ),
               ],
-              ['Pull request', build.pr_url ? <ExternalLink href={build.pr_url}>{build.pr_url.replace(/^https?:\/\/(www\.)?github\.com\//, '')}</ExternalLink> : <span className="text-muted">none (no GitHub remote or not opened yet)</span>],
+              ['Pull request', build.pr_url ? <ExternalLink href={build.pr_url}>{build.pr_url.replace(/^https?:\/\/(www\.)?github\.com\//, '')}</ExternalLink> : <span className="text-muted">None (no GitHub remote, or not opened yet)</span>],
               ...(build.merge_sha
                 ? ([
                     [
@@ -42,24 +45,24 @@ export function BuildCard({ experiment }: { experiment: Experiment }) {
                     ],
                   ] as [string, ReactNode][])
                 : []),
-              ['Worktree', experiment.worktree_path ? <code className="text-xs break-all text-muted">{experiment.worktree_path}</code> : '—'],
+              ['Worktree', experiment.worktree_path ? <code className="text-xs break-all text-muted">{experiment.worktree_path}</code> : 'Not created yet'],
             ]}
           />
           {attempts.length > 0 && (
             <div>
-              <h3 className="mb-1.5 text-xs font-semibold tracking-wide text-muted uppercase">Attempts</h3>
+              <h3 className="mb-1.5 text-xs font-semibold text-muted">Attempts</h3>
               <ol className="space-y-2">
                 {attempts.map((attempt) => (
                   <li key={attempt.attempt} className="rounded-md border border-line-muted px-3 py-2">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="font-semibold">Attempt {attempt.attempt}</span>
-                      <Chip tone={attempt.problems.length ? 'danger' : 'success'}>{attempt.problems.length ? 'verification failed' : 'verified'}</Chip>
+                      <Chip tone={attempt.problems.length ? 'negative' : 'neutral'}>{attempt.problems.length ? 'Checks failed' : 'Checks passed'}</Chip>
                       <span className="text-xs text-muted">
-                        {formatDuration(attempt.duration_s)} · agent exit {attempt.agent_exit ?? '—'}
+                        {formatDuration(attempt.duration_s)} · agent exit code {attempt.agent_exit ?? 'not reported'}
                       </span>
                     </div>
                     {attempt.problems.length > 0 && (
-                      <pre className="mt-1.5 max-h-40 overflow-auto rounded bg-danger-subtle/60 p-2 text-xs whitespace-pre-wrap text-danger">{attempt.problems.join('\n')}</pre>
+                      <pre className="mt-1.5 max-h-40 overflow-auto rounded bg-negative-subtle/60 p-2 text-xs whitespace-pre-wrap text-negative-fg">{attempt.problems.join('\n')}</pre>
                     )}
                   </li>
                 ))}
@@ -68,7 +71,7 @@ export function BuildCard({ experiment }: { experiment: Experiment }) {
           )}
           {files.length > 0 && (
             <div>
-              <h3 className="mb-1.5 text-xs font-semibold tracking-wide text-muted uppercase">Changed files ({files.length})</h3>
+              <h3 className="mb-1.5 text-xs font-semibold text-muted">Changed files ({files.length})</h3>
               <ul className="space-y-0.5 font-mono text-xs">
                 {files.map((file) => (
                   <li key={file} className="break-all">
@@ -80,13 +83,13 @@ export function BuildCard({ experiment }: { experiment: Experiment }) {
           )}
           {build.diff_stat && (
             <div>
-              <h3 className="mb-1.5 text-xs font-semibold tracking-wide text-muted uppercase">Diff stat</h3>
+              <h3 className="mb-1.5 text-xs font-semibold text-muted">Diff stat</h3>
               <pre className="overflow-x-auto rounded-md border border-line-muted bg-canvas-subtle p-2 text-xs leading-relaxed">{build.diff_stat}</pre>
             </div>
           )}
           {build.agent_summary && (
             <div>
-              <button type="button" onClick={() => setShowSummary(!showSummary)} aria-expanded={showSummary} className="inline-flex items-center gap-1 text-xs font-semibold text-accent">
+              <button type="button" onClick={() => setShowSummary(!showSummary)} aria-expanded={showSummary} className="inline-flex min-h-6 items-center gap-1 text-xs font-semibold text-info-fg">
                 {showSummary ? <ChevronDown size={12} /> : <ChevronRight size={12} />} Agent summary
               </button>
               {showSummary && <pre className="mt-1.5 max-h-72 overflow-auto rounded-md bg-canvas-subtle p-2 text-xs whitespace-pre-wrap">{build.agent_summary}</pre>}
@@ -107,40 +110,42 @@ function SummaryTable({ summary, primary }: { summary: Record<string, unknown>; 
     return <pre className="overflow-x-auto rounded bg-canvas-subtle p-2 text-xs">{JSON.stringify(summary, null, 2)}</pre>
   }
   return (
-    <table className="w-full text-xs">
-      <thead className="text-left text-muted">
-        <tr>
-          <th scope="col" className="py-1 font-medium">
-            Metric (median)
-          </th>
-          <th scope="col" className="py-1 text-right font-medium">
-            Baseline
-          </th>
-          <th scope="col" className="py-1 text-right font-medium">
-            Variant
-          </th>
-          <th scope="col" className="py-1 text-right font-medium">
-            Change
-          </th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map(([name, value]) => {
-          const change = typeof value.baseline === 'number' && typeof value.variant === 'number' && value.baseline !== 0 ? ((value.variant - value.baseline) / Math.abs(value.baseline)) * 100 : null
-          return (
-            <tr key={name} className="border-t border-line-muted">
-              <td className="py-1">
-                <code>{name}</code>
-                {name === primary && <span className="ml-1 text-accent">★</span>}
-              </td>
-              <td className="py-1 text-right tabular-nums">{formatNumber(value.baseline)}</td>
-              <td className="py-1 text-right tabular-nums">{formatNumber(value.variant)}</td>
-              <td className="py-1 text-right tabular-nums text-muted">{change === null ? '—' : `${change > 0 ? '+' : ''}${change.toFixed(1)}%`}</td>
-            </tr>
-          )
-        })}
-      </tbody>
-    </table>
+    <TableScroll label="Run summary" hint={false}>
+      <table className="w-full text-xs">
+        <thead className="text-left text-muted">
+          <tr>
+            <th scope="col" className="py-1 pr-2 font-medium">
+              Metric (median)
+            </th>
+            <th scope="col" className="py-1 pr-2 text-right font-medium">
+              Baseline
+            </th>
+            <th scope="col" className="py-1 pr-2 text-right font-medium">
+              Method
+            </th>
+            <th scope="col" className="py-1 text-right font-medium">
+              Change
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(([name, value]) => {
+            const change = typeof value.baseline === 'number' && typeof value.variant === 'number' && value.baseline !== 0 ? ((value.variant - value.baseline) / Math.abs(value.baseline)) * 100 : null
+            return (
+              <tr key={name} className="border-t border-line-muted align-top">
+                <td className="py-1 pr-2">
+                  <MetricName metric={name} />
+                  {name === primary && <Tag className="ml-1">Primary</Tag>}
+                </td>
+                <td className="py-1 pr-2 text-right tabular-nums">{formatNumber(value.baseline)}</td>
+                <td className="py-1 pr-2 text-right tabular-nums">{formatNumber(value.variant)}</td>
+                <td className="py-1 text-right whitespace-nowrap text-muted tabular-nums">{formatSigned(change, { digits: 1, fallback: 'Not reported' })}</td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </TableScroll>
   )
 }
 
@@ -162,9 +167,9 @@ function RunItem({ run, primary }: { run: RunInfo; primary?: string }) {
             </span>
           )
         )}
-        <Chip tone={run.status === 'done' ? 'success' : running ? 'accent' : run.status === 'failed' ? 'danger' : 'neutral'}>
+        <Chip tone={running ? 'info' : run.status === 'failed' ? 'negative' : 'neutral'}>
           {running && <span className="size-1.5 animate-pulse-dot rounded-full bg-current" />}
-          {run.status}
+          {sentenceCase(run.status)}
         </Chip>
         <span className="ml-auto text-xs text-muted">
           {model && <span className="mr-2">{model}</span>}
@@ -184,7 +189,7 @@ function RunItem({ run, primary }: { run: RunInfo; primary?: string }) {
               )}
             </p>
           )}
-          {run.command && <pre className="overflow-x-auto rounded bg-canvas-subtle p-2 text-[11.5px] whitespace-pre-wrap">{run.command}</pre>}
+          {run.command && <pre className="overflow-x-auto rounded bg-canvas-subtle p-2 text-xs whitespace-pre-wrap">{run.command}</pre>}
           {run.summary ? <SummaryTable summary={run.summary} primary={primary} /> : <p className="text-xs text-muted">{running ? 'Results appear when the run finishes.' : 'No summary.'}</p>}
           {run.quality && (
             <p className="text-xs text-muted">
@@ -202,7 +207,7 @@ export function RunsCard({ experiment }: { experiment: Experiment }) {
   return (
     <Card title="Benchmark runs">
       {experiment.runs.length === 0 ? (
-        <p className="text-sm text-muted">No runs yet — the smoke A/B starts after a verified build, then tuning, the claim check and the adoption check.</p>
+        <p className="text-sm text-muted">No runs yet. After a verified build: a smoke test, tuning, the claim check and the adoption check.</p>
       ) : (
         <ul className="space-y-2">
           {experiment.runs.map((run) => (
@@ -268,7 +273,7 @@ export function LogCard({ experimentId, live }: { experimentId: number; live: bo
             ref={ref}
             tabIndex={0}
             aria-label="Log output"
-            className={cx('max-h-80 overflow-auto rounded-b-lg bg-[#0d1117] p-3 text-[11.5px] leading-relaxed text-[#e6edf3]')}
+            className={cx('max-h-80 overflow-auto rounded-b-lg bg-[#0d1117] p-3 text-xs leading-relaxed text-[#e6edf3]')}
           >
             {tailLines(log.data.text, 400)}
           </pre>
