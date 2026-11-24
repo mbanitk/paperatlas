@@ -32,8 +32,8 @@ GROUNDING = (
     "No hype, no emojis, no calls to action."
 )
 DIAGRAM_GUIDE = (
-    "diagram: a small left-to-right flow (3-8 nodes) showing how the approach works at inference "
-    "time. Node labels have at most 4 words. kind is one of input, model, step, decision, memory, "
+    "diagram: a small left-to-right flow (3-8 nodes) showing how the approach works (generic: the "
+    "paper's system, no project, product, model or hardware names). Node labels have at most 4 words. kind is one of input, model, step, decision, memory, "
     "output, hardware, data. Set highlight=true on the nodes the technique adds or changes compared "
     "with a standard pipeline. Use style 'loop' for at most one feedback edge and 'skip' for a "
     "shortcut; otherwise 'normal'. Edge labels are optional (at most 3 words)."
@@ -126,7 +126,7 @@ CLAIM_EXPLAINER_SCHEMA = _obj(
         "diagram_before": DIAGRAM_SCHEMA,
     }
 )
-CLAIM_EXPLAINER_VERSION = 2
+CLAIM_EXPLAINER_VERSION = 3
 
 PAPER_EXPLAINER_SCHEMA = _obj(
     {
@@ -155,8 +155,17 @@ TOPIC_EXPLAINER_SCHEMA = _obj(
     }
 )
 
-CLAIM_SYSTEM = f"""You explain one research claim to an engineer deciding whether to try it in their
-LLM inference project. Fill the fields:
+CLAIM_SYSTEM = f"""You explain one research claim to an engineer deciding whether to try it in their own
+system (it may be any kind of system: model training or inference, a distributed system, a database, a SaaS
+backend...). Two kinds of fields:
+- GENERIC fields explain the paper itself and must NOT mention the target project, its name, its models,
+  frameworks, servers or hardware: headline, problem, how_it_works, why_it_helps, claimed_result, primer,
+  headline_result, today_vs_paper, key_numbers, theme, diagram, diagram_before, glossary, lossless.
+  They should teach the facts needed to understand the paper (what the standard approach is, where its cost or
+  limit comes from, what the paper changes and why that helps).
+- PROJECT fields relate the paper to the target project and are the only place for project details:
+  in_this_project, caveats, paper_vs_here, what_we_do_differently.
+Fill the fields:
 - headline: what the technique does, at most 14 words.
 - problem: the bottleneck or failure it addresses (1-2 sentences).
 - how_it_works: 3-5 short steps.
@@ -176,16 +185,19 @@ Write the following for a smart engineer who is NOT an expert in this area (no j
   unit (e.g. "+5–41%", "2.1×", "−40%"), metric in plain words (e.g. "decoding speed"), versus = what it is compared
   against in plain words, direction = up if bigger is better and it went up, down if it is a reduction (memory,
   latency), none if not quantified.
-- today_vs_paper.today: how the system works today without the technique (1-2 plain sentences);
-  today_vs_paper.with_paper: what the paper changes and why that saves work (1-2 plain sentences).
+- today_vs_paper.today: the standard approach this paper improves on — how such systems usually work without the
+  technique and where the cost/limit comes from (1-2 plain sentences, generic, as the paper describes its baseline;
+  never describe the target project here); today_vs_paper.with_paper: what the paper changes and why that saves work
+  or helps (1-2 plain sentences, generic).
 - paper_vs_here: 2-4 rows comparing the paper's setup with this project (aspect, paper, here, and effect = how the
   difference may change the result, plain words). Use the project brief for "here".
 - what_we_do_differently: 1-3 concrete adaptations this project will need versus the paper (e.g. a different draft
   model, no trained heads, Apple GPU memory limits), each one sentence.
 - key_numbers: 2-3 numbers from the paper worth remembering (value, short label, meaning in plain words).
 - theme: the main thing it improves (speed, latency, throughput, memory, quality, cost, reliability).
-- diagram_before: the SAME flow WITHOUT the technique (the standard way), with the same node ids where steps are
-  shared and no highlighted nodes, so the two diagrams can be shown side by side.
+- diagram_before: the SAME flow WITHOUT the technique (the standard approach the paper compares against, generic),
+  with the same node ids where steps are shared and no highlighted nodes, so the two diagrams can be shown side
+  by side.
 {GROUNDING}"""
 
 PAPER_SYSTEM = f"""You explain a research paper (or patent) to an engineer skimming many papers. Fill:

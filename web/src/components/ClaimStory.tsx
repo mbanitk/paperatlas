@@ -207,12 +207,12 @@ export function TodayVsPaper({ explainer }: { explainer: ClaimExplainer }) {
   if (!pair?.today && !pair?.with_paper) return null
   const glossary = explainer.glossary
   return (
-    <section aria-label="Today vs. with the paper’s idea">
-      <SectionTitle icon="compare">Today vs. with the paper’s idea</SectionTitle>
+    <section aria-label="Usual approach vs. the paper’s idea">
+      <SectionTitle icon="compare">Usual approach vs. the paper’s idea</SectionTitle>
       <div className="grid items-stretch gap-2 @xl:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
         <div className="min-w-0 rounded-lg border border-line-muted bg-canvas-subtle/70 px-3.5 py-3">
           <div className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-muted">
-            <ClockIcon size={14} /> Today
+            <ClockIcon size={14} /> Usual approach
           </div>
           <p className="text-sm text-fg">
             <GlossaryText text={pair.today} glossary={glossary} />

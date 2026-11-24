@@ -391,13 +391,13 @@ export function FlowComparisonDiagram({ before, after, techniqueLabel, className
       const status = statusMap.get(node.id) ?? 'same'
       return lane === 'today' ? (status === 'removed' ? 'removed' : 'same') : status
     }
-    const laneLabel = lane === 'today' ? 'Today' : afterTitle
+    const laneLabel = lane === 'today' ? 'Usual approach' : afterTitle
     return (
       <figure ref={ref} className={cx('m-0 min-w-0', className)}>
         <div className="mb-1 inline-flex max-w-full rounded-md border border-line bg-canvas-subtle p-0.5 text-xs font-medium" role="group" aria-label="Which flow to show">
           {(
             [
-              ['today', 'Today'],
+              ['today', 'Usual approach'],
               ['next', afterTitle],
             ] as const
           ).map(([value, label]) => (
@@ -430,7 +430,7 @@ export function FlowComparisonDiagram({ before, after, techniqueLabel, className
         <title id={`${uid}-t`}>{`How the flow changes: today vs ${afterTitle.toLowerCase()}`}</title>
         <desc id={`${uid}-d`}>{`Today: ${describe(today, comparison.beforeStatus)}. ${afterTitle}: ${describe(next, comparison.afterStatus)}.`}</desc>
         <Markers uid={uid} />
-        {laneHeader(0, 'Today', 'muted', before.title?.trim() || undefined)}
+        {laneHeader(0, 'Usual approach', 'muted', before.title?.trim() || undefined)}
         <g transform={`translate(0 ${LANE_HEADER})`}>
           <DiagramBody layout={today} uid={uid} mini={false} statusOf={(node) => (comparison.beforeStatus.get(node.id) === 'removed' ? 'removed' : 'same')} dimEdges />
         </g>
