@@ -159,8 +159,24 @@ def _llm_review(
         payload = llm.generate_json(REVIEW_SYSTEM, "\n".join(lines), "claim_review", REVIEW_SCHEMA)
     except LLMError as exc:
         logger.warning("LLM claim review failed: %s", exc)
-        return {}
+        return None
     return {item["claim_id"]: item for item in payload.get("items", [])}
+
+
+def _keep_previous_review(project_id: int, scored: list[dict[str, Any]]) -> None:
+    with session_scope() as session:
+        previous = {
+            m.claim_id: m for m in session.scalars(select(Match).where(Match.project_id == project_id)).all()
+        }
+        for item in scored:
+            match = previous.get(item["claim"].id)
+            if match is None:
+                continue
+            rule_based = set(item["blockers"]) | {"no matching benchmark metric"}
+            item["blockers"] += [b for b in match.blockers or [] if b not in rule_based]
+            item["rationale"] = match.rationale
+            item["target_metric"] = match.target_metric or item["target_metric"]
+        session.expunge_all()
 
 
 def match_project(
@@ -229,6 +245,10 @@ def match_project(
     candidates = sorted((s for s in scored if not s["blockers"]), key=lambda s: s["score"], reverse=True)
     if llm and candidates:
         review = _llm_review(llm, profile, [s["claim"] for s in candidates[:llm_review_top]], metrics)
+        if review is None:
+            # Keep the last successful review instead of silently un-blocking claims it had rejected.
+            _keep_previous_review(project_id, scored)
+            review = {}
         for item in candidates[:llm_review_top]:
             verdict = review.get(item["claim"].id)
             if not verdict:
