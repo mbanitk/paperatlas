@@ -1,6 +1,26 @@
 import type { Claim, ClaimExplainer, ClaimTheme, ComparisonAspect } from '../api/types'
-import { claimedEffectView } from './claims'
-import { humanize } from './format'
+import { claimedEffectView, effectText } from './claims'
+import { humanize, humanizeMetric, isMissing, sanitizeText } from './format'
+
+/** Placeholder words LLM explainers use when the paper has no number ("not reported", "n/a"…). */
+const NO_NUMBER = /^(?:not\s+(?:reported|quantified|stated|given|specified|available)|n\/?a|none|unknown|unspecified|—|-)\.?$/i
+
+/** True when a reported value is missing or only a placeholder such as "not reported". */
+export function isUnreported(value: string | null | undefined): boolean {
+  return isMissing(value) || NO_NUMBER.test((value ?? '').trim())
+}
+
+/**
+ * A number as the paper reports it, cleaned for the plain layer: `1.96x–3.12x` → `1.96× to 3.12×`,
+ * `32.2–79.1% lower` → `32.2 to 79.1% lower`, `4^{-b}` → `4⁻ᵇ`. Returns null for placeholders ("not reported").
+ */
+export function formatReportedValue(value: string | null | undefined): string | null {
+  if (isUnreported(value)) return null
+  let text = sanitizeText(value)
+  text = text.replace(/(\d)\s?[xX](?![A-Za-z0-9])/g, '$1×')
+  text = text.replace(/(?<![\w.\-])(\d[\d.,]*[×%]?)\s*[–—-]\s*([+−-]?\d)/g, '$1 to $2')
+  return text || null
+}
 
 /** True when the explainer carries the plain-language layer (primer, headline result, before/after…). */
 export function isPlainLanguage(explainer: ClaimExplainer | null | undefined): boolean {
@@ -31,25 +51,41 @@ export function heroResult(
   explainer?: ClaimExplainer | null,
 ): HeroResult | null {
   const headline = isPlainLanguage(explainer) ? explainer?.headline_result : null
-  if (headline?.value?.trim()) {
+  const value = formatReportedValue(headline?.value)
+  if (headline && value) {
     const direction: HeroDirection = headline.direction === 'up' || headline.direction === 'down' ? headline.direction : 'none'
     return {
-      value: headline.value.trim(),
+      value,
       direction,
-      metric: headline.metric?.trim() || null,
-      versus: headline.versus?.trim().replace(/^vs\.?\s+/i, '') || null,
+      metric: sanitizeText(headline.metric) || null,
+      versus: sanitizeText(headline.versus).replace(/^vs\.?\s+/i, '') || null,
       source: 'explainer',
     }
   }
   const view = claimedEffectView(claim, explainer)
   if (view.kind !== 'gain') return null
   return {
-    value: view.text.replace(/^[↑↓]/, claim.direction === 'decrease' ? '−' : '+'),
+    value: effectText(view, claim.direction),
     direction: claim.direction === 'decrease' ? 'down' : 'up',
-    metric: view.metric ? humanize(view.metric) : null,
+    metric: view.metric ? humanizeMetric(view.metric) : null,
     versus: null,
     source: 'claim',
   }
+}
+
+/**
+ * The number shown under "Paper reports": the headline result when there is one, else an absolute value
+ * the paper reports (shown neutrally, no direction), else null ("Paper gives no number").
+ */
+export function paperReport(
+  claim: Pick<Claim, 'claimed_gain_pct' | 'claimed_value' | 'claimed_unit' | 'direction' | 'primary_metric'>,
+  explainer?: ClaimExplainer | null,
+): HeroResult | null {
+  const hero = heroResult(claim, explainer)
+  if (hero) return hero
+  const view = claimedEffectView(claim, explainer)
+  if (view.kind !== 'neutral') return null
+  return { value: view.text, direction: 'none', metric: view.metric ? humanizeMetric(view.metric) : null, versus: null, source: 'claim' }
 }
 
 export const THEMES: ClaimTheme[] = ['speed', 'latency', 'throughput', 'memory', 'quality', 'cost', 'reliability']
