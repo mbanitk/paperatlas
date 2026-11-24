@@ -115,6 +115,16 @@ def rematch(project_id: int, use_llm: bool = True) -> JobQueued:
     return JobQueued(job_id=enqueue("match", {"project_id": project_id, "use_llm": use_llm}), kind="match")
 
 
+@app.post("/projects/{project_id}/roofline", tags=["projects"], response_model=JobQueued)
+def roofline(project_id: int, model: str = "eval", rematch: bool = True) -> JobQueued:
+    """Measure the engine's roofline (GPU job), then re-rank claims with the cost model."""
+    _project_or_404(project_id)
+    if model not in ("eval", "smoke"):
+        raise service.ServiceError("model must be eval or smoke")
+    job_id = enqueue("project.roofline", {"project_id": project_id, "model": model, "rematch": rematch})
+    return JobQueued(job_id=job_id, kind="project.roofline")
+
+
 @app.get("/claims/{claim_id}/prerequisites", tags=["recommendations"])
 def prerequisites(claim_id: int) -> list[dict[str, Any]]:
     from paperatlas.distill.relations import prerequisite_chain

@@ -230,3 +230,51 @@ def test_reviewer_can_set_the_protocol_at_gate_2():
         "name": "block_size", "meaning": "", "paper_value": None, "candidates": [4, 6]}
     with pytest.raises(ValueError):
         apply_overrides(spec, {"paper_baseline": {"kind": "something_else"}}, PROFILE)
+
+
+ROOFLINE_OVERHEAD = {
+    "kind": "profile",
+    "model": {"quantization": "int8"},
+    "decode": {"tokens_per_s": 24.4, "ms_per_token": 41.0, "bandwidth_utilization": 0.26},
+    "forward_cost_ms": {"1": 41.0, "2": 48.0, "4": 60.0, "8": 85.0, "16": 140.0},
+    "draft": {"id": "Qwen3-0.6B", "ms_per_token": 20.0},
+}
+ROOFLINE_MLX = {
+    "kind": "profile",
+    "model": {"quantization": "4bit"},
+    "decode": {"tokens_per_s": 80.0, "ms_per_token": 12.5, "bandwidth_utilization": 0.75},
+    "forward_cost_ms": {"1": 12.5, "2": 13.0, "4": 14.0, "8": 17.0, "16": 24.0},
+    "batch_decode_tokens_per_s": {"1": 80.0, "2": 140.0, "4": 230.0, "8": 330.0},
+    "draft": {"id": "Qwen3.5-0.8B", "ms_per_token": 2.5},
+}
+
+
+def test_cost_model_explains_why_spec_decoding_lost_on_the_overhead_bound_engine():
+    from paperatlas.lab.costmodel import blocker, predict
+
+    claim = {"category": "speculative_decoding", "technique": "draft a block with a small draft model, verify once",
+             "card": {"effects": [{"metric": "speedup", "value": 41, "relative": True,
+                                   "baseline": "underlying speculative decoding method"}]}}
+    slow = predict(claim, ROOFLINE_OVERHEAD)
+    fast = predict(claim, ROOFLINE_MLX)
+    assert slow["bottleneck"] == "overhead" and slow["likelihood"] in ("unlikely", "marginal")
+    assert fast["likelihood"] == "likely" and fast["predicted_gain_pct"]["low"] > slow["predicted_gain_pct"]["high"]
+    assert any("incremental" in r for r in fast["reasons"])
+    lookup = predict({**claim, "technique": "prompt lookup n-gram drafting"}, ROOFLINE_OVERHEAD)
+    assert lookup["predicted_gain_pct"]["high"] > slow["predicted_gain_pct"]["high"]
+
+    already_4bit = predict({"category": "quantization", "technique": "4-bit weight quantization"}, ROOFLINE_MLX)
+    assert already_4bit["likelihood"] == "unlikely" and blocker(already_4bit).startswith("cost model:")
+    routing = predict({"category": "routing_load_balancing", "technique": "route across replicas"}, ROOFLINE_MLX)
+    assert routing["likelihood"] == "unlikely"
+    batching = predict({"category": "batching_scheduling", "technique": "continuous batching"}, ROOFLINE_MLX, ["concurrent_4"])
+    assert batching["likelihood"] == "likely" and batching["metric"] == "throughput_tokens_per_s"
+    assert predict(claim, None)["likelihood"] == "unknown"
+
+
+def test_json_extraction_tolerates_think_blocks_and_fences():
+    from paperatlas.llm.client import LLMError, extract_json_object
+
+    assert extract_json_object('<think>{"no": 1}</think>\n```json\n{"ok": true}\n```') == '{"ok": true}'
+    with pytest.raises(LLMError):
+        extract_json_object("no json here")

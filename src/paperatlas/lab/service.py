@@ -400,6 +400,7 @@ def recommendations(
                 blockers=list(match.blockers or []),
                 target_metric=match.target_metric,
                 rationale=match.rationale,
+                prediction=match.prediction,
                 explainer=match.explainer,
                 topics=topics_by_paper.get(paper.paper_id, []),
                 experiment_id=experiment_id,
@@ -664,10 +665,33 @@ def experiment_context(experiment_id: int) -> dict[str, Any]:
                 "method_excerpt": method_excerpt(paper.raw_text, paper.abstract, claim.evidence_quote),
             },
             "paper": {"paper_id": paper.paper_id, "title": paper.title, "url": paper.url},
-            "match": {"target_metric": match.target_metric, "score": match.score} if match else None,
+            "match": (
+                {"target_metric": match.target_metric, "score": match.score, "prediction": match.prediction}
+                if match
+                else None
+            ),
+            "roofline": project.roofline,
             "spec": experiment.spec or {},
             "worktree": Path(experiment.worktree_path) if experiment.worktree_path else None,
         }
+
+
+def latest_run_id(experiment_id: int, kind: str) -> Optional[int]:
+    with session_scope() as session:
+        return session.scalar(
+            select(Run.id)
+            .where(Run.experiment_id == experiment_id, Run.kind == kind, Run.status == "done")
+            .order_by(Run.id.desc())
+            .limit(1)
+        )
+
+
+def run_results(run_id: int) -> dict[str, Any]:
+    with session_scope() as session:
+        run = session.get(Run, run_id)
+        if run is None or run.status != "done":
+            raise ServiceError(f"run {run_id} has no completed results", 409)
+        return run.results
 
 
 def latest_results(experiment_id: int, kind: str) -> dict[str, Any]:

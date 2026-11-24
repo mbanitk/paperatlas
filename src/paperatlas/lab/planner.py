@@ -79,7 +79,9 @@ class ExperimentSpec(BaseModel):
     fidelity: Fidelity = Field(default_factory=Fidelity)
     tune: bool = True
     tune_rounds: int = Field(1, ge=1, le=4)
-    max_iterations: int = Field(2, ge=1, le=3)
+    max_iterations: int = Field(3, ge=1, le=5)
+    # cost-model prediction for this engine (lab/costmodel.py), shown at Gate 2 and to the analyst
+    prediction: Optional[dict[str, Any]] = None
     build_timeout_s: int = 3600
     smoke_timeout_s: int = 1800
     eval_timeout_s: int = 3 * 3600
@@ -279,6 +281,11 @@ def plan_experiment(
                 "Paper text around the method (for the exact baseline, benchmarks and hyperparameters):",
                 (claim.get("method_excerpt") or "")[:6000],
                 "",
+                f"Measured engine roofline: {claim.get('roofline_summary') or 'not measured'}",
+                f"Cost-model prediction for this claim on this engine: {claim.get('prediction')}",
+                "Design the experiment so the technique can work where this engine spends its time (e.g. choose "
+                "knob ranges, block sizes and workloads that the roofline says can pay off).",
+                "",
                 f"Project profile: name={profile.get('name')}; description={profile.get('description')}",
                 f"hardware={profile.get('hardware')}; models={profile.get('models')}",
                 f"metrics={list(metrics.values())}",
@@ -317,6 +324,7 @@ def plan_experiment(
     _normalize_protocol(draft)
     spec = ExperimentSpec(
         **draft,
+        prediction=claim.get("prediction"),
         direction=_direction(metrics.get(draft["primary_metric"], {})),
         claimed_gain_pct=claimed,
         model="eval",

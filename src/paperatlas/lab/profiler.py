@@ -124,6 +124,8 @@ def project_dict(project: Project) -> dict[str, Any]:
         "techniques": profile.get("techniques"),
         "repo": profile.get("repo"),
         "profiled_at": project.profiled_at.isoformat() if project.profiled_at else None,
+        "roofline": project.roofline,
+        "roofline_at": project.roofline_at.isoformat() if project.roofline_at else None,
     }
 
 
@@ -136,3 +138,48 @@ def get_project(name_or_id: str | int) -> Project:
         if project is None:
             raise ProfileError(f"Unknown project {name_or_id!r}; register it with `paperatlas r2e project add`")
         return project
+
+
+class RooflineError(RuntimeError):
+    pass
+
+
+def measure_roofline(project_id: int, report: Optional[Any] = None, model: str = "eval") -> dict[str, Any]:
+    """Run the project's `commands.profile` (under the GPU lock) and store the roofline on the project."""
+    import tempfile
+
+    from paperatlas import settings
+    from paperatlas.lab.gpu import gpu_lock
+    from paperatlas.lab.process import run_command
+    from paperatlas.lab.runner import render_command
+
+    say = report or (lambda stage, message, data=None, **kw: None)
+    with session_scope() as session:
+        project = session.get(Project, project_id)
+        if project is None:
+            raise RooflineError(f"project {project_id} not found")
+        repo, profile = Path(project.repo_path), dict(project.profile or {})
+    template = (profile.get("commands") or {}).get("profile")
+    if not template:
+        raise RooflineError("lab.yaml has no commands.profile — the project cannot report its roofline")
+    folder = settings.data_dir().resolve() / "r2e" / "roofline" / str(project_id)
+    folder.mkdir(parents=True, exist_ok=True)
+    out = Path(tempfile.mkstemp(suffix=".json", dir=folder)[1])
+    command = render_command(template, model=model, out=out)
+    say("roofline", f"Profiling {profile.get('name')} ({model}) to measure where decode time goes", {"command": command})
+    with gpu_lock(on_wait=lambda: say("roofline", "Waiting for the GPU", None)):
+        result = run_command(command, repo, folder / "profile.log", timeout_s=3600,
+                             on_progress=lambda line: say("roofline", line[:300], None))
+    if not result.ok or not out.exists() or out.stat().st_size == 0:
+        raise RooflineError(f"profile command failed (exit {result.returncode}): {result.tail[-1500:]}")
+    roofline = json.loads(out.read_text(encoding="utf-8"))
+    if roofline.get("kind") != "profile" or "decode" not in roofline:
+        raise RooflineError("profile output does not follow the roofline contract (kind=profile, decode, forward_cost_ms)")
+    with session_scope() as session:
+        project = session.get(Project, project_id)
+        project.roofline = roofline
+        project.roofline_at = datetime.now(UTC)
+    from paperatlas.lab.costmodel import summarize
+
+    say("roofline", f"Roofline: {summarize(roofline)}", {"roofline": roofline})
+    return roofline

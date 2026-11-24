@@ -12,7 +12,7 @@ from typing import Optional
 
 from paperatlas.services.common import GATEWAY_PORT, LAB_PORT, RESEARCH_PORT
 
-COLORS = {"gateway": "36", "research": "35", "lab": "34", "worker": "33"}
+COLORS = {"gateway": "36", "research": "35", "lab": "34", "worker": "33", "llm": "32"}
 
 
 def service_commands(host: str = "127.0.0.1", reload: bool = False) -> dict[str, list[str]]:
@@ -23,7 +23,20 @@ def service_commands(host: str = "127.0.0.1", reload: bool = False) -> dict[str,
         "lab": uvicorn + ["--port", str(LAB_PORT), "paperatlas.services.lab_api:app"],
         "gateway": uvicorn + ["--port", str(GATEWAY_PORT), "paperatlas.services.gateway:app"],
         "worker": [python, "-m", "paperatlas.services.worker"],
+        **_llm_service(),
     }
+
+
+def _llm_service() -> dict[str, list[str]]:
+    """The local LLM (`mlx_lm.server`) when PAPERATLAS_LLM_PROVIDER=mlx."""
+    from paperatlas.llm.client import mlx_server_command
+    from paperatlas.settings import env
+
+    if (env("PAPERATLAS_LLM_PROVIDER") or "").lower() != "mlx":
+        return {}
+    url = env("PAPERATLAS_MLX_LLM_URL", "http://127.0.0.1:8103/v1")
+    port = int(url.rsplit(":", 1)[-1].split("/", 1)[0]) if url.count(":") >= 2 else 8103
+    return {"llm": mlx_server_command(port)}
 
 
 def _pump(name: str, process: subprocess.Popen) -> None:

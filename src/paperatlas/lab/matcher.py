@@ -11,6 +11,8 @@ from sqlalchemy import func, select
 
 from paperatlas.db.engine import session_scope
 from paperatlas.db.schema import Claim, Concept, Experiment, Match, PaperTopic, Project, Topic, Verdict
+from paperatlas.lab.costmodel import blocker as costmodel_blocker
+from paperatlas.lab.costmodel import predict, score_factor
 from paperatlas.lab.events import Reporter
 from paperatlas.llm.client import LLMClient, LLMError, build_default_llm_client
 
@@ -173,7 +175,9 @@ def _keep_previous_review(project_id: int, scored: list[dict[str, Any]]) -> None
             if match is None:
                 continue
             rule_based = set(item["blockers"]) | {"no matching benchmark metric"}
-            item["blockers"] += [b for b in match.blockers or [] if b not in rule_based]
+            item["blockers"] += [
+                b for b in match.blockers or [] if b not in rule_based and not b.startswith(("cost model:", "a "))
+            ]
             item["rationale"] = match.rationale
             item["target_metric"] = match.target_metric or item["target_metric"]
         session.expunge_all()
@@ -191,8 +195,10 @@ def match_project(
         project = session.get(Project, project_id)
         profile = project.profile or {}
         project_vector = np.asarray(project.embedding, dtype=np.float32)
+        roofline = project.roofline
         hardware = profile.get("hardware") or {}
         metrics = [m["name"] for m in profile.get("metrics") or [] if m.get("name")]
+        workload_names = [w["name"] if isinstance(w, dict) else str(w) for w in profile.get("workloads") or []]
         priors = CATEGORY_PRIOR.get(profile.get("repo_kind", ""), CATEGORY_PRIOR["llm-inference-server"])
         cluster_papers = set(
             session.scalars(
@@ -223,9 +229,18 @@ def match_project(
         blockers = blockers_for(claim, hardware, claim.paper_id in cluster_papers)
         if kinds.get(claim.id) in OBSERVATION_KINDS:
             blockers.append(f"a {kinds[claim.id]} (observation), not a technique to implement and A/B test")
+        prediction = predict(
+            {"category": claim.category, "technique": claim.technique, "change_required": claim.change_required,
+             "card": claim.card or {}},
+            roofline,
+            workload_names,
+        )
+        if (cost_blocker := costmodel_blocker(prediction)) and not blockers:
+            blockers.append(cost_blocker)
         score = fit * (0.4 + gain) / EFFORT_COST.get(claim.effort or "medium", 1.6)
         score *= verdict_prior.get(claim.category or "other", 1.0)
         score *= KIND_PRIOR.get(kinds.get(claim.id) or "other", 0.5)
+        score *= score_factor(prediction)
         if claim.id in tested:
             score *= 0.3
         scored.append(
@@ -238,6 +253,7 @@ def match_project(
                 "blockers": blockers,
                 "target_metric": map_metric(claim.primary_metric, metrics),
                 "rationale": None,
+                "prediction": prediction,
             }
         )
 
@@ -280,6 +296,7 @@ def match_project(
             match.testable_here = not item["blockers"]
             match.target_metric = item["target_metric"]
             match.rationale = item["rationale"] or match.rationale
+            match.prediction = item["prediction"]
             session.add(match)
     testable = sum(1 for item in scored if not item["blockers"])
     if report:

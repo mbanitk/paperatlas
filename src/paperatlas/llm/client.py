@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass
 from typing import Any, Optional
@@ -201,13 +202,7 @@ class CopilotCliLLMClient(LLMClient):
 
         if not shutil.which("copilot"):
             raise LLMError("copilot CLI is not on PATH")
-        prompt = f"{system_prompt}\n\n{user_prompt}"
-        if schema:
-            name, json_schema = schema
-            prompt += (
-                f"\n\nReply with ONLY one JSON object named {name} that validates against this JSON schema "
-                f"(every property required; no prose, no code fences):\n{json.dumps(json_schema)}"
-            )
+        prompt = f"{system_prompt}\n\n{user_prompt}{schema_instruction(schema)}"
         command = ["copilot", "-p", prompt, "--available-tools=", "--no-ask-user", "--no-color", "--no-auto-update",
                    "--no-custom-instructions", "-s"]
         if self.cli_model:
@@ -227,21 +222,117 @@ class CopilotCliLLMClient(LLMClient):
                 continue
             if not schema:
                 return text
-            start, end = text.find("{"), text.rfind("}")
-            if start >= 0 and end > start:
-                candidate = text[start : end + 1]
-                try:
-                    json.loads(candidate)
-                    return candidate
-                except json.JSONDecodeError as exc:
-                    last_error = f"invalid JSON: {exc}"
-            else:
-                last_error = "reply contained no JSON object"
+            try:
+                return extract_json_object(text)
+            except LLMError as exc:
+                last_error = str(exc)
         raise LLMError(f"copilot CLI LLM failed: {last_error}")
 
 
+THINK_BLOCK = re.compile(r"<think>.*?</think>", re.S)
+DEFAULT_MLX_LLM_MODEL = "mlx-community/Qwen3.5-35B-A3B-4bit"
+DEFAULT_MLX_LLM_URL = "http://127.0.0.1:8103/v1"
+
+
+def extract_json_object(text: str) -> str:
+    """The outermost JSON object in a model reply (tolerates prose, code fences and <think> blocks)."""
+    text = THINK_BLOCK.sub("", text or "")
+    start, end = text.find("{"), text.rfind("}")
+    if start < 0 or end <= start:
+        raise LLMError("reply contained no JSON object")
+    candidate = text[start : end + 1]
+    try:
+        json.loads(candidate)
+    except json.JSONDecodeError as exc:
+        raise LLMError(f"invalid JSON: {exc}") from exc
+    return candidate
+
+
+def schema_instruction(schema: Optional[tuple]) -> str:
+    if not schema:
+        return ""
+    name, json_schema = schema
+    return (
+        f"\n\nReply with ONLY one JSON object named {name} that validates against this JSON schema "
+        f"(every property required; no prose, no code fences):\n{json.dumps(json_schema)}"
+    )
+
+
+class MlxServerLLMClient(LLMClient):
+    """A local model served by `mlx_lm.server` (Apple MLX, OpenAI-compatible chat completions).
+
+    The server shares the Apple GPU with the benchmarks, so every call waits for the GPU lock: an LLM request never
+    runs while an A/B benchmark is measuring. If the server is unreachable, calls fall back to `fallback`."""
+
+    def __init__(self, model: str, base_url: str, timeout: float = 600.0, cache: Optional[LLMCache] = None,
+                 fallback: Optional[LLMClient] = None) -> None:
+        super().__init__(LLMConfig(api_key="", model=f"mlx:{model}", base_url=base_url.rstrip("/"), timeout=timeout,
+                                   temperature=0.2), cache)
+        self.server_model = model
+        self.fallback = fallback
+
+    def _request(self, system_prompt: str, user_prompt: str, schema: Optional[tuple]) -> str:
+        from paperatlas.lab.gpu import gpu_lock
+
+        payload = {
+            "model": self.server_model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt + schema_instruction(schema)},
+            ],
+            "temperature": self.config.temperature,
+            "max_tokens": 8192,
+            "chat_template_kwargs": {"enable_thinking": False},
+        }
+        last_error = "no response"
+        for attempt in range(self.config.max_retries):
+            with gpu_lock():
+                started = time.monotonic()
+                response = httpx.post(f"{self.config.base_url}/chat/completions", json=payload, timeout=self.config.timeout)
+            if response.status_code >= 400:
+                last_error = f"HTTP {response.status_code}: {response.text[:300]}"
+                time.sleep(2 * (attempt + 1))
+                continue
+            data = response.json()
+            text = ((data.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+            usage = data.get("usage") or {}
+            logger.info("LLM mlx %s: %s in / %s out tokens, %.1fs", self.server_model, usage.get("prompt_tokens"),
+                        usage.get("completion_tokens"), time.monotonic() - started)
+            if not schema:
+                return THINK_BLOCK.sub("", text).strip()
+            try:
+                return extract_json_object(text)
+            except LLMError as exc:
+                last_error = str(exc)
+        raise LLMError(f"mlx_lm.server LLM failed: {last_error}")
+
+    def _call(self, system_prompt: str, user_prompt: str, schema: Optional[tuple]) -> str:
+        try:
+            return self._request(system_prompt, user_prompt, schema)
+        except httpx.TransportError as exc:
+            if self.fallback is None:
+                raise LLMError(f"mlx_lm.server unreachable at {self.config.base_url}: {exc}") from exc
+            logger.warning("mlx_lm.server unreachable (%s); using %s", exc, self.fallback.model)
+            return self.fallback._call(system_prompt, user_prompt, schema)
+
+
+def mlx_server_command(port: int = 8103) -> list[str]:
+    """`mlx_lm.server` for the local LLM, run in its own uv tool environment (keeps MLX out of PaperAtlas's venv)."""
+    model = settings.env("PAPERATLAS_MLX_LLM_MODEL", DEFAULT_MLX_LLM_MODEL)
+    return ["uvx", "--from", "mlx-lm", "mlx_lm.server", "--model", model, "--host", "127.0.0.1", "--port", str(port)]
+
+
 def build_default_llm_client(use_cache: bool = True) -> Optional[LLMClient]:
-    if (settings.env("PAPERATLAS_LLM_PROVIDER") or "").lower() == "copilot":
+    provider = (settings.env("PAPERATLAS_LLM_PROVIDER") or "").lower()
+    if provider == "mlx":
+        return MlxServerLLMClient(
+            settings.env("PAPERATLAS_MLX_LLM_MODEL", DEFAULT_MLX_LLM_MODEL),
+            settings.env("PAPERATLAS_MLX_LLM_URL", DEFAULT_MLX_LLM_URL),
+            max(settings.llm_timeout(), 600.0),
+            LLMCache() if use_cache else None,
+            fallback=CopilotCliLLMClient(settings.env("PAPERATLAS_COPILOT_LLM_MODEL"), settings.llm_timeout()),
+        )
+    if provider == "copilot":
         return CopilotCliLLMClient(
             settings.env("PAPERATLAS_COPILOT_LLM_MODEL"), settings.llm_timeout(), LLMCache() if use_cache else None
         )

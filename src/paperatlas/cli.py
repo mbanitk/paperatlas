@@ -133,6 +133,13 @@ def cmd_project(args: argparse.Namespace) -> None:
     elif args.action == "profile":
         project = get_project(args.name or args.path)
         _print(register_project(project.repo_path, project.name))
+    elif args.action == "roofline":
+        from paperatlas.lab.costmodel import summarize
+        from paperatlas.lab.profiler import measure_roofline
+
+        project = get_project(args.name or args.path)
+        roofline = measure_roofline(project.id, lambda stage, message, data=None, **kw: print(f"[{stage}] {message}", flush=True))
+        print(summarize(roofline))
     else:
         from sqlalchemy import select
 
@@ -336,7 +343,7 @@ def build_parser() -> argparse.ArgumentParser:
     claims.set_defaults(func=cmd_claims)
 
     project = r2e_sub.add_parser("project", help="target projects")
-    project.add_argument("action", choices=["add", "list", "profile"])
+    project.add_argument("action", choices=["add", "list", "profile", "roofline"])
     project.add_argument("path", nargs="?", help="repo path (add) or project name (profile)")
     project.add_argument("--name")
     project.set_defaults(func=cmd_project)

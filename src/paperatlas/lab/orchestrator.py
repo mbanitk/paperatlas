@@ -33,6 +33,7 @@ from paperatlas.db.schema import Experiment, Run, Topic, Triage, Verdict
 from paperatlas.lab import service
 from paperatlas.lab.analyst import analyse, fidelity_notes
 from paperatlas.lab.builder import build_experiment, ensure_protected_paths
+from paperatlas.lab.costmodel import summarize as summarize_roofline
 from paperatlas.lab.events import reporter
 from paperatlas.lab.judge import judge
 from paperatlas.lab.planner import plan_experiment
@@ -200,7 +201,12 @@ def node_plan(state: ExperimentState, report) -> dict:
         register_project(context["project"]["repo_path"], context["project"]["name"])
         context = service.experiment_context(experiment_id)
     spec = plan_experiment(
-        {**context["claim"], "bundle": context["bundle"]},
+        {
+            **context["claim"],
+            "bundle": context["bundle"],
+            "prediction": (context["match"] or {}).get("prediction"),
+            "roofline_summary": summarize_roofline(context.get("roofline")),
+        },
         context["profile"],
         context["match"].get("target_metric") if context["match"] else None,
         llm,
@@ -395,48 +401,20 @@ def _iteration_entry(iteration: int, verdict: dict, analysis: dict, tuning: dict
     }
 
 
-@experiment_step("judge")
-def node_judge(state: ExperimentState, report) -> dict:
-    experiment_id = state["experiment_id"]
-    context = service.experiment_context(experiment_id)
-    spec = spec_defaults(context["spec"])
-    results = service.latest_results(experiment_id, "eval")
-    adopt_results = None
-    if needs_adoption_run(spec):
-        try:
-            adopt_results = service.latest_results(experiment_id, "adopt")
-        except service.ServiceError:
-            report("judge", "No adoption check results; judging the claim check only", None, level="warning")
-    verdict = judge(results, spec, context["profile"], adopt_results)
-    build = context["experiment"].get("build") or {}
-    tuning = build.get("tuning") or {}
-    iteration = int(state.get("iteration") or build.get("iteration") or 1)
-    history = list(build.get("iterations") or [])
-    report("judge", "Analysing the result against the paper", None)
-    analysis = analyse(
-        verdict,
-        spec,
-        context["claim"],
-        tuning,
-        fidelity_notes(artifacts_dir(experiment_id)),
-        history,
-        build_default_llm_client(),
-    )
-    history.append(_iteration_entry(iteration, verdict, analysis, tuning))
-    iterate = bool(analysis.get("worth_iterating")) and iteration < int(spec.get("max_iterations") or 1)
-    verdict.update(analysis=analysis, iteration=iteration, iterations=history, tuning=tuning or None)
-    report_path = artifacts_dir(experiment_id) / "report.html"
-    render_report(
-        report_path,
-        context["experiment"],
-        context["project"],
-        context["claim"],
-        context["paper"],
-        spec,
-        build,
-        verdict,
-        results,
-    )
+def _score(entry: dict[str, Any]) -> float:
+    """Ratchet score of an iteration: the claim-check median, but only if quality held."""
+    if entry.get("quality_ok") is False or entry.get("median_delta_pct") is None:
+        return float("-inf")
+    return float(entry["median_delta_pct"])
+
+
+def _judge_runs(experiment_id: int, spec: dict, profile: dict, eval_run_id: Optional[int], adopt_run_id: Optional[int]):
+    results = service.run_results(eval_run_id) if eval_run_id else service.latest_results(experiment_id, "eval")
+    adopt = service.run_results(adopt_run_id) if adopt_run_id else None
+    return results, judge(results, spec, profile, adopt)
+
+
+def _save_verdict(experiment_id: int, verdict: dict, report_path) -> None:
     with session_scope() as session:
         row = session.scalar(select(Verdict).where(Verdict.experiment_id == experiment_id)) or Verdict(
             experiment_id=experiment_id
@@ -455,27 +433,101 @@ def node_judge(state: ExperimentState, report) -> dict:
         row.details = details
         row.report_path = str(report_path)
         session.add(row)
+
+
+@experiment_step("judge")
+def node_judge(state: ExperimentState, report) -> dict:
+    experiment_id = state["experiment_id"]
+    context = service.experiment_context(experiment_id)
+    spec = spec_defaults(context["spec"])
+    eval_run_id = service.latest_run_id(experiment_id, "eval")
+    adopt_run_id = service.latest_run_id(experiment_id, "adopt") if needs_adoption_run(spec) else None
+    if needs_adoption_run(spec) and adopt_run_id is None:
+        report("judge", "No adoption check results; judging the claim check only", None, level="warning")
+    results, verdict = _judge_runs(experiment_id, spec, context["profile"], eval_run_id, adopt_run_id)
+    build = context["experiment"].get("build") or {}
+    tuning = build.get("tuning") or {}
+    iteration = int(state.get("iteration") or build.get("iteration") or 1)
+    history = list(build.get("iterations") or [])
+    report("judge", "Analysing the result against the paper", None)
+    analysis = analyse(
+        verdict,
+        spec,
+        context["claim"],
+        tuning,
+        fidelity_notes(artifacts_dir(experiment_id)),
+        history,
+        build_default_llm_client(),
+        summarize_roofline(context.get("roofline")),
+    )
+    entry = _iteration_entry(iteration, verdict, analysis, tuning)
+    entry.update(
+        sha=git(context["worktree"], "rev-parse", "HEAD", check=False) or None,
+        eval_run_id=eval_run_id,
+        adopt_run_id=adopt_run_id,
+        quality_ok=verdict["quality_ok"],
+        analysis=analysis,
+    )
+    history.append(entry)
+    best = max(history, key=_score)
+    iterate = bool(analysis.get("worth_iterating")) and iteration < int(spec.get("max_iterations") or 1)
     diagnosis = (analysis.get("diagnosis") or "").replace("_", " ")
+    report_path = artifacts_dir(experiment_id) / "report.html"
     if iterate:
+        verdict.update(analysis=analysis, iteration=iteration, iterations=history, tuning=tuning or None)
+        _save_verdict(experiment_id, verdict, report_path)
         set_experiment(experiment_id, status="building", build={**build, "iterations": history})
         report(
             "judge",
             f"Iteration {iteration}: {verdict['verdict'].replace('_', ' ')} ({diagnosis}). Trying a fix: {analysis['next_changes'][:400]}",
             {"analysis": analysis},
         )
+        ratchet = ""
+        if best is not entry and _score(best) > _score(entry):
+            ratchet = (
+                f"\nNote: iteration {best['iteration']} (commit {best.get('sha') or '?'}) is still the best so far "
+                f"({best.get('median_delta_pct') or 0:+.1f}%); build on what worked there."
+            )
         feedback = (
             f"Iteration {iteration} result: claim check {verdict['verdict']} — {verdict['reason']}.\n"
             f"Diagnosis ({analysis.get('diagnosis')}): {analysis.get('summary')}\n"
             f"Evidence: {'; '.join(analysis.get('evidence') or [])}\n"
             f"Change the existing implementation as follows: {analysis['next_changes']}\n"
-            f"Expected: {analysis.get('expected_effect')}"
+            f"Expected: {analysis.get('expected_effect')}{ratchet}"
         )
         return {"iterate": True, "iteration": iteration + 1, "feedback": feedback}
+
+    if best is not entry and _score(best) > _score(entry) and best.get("sha"):
+        # Keep the best iteration: revert the worktree to its commit and report its measurements.
+        git(context["worktree"], "reset", "--hard", best["sha"])
+        results, verdict = _judge_runs(experiment_id, spec, context["profile"], best.get("eval_run_id"), best.get("adopt_run_id"))
+        analysis = best.get("analysis") or analysis
+        diagnosis = (analysis.get("diagnosis") or "").replace("_", " ")
+        report(
+            "judge",
+            f"Kept iteration {best['iteration']} ({best.get('median_delta_pct') or 0:+.1f}%) and reverted later changes "
+            f"(iteration {iteration}: {entry.get('median_delta_pct') or 0:+.1f}%)",
+            {"kept_iteration": best["iteration"], "sha": best["sha"]},
+        )
+    kept = best if _score(best) > _score(entry) and best.get("sha") else entry
+    verdict.update(analysis=analysis, iteration=kept["iteration"], iterations=history, tuning=tuning or None)
+    render_report(
+        report_path,
+        context["experiment"],
+        context["project"],
+        context["claim"],
+        context["paper"],
+        spec,
+        build,
+        verdict,
+        results,
+    )
+    _save_verdict(experiment_id, verdict, report_path)
     pr_url = _maybe_open_pr(context, verdict, report)
     set_experiment(
         experiment_id,
         status="awaiting_decision",
-        build={**build, "iterations": history, "pr_url": pr_url},
+        build={**build, "iterations": history, "kept_iteration": kept["iteration"], "pr_url": pr_url},
     )
     adoption = verdict.get("adoption")
     adopt_text = f" Adoption: {adoption['verdict'].replace('_', ' ')}." if adoption else ""

@@ -1,6 +1,8 @@
 """End-to-end experiment graph with fake builder/benchmarks: LangGraph interrupts, Postgres
 checkpoints, job queue, gates, verdict and report."""
 
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -547,3 +549,60 @@ def test_batch_runs_testable_claims_one_at_a_time(lab, monkeypatch):
     assert all(len(statuses) <= 1 for statuses in seen)
     assert service.get_experiment(started[0]["id"])["status"] == "awaiting_decision"
     assert batch.pending_claims(project_id) == []
+
+
+def test_ratchet_keeps_the_best_iteration_and_reverts_later_changes(lab, monkeypatch):
+    from paperatlas.db.engine import session_scope
+    from paperatlas.db.schema import Run
+
+    original_plan = orchestrator.plan_experiment
+
+    def plan(*args, **kwargs):
+        spec = original_plan(*args, **kwargs)
+        spec["max_iterations"] = 2
+        return spec
+
+    medians = iter([([100, 101, 99, 100], [121, 122, 120, 121]), ([100, 101, 99, 100], [104, 105, 103, 104])])
+    current = {}
+
+    def bench(experiment_id, kind, workdir, spec, profile, artifacts, report, should_cancel, **kwargs):
+        from datetime import UTC, datetime
+
+        if kind == "eval":
+            current["pair"] = next(medians)
+        results = bench_results(*current.get("pair", ([100, 101, 99, 100], [121, 122, 120, 121])))
+        with session_scope() as session:
+            session.add(Run(experiment_id=experiment_id, kind=kind, status="done", results=results, finished_at=datetime.now(UTC)))
+        return results
+
+    builds = {"n": 0}
+
+    def build(experiment_id, workdir, spec, claim, profile, artifacts, report, should_cancel, **kwargs):
+        builds["n"] += 1
+        (workdir / "technique.py").write_text(f"version = {builds['n']}\n")
+        orchestrator.git(workdir, "add", "-A")
+        orchestrator.git(workdir, "commit", "-m", f"build {builds['n']}")
+        return {"builder": "fake", "attempts": [], "files": ["technique.py"], "diff_stat": ""}
+
+    analyses = iter([
+        {"diagnosis": "partially_reproduced", "summary": "s", "evidence": [], "paper_comparison": "",
+         "worth_iterating": True, "next_changes": "try harder", "expected_effect": ""},
+        {"diagnosis": "partially_reproduced", "summary": "worse", "evidence": [], "paper_comparison": "",
+         "worth_iterating": False, "next_changes": "", "expected_effect": ""},
+    ])
+    monkeypatch.setattr(orchestrator, "plan_experiment", plan)
+    monkeypatch.setattr(orchestrator, "run_benchmark", bench)
+    monkeypatch.setattr(orchestrator, "build_experiment", build)
+    monkeypatch.setattr(orchestrator, "analyse", lambda *a, **k: next(analyses))
+
+    claim_id = service.recommendations(lab["project"]["id"])[0]["claim_id"]
+    experiment_id = service.create_experiments(lab["project"]["id"], [claim_id])[0]["id"]
+    drain()
+    service.decide_spec(experiment_id, "approve", overrides={"rounds": 4})
+    drain()
+    detail = service.get_experiment(experiment_id)
+    assert detail["status"] == "awaiting_decision", detail["error"]
+    assert detail["build"]["kept_iteration"] == 1
+    assert detail["verdict_detail"]["median_delta_pct"] > 15
+    worktree = detail["worktree_path"] if "worktree_path" in detail else service.experiment_context(experiment_id)["worktree"]
+    assert (Path(worktree) / "technique.py").read_text() == "version = 1\n"

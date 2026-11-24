@@ -55,7 +55,9 @@ from the paper's method in a way that explains the gap.
 - untuned: the mechanism works but the tried knob values are far from where the paper operates.
 - regime_mismatch: the workload/model regime differs from the paper's in a way that removes the benefit.
 - hardware_mismatch: the mechanism works as in the paper but the cost model of this hardware/runtime \
-(e.g. per-forward launch overhead on MPS, no fused kernels, unified memory) cancels the gain.
+(e.g. per-forward overhead, draft cost relative to a target step, unified memory) cancels the gain. Use \
+engine_roofline (forward cost per added token, draft ms/token, bandwidth utilisation) and the cost-model \
+prediction to check this quantitatively; say which roofline number explains it.
 - claim_not_supported: faithful implementation, paper-like regime, and still no effect.
 - inconclusive: not enough evidence (noise, missing counters with no other signal).
 Ground every statement in the numbers given; cite them. worth_iterating=true only for implementation_suspect, \
@@ -113,6 +115,7 @@ def analyse(
     fidelity: dict[str, Any],
     history: list[dict[str, Any]],
     llm: Optional[LLMClient],
+    roofline_summary: Optional[str] = None,
 ) -> dict[str, Any]:
     if llm is None:
         return fallback_analysis(verdict)
@@ -133,7 +136,9 @@ def analyse(
             "target_pct": verdict.get("target_pct"),
             "fidelity": spec.get("fidelity"),
             "mechanism_expected": spec.get("mechanism"),
+            "cost_model_prediction": spec.get("prediction"),
         },
+        "engine_roofline": roofline_summary,
         "claim_check": {
             "verdict": verdict.get("verdict"),
             "reason": verdict.get("reason"),

@@ -259,6 +259,9 @@ class Project(Base):
     profile: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default="{}")
     embedding = mapped_column(Vector(EMBEDDING_DIM), nullable=True)
     profiled_at: Mapped[datetime] = _now()
+    # Measured hardware/engine roofline (`commands.profile`), used to predict gains before building.
+    roofline: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB)
+    roofline_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = _now()
 
 
@@ -283,6 +286,7 @@ class Match(Base):
     rationale: Mapped[Optional[str]] = mapped_column(Text)
     explainer: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB)
     explained_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    prediction: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB)
     created_at: Mapped[datetime] = _now()
 
 
