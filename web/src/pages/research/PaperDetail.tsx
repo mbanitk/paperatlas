@@ -1,21 +1,190 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Link, useLocation, useParams } from 'react-router'
-import { usePaper, useProjects } from '../../api/queries'
-import type { Author, ConceptNode } from '../../api/types'
-import { CategoryChip, DocTypeChip } from '../../components/Badges'
-import { ClaimChips, ClaimedEffect } from '../../components/ClaimCard'
-import { ClaimDiagram, ClaimLead, ExplainerFootnote, GeneratePaperExplainer, NumberedSteps, ResultTiles } from '../../components/Explainers'
-import { ConceptMapCard } from '../../components/ConceptMap'
+import { useExperiments, useExplainPaper, useGenerateConceptMap, usePaper } from '../../api/queries'
+import type { Author, ConceptMap, ConceptNode, PaperDetail } from '../../api/types'
+import { CategoryChip, DocTypeChip, OutcomeBadge, StatusChip } from '../../components/Badges'
+import { ConceptMapGraph } from '../../components/ConceptMap'
+import { ConfirmDialog } from '../../components/Dialog'
+import { ClaimDiagram, ExplainerFootnote, NumberedSteps } from '../../components/Explainers'
 import { FlowDiagram } from '../../components/FlowDiagram'
+import { AlertIcon, BookIcon, MoreIcon, SparkIcon } from '../../components/Icons'
+import { ActionMenu, ClaimRow, KeyResults, topicName, useTopicNames } from '../../components/Insights'
 import { RelatedStrip } from '../../components/Related'
-import { AlertIcon, BookIcon, SparkIcon } from '../../components/Icons'
-import { Card, Chip, cx, DefinitionList, EmptyState, ErrorState, ExternalLink, Loading, RelativeTime } from '../../components/ui'
-import { formatDate, pluralize } from '../../lib/format'
+import { useToast } from '../../components/Toast'
+import { Tooltip } from '../../components/Tooltip'
+import {
+  Button,
+  Card,
+  Chip,
+  cx,
+  DefinitionList,
+  Disclosure,
+  EmptyState,
+  ErrorState,
+  ExternalLink,
+  InlineError,
+  MathText,
+  PageHeader,
+  RelativeTime,
+  Skeleton,
+  errorMessage,
+} from '../../components/ui'
+import { readingPathParts } from '../../lib/conceptMap'
+import { formatDate, formatNumber, MISSING, pluralize, sanitizeText } from '../../lib/format'
+import { experimentsByClaim, formatResultValue, paperShortLabel, sourceLabel } from '../../lib/research'
+
+const BREADCRUMB_ROOT = [
+  { label: 'Research', to: '/research' },
+  { label: 'Papers & patents', to: '/research/papers' },
+]
+
+function Links({ data, className }: { data: PaperDetail; className?: string }) {
+  if (!data.url && !data.pdf_url && !data.code_url) return null
+  return (
+    <div className={cx('flex flex-wrap items-center gap-x-4 gap-y-1 text-sm', className)}>
+      {data.url && <ExternalLink href={data.url} className="inline-flex min-h-6 items-center">{data.doc_type === 'patent' ? 'Patent page' : data.paper_id.startsWith('blog:') ? 'Original post' : 'Paper page'}</ExternalLink>}
+      {data.pdf_url && <ExternalLink href={data.pdf_url} className="inline-flex min-h-6 items-center">PDF</ExternalLink>}
+      {data.code_url && <ExternalLink href={data.code_url} className="inline-flex min-h-6 items-center">Code</ExternalLink>}
+    </div>
+  )
+}
+
+/** Concept map with its reading path; mapping again (an LLM call that replaces the map) sits in a menu behind a confirm. */
+function ConceptMapSection({ paperId, map, onSelect }: { paperId: string; map: ConceptMap | null | undefined; onSelect: (node: ConceptNode) => void }) {
+  const generate = useGenerateConceptMap()
+  const toast = useToast()
+  const [confirm, setConfirm] = useState(false)
+  if (!map || map.nodes.length < 2) return null
+  const run = () =>
+    generate.mutate(paperId, {
+      onSuccess: () => {
+        setConfirm(false)
+        toast.success('Concept map ready')
+      },
+      onError: (error) => toast.error(errorMessage(error)),
+    })
+  const parts = readingPathParts(map.reading_path, map.nodes)
+  return (
+    <Card
+      id="concept-map"
+      title="How the ideas connect"
+      actions={
+        map.generated ? (
+          <ActionMenu
+            label="Concept map actions"
+            icon={generate.isPending ? undefined : <MoreIcon size={16} />}
+            variant="invisible"
+            size="sm"
+            items={[{ label: 'Map the concepts again…', description: 'Replaces the current map · about 20 seconds', onSelect: () => setConfirm(true), disabled: generate.isPending }]}
+          >
+            {generate.isPending ? 'Mapping…' : undefined}
+          </ActionMenu>
+        ) : undefined
+      }
+    >
+      {!map.generated ? (
+        <div className="space-y-3 text-sm">
+          <p className="text-muted">
+            Some of these concepts need others first, and some only reach the paper’s headline result together. Mapping them shows what to build first.
+          </p>
+          <Button size="sm" variant="outline" icon={<SparkIcon size={14} />} loading={generate.isPending} onClick={() => setConfirm(true)}>
+            {generate.isPending ? 'Mapping concepts… (~20 s)' : 'Map how these concepts connect…'}
+          </Button>
+          {generate.error ? <InlineError error={generate.error} /> : null}
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <p className="text-xs text-muted">{pluralize(map.nodes.length, 'concept')}, numbered in the order the paper explains them. Select one to jump to its claim.</p>
+          {parts.length > 0 && (
+            <p className="flex gap-2 text-sm text-fg">
+              <BookIcon size={16} className="mt-0.5 shrink-0 text-muted" />
+              <span>
+                <span className="font-medium">Reading path: </span>
+                {parts.map((part, index) =>
+                  typeof part === 'string' ? (
+                    <span key={index}>{part}</span>
+                  ) : (
+                    <Tooltip key={index} content={part.node.name} className="inline-flex size-6 items-center justify-center rounded-full align-middle">
+                      <span className="inline-flex size-5 items-center justify-center rounded-full bg-neutral-subtle text-xs font-semibold text-fg tabular-nums">
+                        {part.order}
+                      </span>
+                    </Tooltip>
+                  ),
+                )}
+              </span>
+            </p>
+          )}
+          {generate.error ? <InlineError error={generate.error} /> : null}
+          <ConceptMapGraph map={map} onSelect={onSelect} />
+        </div>
+      )}
+      <ConfirmDialog
+        open={confirm}
+        onClose={() => setConfirm(false)}
+        title={map.generated ? 'Map the concepts again?' : 'Map how these concepts connect?'}
+        confirmLabel={map.generated ? 'Map again' : 'Map concepts'}
+        loading={generate.isPending}
+        error={generate.error}
+        cost="Uses the LLM · about 20 seconds"
+        onConfirm={run}
+      >
+        <p className="text-muted">
+          {map.generated
+            ? 'Asks the model to work out again which concepts need which, and replaces the current map and reading path.'
+            : 'Asks the model which concepts need which, and which combine into the paper’s headline result.'}
+        </p>
+      </ConfirmDialog>
+    </Card>
+  )
+}
+
+function WriteSummary({ paperId }: { paperId: string }) {
+  const [open, setOpen] = useState(false)
+  const explain = useExplainPaper()
+  const toast = useToast()
+  return (
+    <>
+      <Button size="sm" variant="outline" icon={<SparkIcon size={14} />} loading={explain.isPending} onClick={() => setOpen(true)}>
+        {explain.isPending ? 'Writing summary… (~15 s)' : 'Write a plain-language summary…'}
+      </Button>
+      <ConfirmDialog
+        open={open}
+        onClose={() => setOpen(false)}
+        title="Write a plain-language summary?"
+        confirmLabel="Write summary"
+        loading={explain.isPending}
+        error={explain.error}
+        cost="Uses the LLM · about 15 seconds"
+        onConfirm={() =>
+          explain.mutate(paperId, {
+            onSuccess: () => {
+              setOpen(false)
+              toast.success('Paper summary ready')
+            },
+            onError: (error) => toast.error(errorMessage(error)),
+          })
+        }
+      >
+        <p className="text-muted">Adds a one-line summary, the key results, the approach step by step, what’s new and the limitations.</p>
+      </ConfirmDialog>
+    </>
+  )
+}
+
+function Section({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section>
+      <h3 className="mb-1.5 text-sm font-semibold text-fg">{title}</h3>
+      {children}
+    </section>
+  )
+}
 
 export default function PaperDetailPage() {
   const paperId = useParams()['*'] ?? ''
   const paper = usePaper(paperId)
-  const projects = useProjects()
+  const names = useTopicNames()
+  const experiments = useExperiments({})
   const location = useLocation()
   const [flash, setFlash] = useState<number | null>(null)
   const loaded = !!paper.data
@@ -39,217 +208,276 @@ export default function PaperDetailPage() {
       ),
     [paper.data],
   )
+  const byClaim = useMemo(() => experimentsByClaim(experiments.data), [experiments.data])
+  const tested = useMemo(() => (experiments.data ?? []).filter((experiment) => experiment.paper_id === paper.data?.paper_id).sort((a, b) => b.id - a.id), [experiments.data, paper.data])
+
   const jumpToClaim = (node: ConceptNode) => {
     if (!node.claim_id) return
     document.getElementById(`claim-${node.claim_id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
     setFlash(node.claim_id)
   }
 
-  if (paper.isLoading) return <Loading label="Loading paper…" />
-  if (paper.isError || !paper.data)
+  if (paper.isLoading)
     return (
-      <div className="space-y-3">
-        <Link to="/research/papers" className="text-sm">
-          ← Papers
-        </Link>
-        <ErrorState error={paper.error} onRetry={() => paper.refetch()} />
+      <div className="space-y-6">
+        <PageHeader
+          level="object"
+          breadcrumb={BREADCRUMB_ROOT}
+          title={<span role="status" aria-label="Loading paper" className="inline-block h-6 w-80 max-w-full animate-pulse rounded bg-canvas-inset align-middle" />}
+        />
+        <Skeleton variant="card" count={2} />
       </div>
     )
+  if (paper.isError || !paper.data)
+    return (
+      <div className="space-y-6">
+        <PageHeader level="object" breadcrumb={BREADCRUMB_ROOT} title="Paper" />
+        <ErrorState title="We couldn’t load this paper" error={paper.error ?? new Error('Paper not found')} onRetry={() => paper.refetch()} />
+      </div>
+    )
+
   const data = paper.data
   const explainer = data.explainer
+  const results = explainer?.key_results ?? []
   const authors = data.authors.map((author) => (typeof author === 'string' ? author : (author as Author).name)).filter(Boolean)
-  const projectId = projects.data?.[0]?.id
+  const authorLine = authors.length ? `${authors.slice(0, 6).join(', ')}${authors.length > 6 ? ' et al.' : ''}` : null
+  const testableCount = data.claims.filter((claim) => claim.testable).length
+  const categories = [...new Set(data.claims.map((claim) => claim.category).filter(Boolean))] as string[]
 
   return (
     <div className="space-y-6">
-      <div>
-        <Link to="/research/papers" className="text-sm">
-          ← Papers
-        </Link>
-        <h2 className="mt-2 text-xl leading-snug font-semibold">{data.title}</h2>
-        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted">
-          <DocTypeChip docType={data.doc_type} />
-          {authors.length > 0 && (
-            <span>
-              {authors.slice(0, 6).join(', ')}
-              {authors.length > 6 && ' et al.'}
+      <PageHeader
+        level="object"
+        breadcrumb={[...BREADCRUMB_ROOT, { label: paperShortLabel(data.paper_id, data.doc_type) }]}
+        eyebrow={
+          <span className="inline-flex flex-wrap items-center gap-x-1.5 gap-y-1">
+            <DocTypeChip docType={data.doc_type} />
+            {data.venue && <span>{data.venue}</span>}
+            {data.venue && data.publication_date && <span aria-hidden="true">·</span>}
+            {data.publication_date && <span>{formatDate(data.publication_date)}</span>}
+          </span>
+        }
+        title={<MathText>{data.title}</MathText>}
+        answer={
+          explainer?.tldr ? (
+            <span className="text-body sm:text-body-lg">
+              <span className="font-semibold">In short: </span>
+              {sanitizeText(explainer.tldr)}
             </span>
-          )}
-          <span>· {data.venue ?? 'unknown venue'}</span>
-          <span>· {formatDate(data.publication_date)}</span>
-        </div>
-        <div className="mt-2 flex flex-wrap gap-3 text-sm">
-          {data.url && <ExternalLink href={data.url}>{data.doc_type === 'patent' ? 'Patent page' : 'Paper page'}</ExternalLink>}
-          {data.pdf_url && <ExternalLink href={data.pdf_url}>PDF</ExternalLink>}
-          {data.code_url && <ExternalLink href={data.code_url}>Code</ExternalLink>}
-        </div>
-        {explainer?.tldr && (
-          <p className="mt-3 max-w-3xl rounded-md border border-done/20 bg-done-subtle/50 px-3 py-2 text-[15px] leading-snug text-fg">
-            <span className="mr-1.5 rounded bg-done px-1.5 py-px text-[10.5px] font-semibold text-white">TL;DR</span>
-            {explainer.tldr}
-          </p>
-        )}
-      </div>
+          ) : undefined
+        }
+        description={authorLine ?? undefined}
+        actions={<Links data={data} className="hidden sm:flex sm:flex-nowrap sm:whitespace-nowrap" />}
+      />
 
-      <ConceptMapCard paperId={data.paper_id} map={data.concept_map} onSelect={jumpToClaim} />
+      {results.length > 0 && (
+        <section id="key-results" aria-labelledby="key-results-title" className="-mt-2">
+          <div className="mb-2 flex flex-wrap items-baseline justify-between gap-x-3">
+            <h2 id="key-results-title" className="text-sm font-semibold text-fg">
+              Key results the paper reports
+            </h2>
+            <span className="text-xs text-muted">On the paper’s own setup, not measured here</span>
+          </div>
+          <KeyResults results={results} max={4} />
+          {results.length > 4 && (
+            <Disclosure label={`All ${results.length} results`} className="mt-2">
+              <ul className="divide-y divide-line-muted rounded-lg border border-line text-sm">
+                {results.map((result, index) => (
+                  <li key={index} className="grid gap-x-4 gap-y-0.5 px-3 py-2 sm:grid-cols-[minmax(0,14rem)_minmax(0,8rem)_1fr]">
+                    <span className="text-fg">{sanitizeText(result.label)}</span>
+                    <span className="font-semibold text-fg tabular-nums">{formatResultValue(result.value) || MISSING.value}</span>
+                    <span className="text-xs text-muted">{result.context ? sanitizeText(result.context) : ''}</span>
+                  </li>
+                ))}
+              </ul>
+            </Disclosure>
+          )}
+        </section>
+      )}
+      <Links data={data} className="sm:hidden" />
+
+      <ConceptMapSection paperId={data.paper_id} map={data.concept_map} onSelect={jumpToClaim} />
 
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="min-w-0 space-y-6 lg:col-span-2">
+          <Card
+            id="claims"
+            title={`Claims in this paper (${data.claims.length})`}
+            actions={
+              data.claims.length ? (
+                <span className="text-xs text-muted">
+                  {formatNumber(testableCount, 0)} testable{data.concept_map?.generated ? ' · in reading order' : ''}
+                </span>
+              ) : undefined
+            }
+            bodyClassName="p-0"
+          >
+            {data.claims.length === 0 ? (
+              <EmptyState title={data.distilled_at ? 'No claims found' : 'Not summarised yet'} icon={<BookIcon size={28} />}>
+                {data.distilled_at ? 'The summariser found no technical claims in this document.' : 'Claim cards appear after the paper is summarised (Papers page → Run → Summarise pending papers).'}
+              </EmptyState>
+            ) : (
+              <ul className="divide-y divide-line-muted">
+                {claims.map((claim) => (
+                  <ClaimRow
+                    key={claim.id}
+                    id={`claim-${claim.id}`}
+                    claim={claim}
+                    order={claim.related?.has_map ? claim.related.order : null}
+                    experiments={byClaim.get(claim.id)}
+                    className={cx('transition-colors duration-700', flash === claim.id && 'bg-accent-subtle')}
+                    explain={
+                      claim.explainer?.problem || claim.explainer?.diagram?.nodes?.length || claim.related?.has_map ? (
+                        <div className="space-y-3">
+                          {claim.explainer?.problem && (
+                            <p className="text-sm text-fg">
+                              <span className="font-medium">Problem: </span>
+                              {sanitizeText(claim.explainer.problem)}
+                            </p>
+                          )}
+                          <ClaimDiagram diagram={claim.explainer?.diagram} />
+                          <RelatedStrip related={claim.related} claimId={claim.id} paperId={data.paper_id} showPosition={false} />
+                          <Link to={`/research/claims/${claim.id}`} className="inline-block text-sm">
+                            Open the full claim card →
+                          </Link>
+                        </div>
+                      ) : undefined
+                    }
+                  />
+                ))}
+              </ul>
+            )}
+          </Card>
+
           {explainer ? (
             <Card
               title={
                 <span className="flex items-center gap-2">
-                  <SparkIcon className="text-done" /> In plain language
+                  <SparkIcon className="text-muted" /> How it works
                 </span>
               }
             >
               <div className="space-y-5 text-sm">
-                {!!explainer.key_results?.length && <ResultTiles results={explainer.key_results} size="md" />}
                 {explainer.problem && (
-                  <section>
-                    <h3 className="mb-1 text-xs font-semibold tracking-wide text-muted uppercase">Problem</h3>
-                    <p className="text-fg">{explainer.problem}</p>
-                  </section>
+                  <Section title="Problem">
+                    <p className="text-fg">{sanitizeText(explainer.problem)}</p>
+                  </Section>
                 )}
                 {!!explainer.approach?.length && (
-                  <section>
-                    <h3 className="mb-2 text-xs font-semibold tracking-wide text-muted uppercase">Approach</h3>
-                    <NumberedSteps steps={explainer.approach} />
-                  </section>
+                  <Section title="Approach">
+                    <NumberedSteps steps={explainer.approach.map((step) => sanitizeText(step))} />
+                  </Section>
                 )}
                 {explainer.diagram?.nodes?.length ? (
-                  <div className="overflow-x-auto rounded-md border border-line-muted px-3 py-3">
-                    <div className="min-w-[420px]">
+                  <Disclosure label="Show the flow diagram" meta={explainer.diagram.title ? ` · ${explainer.diagram.title}` : undefined}>
+                    <div className="rounded-lg border border-line-muted px-3 py-3">
                       <FlowDiagram diagram={explainer.diagram} />
                     </div>
-                  </div>
+                  </Disclosure>
                 ) : null}
-                <div className="grid gap-3 sm:grid-cols-2">
-                  {explainer.novelty && (
-                    <section className="rounded-md border border-accent/30 bg-accent-subtle/40 px-3 py-2">
-                      <h3 className="mb-0.5 text-xs font-semibold tracking-wide text-accent uppercase">What is new</h3>
-                      <p className="text-fg">{explainer.novelty}</p>
-                    </section>
-                  )}
-                  {explainer.who_should_care && (
-                    <section className="rounded-md border border-success/25 bg-success-subtle/50 px-3 py-2">
-                      <h3 className="mb-0.5 text-xs font-semibold tracking-wide text-success uppercase">Who should care</h3>
-                      <p className="text-fg">{explainer.who_should_care}</p>
-                    </section>
-                  )}
-                </div>
+                {(explainer.novelty || explainer.who_should_care) && (
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    {explainer.novelty && (
+                      <Section title="What’s new">
+                        <p className="text-fg">{sanitizeText(explainer.novelty)}</p>
+                      </Section>
+                    )}
+                    {explainer.who_should_care && (
+                      <Section title="Who should care">
+                        <p className="text-fg">{sanitizeText(explainer.who_should_care)}</p>
+                      </Section>
+                    )}
+                  </div>
+                )}
                 {!!explainer.limitations?.length && (
-                  <section>
-                    <h3 className="mb-1.5 text-xs font-semibold tracking-wide text-muted uppercase">Limitations</h3>
-                    <ul className="space-y-1">
+                  <Section title="Limitations">
+                    <ul className="space-y-1.5">
                       {explainer.limitations.map((limitation) => (
                         <li key={limitation} className="flex gap-2 text-fg">
-                          <AlertIcon size={14} className="mt-0.5 shrink-0 text-attention" />
-                          {limitation}
+                          <AlertIcon size={14} className="mt-0.5 shrink-0 text-caution-fg" />
+                          <span>{sanitizeText(limitation)}</span>
                         </li>
                       ))}
                     </ul>
-                  </section>
+                  </Section>
                 )}
                 <ExplainerFootnote explainer={explainer} />
               </div>
             </Card>
           ) : (
-            <Card title="In plain language">
-              <div className="space-y-2 text-sm text-muted">
-                <p>No plain-language summary yet{data.distilled_at ? '' : ' — the paper has not been distilled'}.</p>
-                <GeneratePaperExplainer paperId={data.paper_id} />
+            <Card title="How it works">
+              <div className="space-y-3 text-sm">
+                <p className="text-muted">No plain-language summary yet{data.distilled_at ? '' : ', and the paper hasn’t been summarised into claim cards'}.</p>
+                <WriteSummary paperId={data.paper_id} />
               </div>
             </Card>
           )}
 
-          <Card
-            title={`Claim cards (${data.claims.length})`}
-            actions={data.concept_map?.generated ? <span className="text-xs text-muted">in reading order</span> : undefined}
-            bodyClassName="p-0"
-          >
-            {data.claims.length === 0 ? (
-              <EmptyState title={data.distilled_at ? 'No claims extracted' : 'Not distilled yet'} icon={<BookIcon size={28} />}>
-                {data.distilled_at ? 'The distiller found no technical claims in this document.' : 'Run “Distill pending” on the Papers page or a research scan.'}
-              </EmptyState>
+          {data.abstract && (
+            <section className="card px-3 py-3 sm:px-4" aria-label="Abstract">
+              <Disclosure label="Abstract">
+                <p className="text-sm leading-relaxed whitespace-pre-line text-fg">{data.abstract}</p>
+              </Disclosure>
+            </section>
+          )}
+        </div>
+
+        <div className="min-w-0 space-y-6">
+          <Card title="Tested here">
+            {tested.length === 0 ? (
+              <p className="text-sm text-muted">{testableCount ? `Not tested yet. ${pluralize(testableCount, 'claim')} can be picked on the Recommendations page.` : 'Nothing from this paper has been tested.'}</p>
             ) : (
-              <ul className="divide-y divide-line-muted">
-                {claims.map((claim) => (
-                  <li
-                    key={claim.id}
-                    id={`claim-${claim.id}`}
-                    className={cx('scroll-mt-20 px-4 py-3 transition-colors duration-700', flash === claim.id && 'bg-accent-subtle')}
-                  >
-                    <div>
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-baseline justify-between gap-x-3">
-                          <Link to={`/research/claims/${claim.id}`} className="font-semibold text-fg hover:text-accent">
-                            {claim.related?.has_map && claim.related.order != null && (
-                              <span className="mr-1.5 text-muted tabular-nums">{claim.related.order}.</span>
-                            )}
-                            {claim.name}
-                          </Link>
-                          <span className="text-sm">
-                            <ClaimedEffect claim={claim} />
-                          </span>
-                        </div>
-                        <ClaimLead claim={claim} explainer={claim.explainer} />
-                        <ClaimDiagram diagram={claim.explainer?.diagram} className="mt-3" />
-                        <RelatedStrip related={claim.related} claimId={claim.id} paperId={data.paper_id} showPosition={false} className="mt-2" />
-                        <div className="mt-2">
-                          <ClaimChips claim={claim} />
-                        </div>
-                      </div>
+              <ul className="space-y-2.5 text-sm">
+                {tested.map((experiment) => (
+                  <li key={experiment.id} className="min-w-0">
+                    <Link to={`/experiments/${experiment.id}`} className="inline-block py-0.5 font-medium text-fg hover:text-accent">
+                      <span className="text-muted tabular-nums">#{experiment.id}</span> <MathText>{experiment.title}</MathText>
+                    </Link>
+                    <div className="mt-1">
+                      {experiment.verdict ? <OutcomeBadge kind="verdict" value={experiment.verdict} explain /> : <StatusChip status={experiment.status} />}
                     </div>
                   </li>
                 ))}
               </ul>
             )}
           </Card>
-
-          {data.abstract && (
-            <details className="card group">
-              <summary className="cursor-pointer px-4 py-3 text-sm font-semibold select-none">Abstract</summary>
-              <p className="border-t border-line-muted px-4 py-3 text-sm leading-relaxed whitespace-pre-line">{data.abstract}</p>
-            </details>
-          )}
-        </div>
-        <div className="min-w-0 space-y-6">
-          <Card title="Details">
+          <Card title="About this paper">
             <DefinitionList
               items={[
-                ['ID', <code key="id" className="text-xs break-all">{data.paper_id}</code>],
-                ['Sources', data.sources.join(', ') || '—'],
-                ['Citations', data.citation_count ?? '—'],
-                ['HF upvotes', data.hf_upvotes ?? '—'],
-                ['Full text', data.has_full_text ? 'parsed' : 'abstract only'],
-                ['Distilled', data.distilled_at ? <RelativeTime key="d" iso={data.distilled_at} /> : 'not yet'],
+                ['Authors', authors.length ? authors.join(', ') : MISSING.value],
+                ['Published', data.publication_date ? formatDate(data.publication_date) : MISSING.value],
+                ['Found on', data.sources.length ? data.sources.map(sourceLabel).join(', ') : MISSING.value],
+                ['Citations', typeof data.citation_count === 'number' ? formatNumber(data.citation_count, 0) : MISSING.value],
+                ['Hugging Face upvotes', typeof data.hf_upvotes === 'number' ? formatNumber(data.hf_upvotes, 0) : MISSING.value],
+                ['Text read', data.has_full_text ? 'Full text' : 'Abstract only'],
+                ['Summarised', data.distilled_at ? <RelativeTime key="d" iso={data.distilled_at} /> : 'Not yet'],
+                ['ID', <code key="id" className="code-inline break-all">{data.paper_id}</code>],
               ]}
             />
           </Card>
           <Card title="Topics">
             {data.topics.length === 0 ? (
-              <p className="text-sm text-muted">Not linked to a current topic.</p>
+              <p className="text-sm text-muted">Not part of a current topic.</p>
             ) : (
               <ul className="space-y-2 text-sm">
                 {data.topics.map((topic) => (
-                  <li key={topic.slug} className="flex items-center justify-between gap-2">
-                    <Link to={`/research/topics/${topic.slug}`}>{topic.name}</Link>
-                    {topic.rank && <Chip tone="neutral">#{topic.rank} in topic</Chip>}
+                  <li key={topic.slug} className="flex flex-wrap items-center justify-between gap-2">
+                    <Link to={`/research/topics/${topic.slug}`} className="inline-flex min-h-6 min-w-0 items-center">
+                      {topicName(topic, names)}
+                    </Link>
+                    {topic.rank != null && <Chip tone="neutral">#{topic.rank} in topic</Chip>}
                   </li>
                 ))}
               </ul>
             )}
           </Card>
-          {data.claims.length > 0 && (
+          {categories.length > 0 && (
             <Card title="Categories">
               <div className="flex flex-wrap gap-1.5">
-                {[...new Set(data.claims.map((claim) => claim.category).filter(Boolean))].map((category) => (
+                {categories.map((category) => (
                   <CategoryChip key={category} category={category} />
                 ))}
               </div>
-              <p className="mt-2 text-xs text-muted">{pluralize(data.claims.filter((claim) => claim.testable).length, 'testable claim')}</p>
-              {projectId && <p className="mt-1 text-xs text-muted">Claim explanations are written for your project on the Recommendations page.</p>}
             </Card>
           )}
         </div>
