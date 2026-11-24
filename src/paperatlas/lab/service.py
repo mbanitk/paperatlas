@@ -29,6 +29,7 @@ from paperatlas.db.schema import (
 from paperatlas.distill.relations import paper_concept_map, prerequisite_chain, related_for_claims
 from paperatlas.lab.events import emit, enqueue, event_dict, events_since
 from paperatlas.lab.planner import EDITABLE_FIELDS, apply_overrides
+from paperatlas.lab.protocol import method_excerpt
 
 ACTIVE_STATUSES = (
     "blocked",
@@ -38,6 +39,7 @@ ACTIVE_STATUSES = (
     "approving",
     "building",
     "smoke_testing",
+    "tuning",
     "waiting_gpu",
     "running",
     "judging",
@@ -46,7 +48,7 @@ ACTIVE_STATUSES = (
     "cancelling",
 )
 TERMINAL_STATUSES = ("merged", "dropped", "rejected", "failed", "cancelled")
-STAGES = ["plan", "approve", "build", "smoke", "run", "judge", "decide"]
+STAGES = ["plan", "approve", "build", "smoke", "tune", "run", "judge", "decide"]
 STAGE_OF_STATUS = {
     "blocked": "plan",
     "queued": "plan",
@@ -55,6 +57,7 @@ STAGE_OF_STATUS = {
     "approving": "build",
     "building": "build",
     "smoke_testing": "smoke",
+    "tuning": "tune",
     "waiting_gpu": "run",
     "running": "run",
     "judging": "judge",
@@ -65,8 +68,8 @@ STAGE_OF_STATUS = {
     "rejected": "approve",
 }
 GATE_OF_STATUS = {"awaiting_approval": "approve_spec", "awaiting_decision": "merge"}
-STEP_TO_STAGE = {"plan": "plan", "approve": "approve", "build": "build", "smoke": "smoke", "run": "run",
-                 "judge": "judge", "finalize": "decide", "decide": "decide"}
+STEP_TO_STAGE = {"plan": "plan", "approve": "approve", "build": "build", "smoke": "smoke", "tune": "tune",
+                 "run": "run", "judge": "judge", "finalize": "decide", "decide": "decide"}
 
 
 def stage_of(status: str, error: Optional[str]) -> Optional[str]:
@@ -656,7 +659,10 @@ def experiment_context(experiment_id: int) -> dict[str, Any]:
             },
             "project": {"id": project.id, "name": project.name, "repo_path": project.repo_path},
             "profile": project.profile or {},
-            "claim": claim_dict(claim, concept, paper),
+            "claim": {
+                **claim_dict(claim, concept, paper),
+                "method_excerpt": method_excerpt(paper.raw_text, paper.abstract, claim.evidence_quote),
+            },
             "paper": {"paper_id": paper.paper_id, "title": paper.title, "url": paper.url},
             "match": {"target_metric": match.target_metric, "score": match.score} if match else None,
             "spec": experiment.spec or {},
@@ -797,6 +803,8 @@ def get_experiment(experiment_id: int) -> dict[str, Any]:
                     "summary": (run.results or {}).get("summary"),
                     "quality": (run.results or {}).get("quality"),
                     "model": (run.results or {}).get("model"),
+                    "comparison": (run.results or {}).get("comparison"),
+                    "mechanism": (run.results or {}).get("mechanism"),
                 }
                 for run in runs
             ],

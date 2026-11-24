@@ -36,12 +36,13 @@ def lab(db, demo_repo, monkeypatch, tmp_path):
 
     calls = {"build": 0, "bench": []}
 
-    def fake_build(experiment_id, workdir, spec, claim, profile, artifacts, report, should_cancel):
+    def fake_build(experiment_id, workdir, spec, claim, profile, artifacts, report, should_cancel, **kwargs):
+        calls.setdefault("feedback", []).append(kwargs.get("initial_feedback"))
         calls["build"] += 1
         (workdir / "technique.py").write_text("x = 1\n")
         return {"builder": "fake", "attempts": [{"attempt": 1}], "files": ["technique.py"], "diff_stat": "1 file"}
 
-    def fake_bench(experiment_id, kind, workdir, spec, profile, artifacts, report, should_cancel):
+    def fake_bench(experiment_id, kind, workdir, spec, profile, artifacts, report, should_cancel, **kwargs):
         from datetime import UTC, datetime
 
         from paperatlas.db.engine import session_scope
@@ -78,7 +79,7 @@ def test_experiment_runs_through_all_gates_and_merges(lab):
     assert lab["calls"]["bench"] == [("smoke", 4), ("eval", 4)]
     assert detail["verdict_detail"]["verdict"] == "reproduced"
     assert detail["verdict_detail"]["has_report"]
-    assert [s["state"] for s in detail["stages"]] == ["done"] * 6 + ["waiting"]
+    assert [s["state"] for s in detail["stages"]] == ["done"] * 7 + ["waiting"]
 
     service.decide_merge(experiment["id"], "merge")
     drain()
@@ -148,7 +149,7 @@ def test_failed_experiment_reports_the_stage_it_stopped_in(lab, monkeypatch):
     drain()
     detail = service.get_experiment(experiment_id)
     assert detail["status"] == "failed" and detail["stage"] == "build"
-    assert [s["state"] for s in detail["stages"]] == ["done", "done", "failed"] + ["pending"] * 4
+    assert [s["state"] for s in detail["stages"]] == ["done", "done", "failed"] + ["pending"] * 5
     assert "compiler exploded" in detail["error"]
 
 
@@ -270,3 +271,37 @@ def test_chain_mode_runs_prerequisites_first_and_builds_on_merged_flags(linked):
     drain()
     third_detail = service.get_experiment(third)
     assert third_detail["status"] == "blocked" and "was not merged" in third_detail["error"]
+
+
+def test_fixable_diagnosis_rebuilds_with_the_analysts_changes_then_waits_at_gate_3(lab, monkeypatch):
+    original_plan = orchestrator.plan_experiment
+
+    def plan_v2(*args, **kwargs):
+        spec = original_plan(*args, **kwargs)
+        spec["paper_baseline"] = {"kind": "technique_mode", "description": "the paper's baseline"}
+        spec["max_iterations"] = 2
+        return spec
+
+    analyses = iter(
+        [
+            {"diagnosis": "implementation_suspect", "summary": "no fewer verifications", "evidence": ["verifications +0%"],
+             "paper_comparison": "", "worth_iterating": True, "next_changes": "gate on the block minimum", "expected_effect": "fewer"},
+            {"diagnosis": "reproduced", "summary": "fixed", "evidence": [], "paper_comparison": "", "worth_iterating": False,
+             "next_changes": "", "expected_effect": ""},
+        ]
+    )
+    monkeypatch.setattr(orchestrator, "plan_experiment", plan_v2)
+    monkeypatch.setattr(orchestrator, "analyse", lambda *args, **kwargs: next(analyses))
+
+    claim_id = service.recommendations(lab["project"]["id"])[0]["claim_id"]
+    experiment_id = service.create_experiments(lab["project"]["id"], [claim_id])[0]["id"]
+    drain()
+    service.decide_spec(experiment_id, "approve")
+    drain()
+    detail = service.get_experiment(experiment_id)
+    assert detail["status"] == "awaiting_decision", detail["error"]
+    assert [kind for kind, _ in lab["calls"]["bench"]] == ["smoke", "eval", "adopt", "smoke", "eval", "adopt"]
+    assert lab["calls"]["feedback"][0] is None and "gate on the block minimum" in lab["calls"]["feedback"][1]
+    details = detail["verdict_detail"]["details"]
+    assert [it["diagnosis"] for it in details["iterations"]] == ["implementation_suspect", "reproduced"]
+    assert details["analysis"]["diagnosis"] == "reproduced" and details["adoption"]["verdict"] == "worth_adopting"

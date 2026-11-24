@@ -149,3 +149,66 @@ def test_report_charts_cover_data_and_explain_direction():
     verdict = judge(results, {**SPEC, "primary_metric": "ttft_ms", "direction": "lower_is_better"}, PROFILE)
     chart = effect_chart(verdict)
     assert "Did the claim hold?" in chart and "Paper claims +20.0%" in chart and "Measured +15" in chart
+
+
+V2_SPEC = {
+    **SPEC,
+    "flag_name": "dloop",
+    "workload": "short_chat",
+    "protocol_version": 2,
+    "paper_baseline": {"kind": "technique_mode", "description": "block drafting without DLoop"},
+    "paper_workload": {"matches": "GSM8K", "prompts": ["q1", "q2"], "max_new_tokens": 64, "concurrency": 1},
+    "mechanism": [{"name": "verifications", "meaning": "target passes", "paper_value": "-34%"}],
+}
+
+
+def test_claim_check_uses_the_papers_baseline_mode_and_adoption_uses_the_project_default(tmp_path):
+    from paperatlas.lab.protocol import comparison_arms, needs_adoption_run, tune_configs, workload_file
+
+    claim = comparison_arms({**V2_SPEC, "baseline_flags": ["prior"]}, "claim", {"k": 4}, {"k": 6})
+    assert claim["baseline_flags"] == ["prior", "dloop"] and claim["variant_flags"] == ["prior", "dloop"]
+    assert claim["params"] == {"baseline": {"dloop": {"mode": "baseline", "k": 4}}, "variant": {"dloop": {"mode": "method", "k": 6}}}
+    adopt = comparison_arms({**V2_SPEC, "baseline_flags": ["prior"]}, "adopt", {"k": 4}, {"k": 6})
+    assert adopt["baseline_flags"] == ["prior"] and adopt["params"]["baseline"] == {}
+    assert needs_adoption_run(V2_SPEC) and not needs_adoption_run(SPEC)
+    legacy = comparison_arms({**SPEC, "flag_name": "x"}, "claim")
+    assert legacy == {"baseline_flags": [], "variant_flags": ["x"], "params": {"baseline": {}, "variant": {}}}
+
+    configs = tune_configs([{"name": "k", "candidates": [4, 2, 6]}, {"name": "t", "candidates": [-0.5, -1.0]}])
+    assert configs == [{"k": 4, "t": -0.5}, {"k": 2, "t": -0.5}, {"k": 6, "t": -0.5}, {"k": 4, "t": -1.0}]
+    path = workload_file(V2_SPEC, tmp_path)
+    assert path.name == "paper_workload.json" and '"prompts": [' in path.read_text()
+
+
+def test_judge_fails_closed_without_quality_and_reports_mechanism_and_adoption():
+    no_quality = bench_results([100, 101, 99, 100], [130, 131, 129, 130])
+    no_quality["quality"] = {}
+    assert judge(no_quality, SPEC, PROFILE)["verdict"] == "regression"
+
+    claim = bench_results([100, 101, 99, 100], [125, 126, 124, 125])
+    claim["mechanism"] = {
+        "baseline": {"tokens": 1000, "techniques": {"dloop": {"verifications": 300.0}}},
+        "variant": {"tokens": 1000, "techniques": {"dloop": {"verifications": 200.0, "loops": 50.0}}},
+    }
+    adopt = bench_results([100, 101, 99, 100], [96, 97, 95, 96])
+    verdict = judge(claim, V2_SPEC, PROFILE, adopt)
+    assert verdict["verdict"] == "reproduced"
+    assert verdict["adoption"]["verdict"] == "regression" and verdict["worth_adopting"] is False
+    rows = {row["name"]: row for row in verdict["mechanism"]["rows"]}
+    assert rows["verifications"]["change_pct"] == pytest.approx(-33.3, abs=0.1)
+    assert rows["verifications"]["paper_value"] == "-34%" and rows["loops"]["expected"] is False
+    assert verdict["mechanism"]["measured"] is True
+
+
+def test_planner_flag_collision_terminates_and_protocol_is_clamped():
+    from paperatlas.lab.planner import _normalize_protocol
+
+    long_name = "a" * 41
+    profile = {**PROFILE, "techniques": [{"name": long_name}, {"name": long_name[:38] + "_v2"}]}
+    spec = plan_experiment({"technique": long_name, "name": long_name}, profile, None, None)
+    assert spec["flag_name"] not in {t["name"] for t in profile["techniques"]} and len(spec["flag_name"]) <= 41
+
+    draft = {"paper_workload": {"prompts": ["p"] * 6, "max_new_tokens": 400, "concurrency": 20}, "knobs": [{"name": "k", "candidates": []}]}
+    _normalize_protocol(draft)
+    assert draft["paper_workload"]["max_new_tokens"] == 256 and draft["paper_workload"]["concurrency"] == 8
+    assert len(draft["paper_workload"]["prompts"]) == 4 and draft["knobs"] == []

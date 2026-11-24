@@ -49,6 +49,8 @@ KIND_PRIOR = {
     "dataset": 0.2,
     "limitation": 0.2,
 }
+# Concepts that report a measurement or observation rather than a change one can implement and A/B test.
+OBSERVATION_KINDS = {"finding", "evaluation", "theory", "dataset", "limitation"}
 METRIC_KEYWORDS = [
     (("time to first token", "ttft", "prefill latency", "first-token"), "ttft_ms"),
     (("inter-token", "itl", "tpot", "time per output token", "per-token latency"), "itl_ms"),
@@ -203,6 +205,8 @@ def match_project(
         gain_pct = claim.claimed_gain_pct
         gain = min(1.0, math.log1p(max(gain_pct, 0.0) / 100.0) / math.log(3.0)) if gain_pct is not None else 0.15
         blockers = blockers_for(claim, hardware, claim.paper_id in cluster_papers)
+        if kinds.get(claim.id) in OBSERVATION_KINDS:
+            blockers.append(f"a {kinds[claim.id]} (observation), not a technique to implement and A/B test")
         score = fit * (0.4 + gain) / EFFORT_COST.get(claim.effort or "medium", 1.6)
         score *= verdict_prior.get(claim.category or "other", 1.0)
         score *= KIND_PRIOR.get(kinds.get(claim.id) or "other", 0.5)

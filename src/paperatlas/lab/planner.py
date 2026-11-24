@@ -8,6 +8,15 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
+from paperatlas.lab.protocol import (
+    PROTOCOL_VERSION,
+    Fidelity,
+    Knob,
+    MAX_ROUND_TOKENS,
+    MechanismMetric,
+    PaperBaseline,
+    PaperWorkload,
+)
 from paperatlas.llm.client import LLMClient, LLMError
 
 logger = logging.getLogger(__name__)
@@ -21,6 +30,8 @@ EDITABLE_FIELDS = (
     "warmup",
     "workload",
     "model",
+    "tune",
+    "max_iterations",
 )
 
 
@@ -49,6 +60,16 @@ class ExperimentSpec(BaseModel):
     bundle_claim_ids: list[int] = Field(default_factory=list)
     guardrails: Guardrails = Field(default_factory=Guardrails)
     paper_vs_project: Optional[str] = None
+    # protocol v2: reproduce the paper's comparison, then check adoption (see lab/protocol.py)
+    protocol_version: int = PROTOCOL_VERSION
+    paper_baseline: PaperBaseline = Field(default_factory=PaperBaseline)
+    paper_workload: Optional[PaperWorkload] = None
+    mechanism: list[MechanismMetric] = Field(default_factory=list)
+    knobs: list[Knob] = Field(default_factory=list)
+    fidelity: Fidelity = Field(default_factory=Fidelity)
+    tune: bool = True
+    tune_rounds: int = Field(1, ge=1, le=4)
+    max_iterations: int = Field(2, ge=1, le=3)
     build_timeout_s: int = 3600
     smoke_timeout_s: int = 1800
     eval_timeout_s: int = 3 * 3600
@@ -90,6 +111,47 @@ def _direction(metric: dict[str, Any]) -> str:
     return "lower_is_better" if "lower" in str(metric.get("direction", "")) else "higher_is_better"
 
 
+def _obj(properties: dict[str, Any]) -> dict[str, Any]:
+    return {"type": "object", "additionalProperties": False, "required": list(properties), "properties": properties}
+
+
+PROTOCOL_SCHEMA = {
+    "paper_baseline": _obj(
+        {
+            "description": {"type": "string"},
+            "kind": {"type": "string", "enum": ["project_default", "technique_mode"]},
+        }
+    ),
+    "paper_workload": _obj(
+        {
+            "matches": {"type": "string"},
+            "description": {"type": "string"},
+            "prompts": {"type": "array", "items": {"type": "string"}},
+            "max_new_tokens": {"type": "integer"},
+            "concurrency": {"type": "integer"},
+            "long_context_tokens": {"type": "integer"},
+        }
+    ),
+    "mechanism": {
+        "type": "array",
+        "items": _obj({"name": {"type": "string"}, "meaning": {"type": "string"}, "paper_value": {"type": ["string", "null"]}}),
+    },
+    "knobs": {
+        "type": "array",
+        "items": _obj(
+            {
+                "name": {"type": "string"},
+                "meaning": {"type": "string"},
+                "paper_value": {"type": ["string", "null"]},
+                "candidates": {"type": "array", "items": {"type": "string"}},
+            }
+        ),
+    },
+    "fidelity": _obj(
+        {"level": {"type": "string", "enum": ["high", "medium", "low"]}, "gaps": {"type": "array", "items": {"type": "string"}}}
+    ),
+}
+
 PLAN_SCHEMA_BASE = {
     "hypothesis": {"type": "string"},
     "flag_name": {"type": "string"},
@@ -117,6 +179,27 @@ what must stay unchanged when the flag is off, and pitfalls on the project's har
 make adopting the technique worthwhile; usually 3-10, never more than the claimed gain.
 - paper_vs_project: how the paper's setup differs from the project (hardware, model size, \
 batch size, sequence length) and how that may change the effect.
+
+The experiment must test the claim THE WAY THE PAPER MEASURED IT, then separately test whether it helps this project:
+- paper_baseline: what exactly the paper's reported number is measured against (read the effects' "baseline"). \
+kind=project_default when that baseline is what the project already does with the flag off (e.g. "fp16 attention" \
+when the project runs fp16). kind=technique_mode when it is another method the project lacks (e.g. "the same \
+speculative decoder without DLoop", "full KV cache with standard batching"): the coding agent will implement BOTH \
+behind the one flag, selected by param mode="baseline" vs mode="method", so the claim check compares like with like. \
+Never compare a method against plain decoding when the paper compared it against a stronger baseline.
+- paper_workload: 3-6 prompts in the style of the paper's evaluation data (write real prompts, e.g. GSM8K-style \
+word problems, HumanEval-style function stubs, MT-Bench-style questions, long documents), with max_new_tokens and \
+concurrency close to the paper's regime (max_new_tokens ≤ 256, concurrency ≤ 8, prompts × max_new_tokens ≤ 1200). \
+Use long_context_tokens (e.g. 4000) only when the paper's effect depends on long prefixes (the bench then generates \
+synthetic documents and asks prompts[0] about them); else 0. "matches" names the paper benchmarks mirrored.
+- mechanism: 1-4 counters the technique must record (snake_case names, e.g. verifications, drafted_tokens, \
+accepted_tokens, evicted_entries, cache_hits) that show whether the paper's mechanism is happening, each with the \
+paper's reported value when it gives one (e.g. "34% fewer verifications than block drafting").
+- knobs: 0-3 hyperparameters the paper tunes (block size, threshold, budget...), snake_case, with up to 3 candidate \
+values each as strings, the paper's setting FIRST; they are swept briefly before the measured runs.
+- fidelity: high/medium/low — how faithfully this project can reproduce the paper's setup — and the concrete gaps \
+(different model family/size, missing trained draft heads, no fused kernels, hardware...).
+- workload (above) is the PROJECT workload for the adoption check; primary_metric is the paper's headline metric.
 Use precise technical language."""
 
 
@@ -150,6 +233,7 @@ def plan_experiment(
     if llm:
         schema_properties = {
             **PLAN_SCHEMA_BASE,
+            **PROTOCOL_SCHEMA,
             "primary_metric": {"type": "string", "enum": list(metrics) or [primary]},
             "workload": {"type": "string", "enum": workloads},
         }
@@ -168,7 +252,11 @@ def plan_experiment(
                 f"- claimed effects: {card.get('effects')}",
                 f"- paper setup: {card.get('paper_setup')}",
                 f"- evidence: {card.get('evidence')}",
+                f"- prerequisites (from the paper): {card.get('prerequisites')}",
                 f"- risks: {card.get('risks')}",
+                "",
+                "Paper text around the method (for the exact baseline, benchmarks and hyperparameters):",
+                (claim.get("method_excerpt") or "")[:6000],
                 "",
                 f"Project profile: name={profile.get('name')}; description={profile.get('description')}",
                 f"hardware={profile.get('hardware')}; models={profile.get('models')}",
@@ -205,6 +293,7 @@ def plan_experiment(
         except LLMError as exc:
             logger.warning("LLM planning failed, using a template spec: %s", exc)
 
+    _normalize_protocol(draft)
     spec = ExperimentSpec(
         **draft,
         direction=_direction(metrics.get(draft["primary_metric"], {})),
@@ -218,9 +307,31 @@ def plan_experiment(
     if spec.lossless:
         spec.guardrails.min_output_agreement = 0.95
     existing = {t.get("name") for t in profile.get("techniques") or []}
+    base_name, suffix = spec.flag_name, 2
     while spec.flag_name in existing:
-        spec.flag_name = f"{spec.flag_name}_v2"[:41]
+        tail = f"_v{suffix}"
+        spec.flag_name = base_name[: 41 - len(tail)] + tail
+        suffix += 1
+    if not spec.knobs:
+        spec.tune = False
     return spec.model_dump()
+
+
+def _normalize_protocol(draft: dict[str, Any]) -> None:
+    """Clamp the paper workload to the round budget and drop empty sections."""
+    workload = draft.get("paper_workload")
+    if isinstance(workload, dict):
+        prompts = [p for p in workload.get("prompts") or [] if str(p).strip()]
+        if not prompts:
+            draft["paper_workload"] = None
+        else:
+            workload["max_new_tokens"] = max(16, min(int(workload.get("max_new_tokens") or 128), 256))
+            workload["concurrency"] = max(1, min(int(workload.get("concurrency") or 1), 8))
+            workload["long_context_tokens"] = max(0, min(int(workload.get("long_context_tokens") or 0), 16000))
+            keep = max(1, min(len(prompts), MAX_ROUND_TOKENS // workload["max_new_tokens"]))
+            workload["prompts"] = prompts[:keep]
+    draft["knobs"] = [k for k in draft.get("knobs") or [] if k.get("name") and k.get("candidates")][:3]
+    draft["mechanism"] = [m for m in draft.get("mechanism") or [] if m.get("name")][:4]
 
 
 def _flag_from(text: str) -> str:

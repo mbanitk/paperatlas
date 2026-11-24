@@ -44,6 +44,26 @@
     </div>
   </div>
 
+  {% if v.comparison %}<p class="muted">Claim check: the method vs <b>{{ v.comparison.baseline }}</b>
+    {%- if spec.paper_baseline and spec.paper_baseline.description %} ({{ spec.paper_baseline.description }}){% endif %},
+    on the <b>{{ v.comparison.workload }}</b> workload{% if spec.paper_workload and spec.paper_workload.matches %} (mirrors {{ spec.paper_workload.matches }}){% endif %}.</p>{% endif %}
+
+  {% if v.analysis %}<div class="card">
+    <div class="muted">Diagnosis{% if v.analysis.model %} · {{ v.analysis.model }}{% endif %}</div>
+    <div><b>{{ v.analysis.diagnosis|replace('_', ' ') }}</b> — {{ v.analysis.summary }}</div>
+    {% if v.analysis.evidence %}<ul>{% for item in v.analysis.evidence %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
+    {% if v.analysis.paper_comparison %}<div class="muted">{{ v.analysis.paper_comparison }}</div>{% endif %}
+    {% if v.analysis.next_changes %}<div class="muted">Next step: {{ v.analysis.next_changes }}</div>{% endif %}
+  </div>{% endif %}
+
+  {% if v.adoption %}<div class="grid">
+    <div class="card">
+      <div class="muted">Adoption check · vs {{ project.name }} default on {{ v.adoption.workload.name if v.adoption.workload else spec.workload }}</div>
+      <div class="big">{% if v.adoption.median_delta_pct is not none %}{{ '%+.1f'|format(v.adoption.median_delta_pct) }}%{% else %}—{% endif %}</div>
+      <div class="muted"><span class="badge">{{ v.adoption.verdict|replace('_', ' ') }}</span> {{ v.adoption.reason }}</div>
+    </div>
+  </div>{% endif %}
+
   {% if effect_chart %}<figure>{{ effect_chart|safe }}
     <figcaption>The dot is the median change across paired rounds; the shaded band is the 95% confidence interval.
     Right of 0% is better. The claim counts as reproduced when the band is above zero and the dot reaches the target.</figcaption>
@@ -63,7 +83,7 @@
   <dl>
     <dt>Hypothesis</dt><dd>{{ spec.hypothesis }}</dd>
     <dt>Flag</dt><dd><code>{{ spec.flag_name }}</code> on branch <code>{{ e.branch }}</code></dd>
-    <dt>Model · workload</dt><dd>{{ v.model.id if v.model else spec.model }} · {{ spec.workload }} · {{ spec.rounds }} rounds/arm (ABBA, {{ spec.warmup }} warm-up)</dd>
+    <dt>Model · workload</dt><dd>{{ v.model.id if v.model else spec.model }} · {{ v.workload.name if v.workload else spec.workload }} · {{ spec.rounds }} rounds/arm (ABBA, {{ spec.warmup }} warm-up)</dd>
     <dt>Paper vs project</dt><dd>{{ spec.paper_vs_project or '—' }}</dd>
   </dl>
 
@@ -81,6 +101,39 @@
     <figcaption>Baseline and variant ran back to back in alternating order (ABBA) on the same machine, so each
     column is a fair comparison. A consistent gap across all columns means the effect is real, not noise.</figcaption>
   </figure>{% endif %}
+
+  {% if v.mechanism and v.mechanism.rows %}<h2>Mechanism</h2>
+  <p class="muted">Counters the technique recorded during measured rounds, per 1,000 generated tokens — they show whether
+  the paper's mechanism is actually happening, independent of the end-to-end number.</p>
+  <table>
+    <tr><th>Counter</th><th>Baseline</th><th>Method</th><th>Change</th><th>Paper</th></tr>
+    {% for row in v.mechanism.rows %}
+    <tr><td>{{ row.name }}{% if row.meaning %}<div class="muted">{{ row.meaning }}</div>{% endif %}</td>
+      <td>{{ '%.1f'|format(row.baseline_per_1k_tokens) if row.baseline_per_1k_tokens is not none else '—' }}</td>
+      <td>{{ '%.1f'|format(row.variant_per_1k_tokens) if row.variant_per_1k_tokens is not none else 'missing' }}</td>
+      <td>{{ '%+.1f'|format(row.change_pct) ~ '%' if row.change_pct is not none else '—' }}</td>
+      <td>{{ row.paper_value or '—' }}</td></tr>
+    {% endfor %}
+  </table>{% endif %}
+
+  {% if v.tuning and v.tuning.trials %}<h2>Tuning</h2>
+  <table>
+    <tr><th>Config</th><th>Baseline {{ spec.primary_metric }}</th><th>Method {{ spec.primary_metric }}</th></tr>
+    {% for t in v.tuning.trials %}<tr><td>{% for k, val in t.config.items() %}{{ k }}={{ val }} {% endfor %}</td>
+      <td>{{ '%.2f'|format(t.baseline) if t.baseline is not none else '—' }}</td><td>{{ '%.2f'|format(t.variant) if t.variant is not none else '—' }}</td></tr>{% endfor %}
+  </table>
+  <p class="muted">Chosen — method: {{ v.tuning.variant }}{% if v.tuning.baseline %}; paper baseline: {{ v.tuning.baseline }}{% endif %}</p>{% endif %}
+
+  {% if v.iterations and v.iterations|length > 1 %}<h2>Iterations</h2>
+  <table>
+    <tr><th>#</th><th>Claim check</th><th>Change</th><th>Diagnosis</th><th>Next change</th></tr>
+    {% for it in v.iterations %}<tr><td>{{ it.iteration }}</td><td>{{ it.verdict|replace('_', ' ') }}</td>
+      <td>{{ '%+.1f'|format(it.median_delta_pct) ~ '%' if it.median_delta_pct is not none else '—' }}</td>
+      <td>{{ (it.diagnosis or '')|replace('_', ' ') }}</td><td>{{ it.next_changes or '' }}</td></tr>{% endfor %}
+  </table>{% endif %}
+
+  {% if spec.fidelity and spec.fidelity.gaps %}<h2>Fidelity to the paper · {{ spec.fidelity.level }}</h2>
+  <ul>{% for gap in spec.fidelity.gaps %}<li>{{ gap }}</li>{% endfor %}</ul>{% endif %}
 
   <h2>Quality guardrails</h2>
   <dl>
