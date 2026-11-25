@@ -1,18 +1,29 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router'
-import { useExperiments, useProjects } from '../api/queries'
+import { useExperimentSearch, useProjects } from '../api/queries'
 import type { ExperimentSummary } from '../api/types'
 import { Delta, OutcomeBadge, StatusChip } from '../components/Badges'
 import { FlaskIcon, RerunIcon, SparkIcon } from '../components/Icons'
 import { MiniStages } from '../components/Stepper'
 import { DataTable, type Column } from '../components/Table'
 import { InfoPopover } from '../components/Tooltip'
-import { Banner, EmptyState, ErrorState, MathText, PageHeader, RelativeTime, Skeleton, TabPanel, Tabs, cx } from '../components/ui'
-import { formatSigned } from '../lib/format'
+import { Banner, Button, EmptyState, ErrorState, MathText, PageHeader, Pagination, RelativeTime, Skeleton, TabPanel, Tabs, cx, useDebounced } from '../components/ui'
+import {
+  EMPTY_FILTERS,
+  TAB_LABEL,
+  hasActiveFilters,
+  parseFilters,
+  parseTab,
+  searchParams,
+  writeFilters,
+  type ExperimentFilters,
+  type ExperimentTab,
+} from '../lib/experimentFilters'
+import { formatSigned, pluralize } from '../lib/format'
 import { recommendForSummary, summarizeFailure } from '../lib/protocol'
 import { GATE, MODE } from '../lib/semantics'
 import { stagesForStatus } from '../lib/stages'
-
-type Tab = 'needs_you' | 'active' | 'all'
+import { ExperimentListFilters } from './experiment/ListFilters'
 
 function TitleCell({ experiment }: { experiment: ExperimentSummary }) {
   const mode = experiment.mode && experiment.mode !== 'single' ? MODE[experiment.mode]?.label : null
@@ -126,41 +137,100 @@ const COLUMNS: Column<ExperimentSummary>[] = [
   { key: 'next', header: 'Next step', srOnlyHeader: true, cell: (row) => <NextStep experiment={row} />, align: 'right', cardSlot: 'footer', className: 'align-top' },
 ]
 
+const LIMIT = 50
+
 export default function Experiments() {
   const [params, setParams] = useSearchParams()
-  const tab = (params.get('tab') as Tab) || 'needs_you'
+  const tab = parseTab(params)
+  const filters = useMemo(() => parseFilters(params), [params])
+  const offset = Math.max(0, Math.floor(Number(params.get('offset')) || 0))
   const projects = useProjects()
   const projectId = Number(params.get('project')) || undefined
   const created = (params.get('new') ?? '').split(',').filter(Boolean).map(Number)
 
-  const needs = useExperiments({ status: 'needs_you', project_id: projectId })
-  const active = useExperiments({ status: 'active', project_id: projectId })
-  const all = useExperiments({ project_id: projectId })
-  const current = tab === 'needs_you' ? needs : tab === 'active' ? active : all
-  const waiting = needs.data?.length ?? 0
+  const results = useExperimentSearch(searchParams(filters, tab, { project_id: projectId, limit: LIMIT, offset }))
+  const data = results.data
+  const overall = data?.overall
+  const filtered = hasActiveFilters(filters)
 
-  const setTab = (value: Tab) =>
+  const setFilters = useCallback(
+    (next: ExperimentFilters) => setParams((prev) => writeFilters(prev, next), { replace: true }),
+    [setParams],
+  )
+  const [search, setSearch] = useState(filters.q)
+  const q = useDebounced(search.trim(), 350)
+  // Push only a changed search (setParams changes identity with every URL change, so it can't be the trigger).
+  const pushedQ = useRef(q)
+  useEffect(() => {
+    if (pushedQ.current === q) return
+    pushedQ.current = q
+    setParams(
+      (prev) => {
+        const current = parseFilters(prev)
+        return current.q === q ? prev : writeFilters(prev, { ...current, q })
+      },
+      { replace: true },
+    )
+  }, [q])
+  // Back/forward or "Clear all" changed the URL's search (not our own push): show it in the box.
+  useEffect(() => {
+    if (filters.q === pushedQ.current) return
+    pushedQ.current = filters.q
+    setSearch(filters.q)
+  }, [filters.q])
+  const clearAll = () => {
+    setSearch('')
+    setFilters(EMPTY_FILTERS)
+  }
+
+  const setTab = (value: ExperimentTab) =>
     setParams((prev) => {
       const next = new URLSearchParams(prev)
       next.set('tab', value)
+      next.delete('offset')
       return next
     })
+  const setOffset = (value: number) =>
+    setParams((prev) => {
+      const next = new URLSearchParams(prev)
+      if (value > 0) next.set('offset', String(value))
+      else next.delete('offset')
+      return next
+    })
+  // A shared link can point past the last page once experiments finish or filters narrow: go back to page 1.
+  useEffect(() => {
+    if (data && offset > 0 && (offset >= data.total || data.total <= LIMIT)) setOffset(0)
+  }, [data, offset])
+
+  const scope = data?.facets.scope
+  const waiting = overall?.needs_you ?? 0
+  const emptyMessage = (() => {
+    if (!filtered) {
+      return tab === 'needs_you'
+        ? { title: 'No gates are waiting for you', body: 'Experiments show up here when they need a decision or are running.' }
+        : tab === 'active'
+          ? { title: 'Nothing in progress', body: 'Experiments show up here when they need a decision or are running.' }
+          : { title: 'No experiments yet', body: null }
+    }
+    const elsewhere = tab !== 'all' && scope && scope.all > 0
+    return {
+      title: tab === 'all' ? 'No experiments match these filters' : `No experiments in ${TAB_LABEL[tab]} match these filters`,
+      body: elsewhere ? `${pluralize(scope.all, 'experiment')} in All ${scope.all === 1 ? 'matches' : 'match'} them.` : 'Try removing a filter.',
+    }
+  })()
 
   return (
     <>
       <PageHeader
         title="Experiments"
         answer={
-          needs.data
-            ? [
-                waiting ? `${waiting} experiment${waiting > 1 ? 's need' : ' needs'} your decision` : 'Nothing is waiting for you',
-                active.data ? `${Math.max(0, active.data.length - waiting)} in progress` : null,
-              ]
-                .filter(Boolean)
-                .join(' · ')
+          overall
+            ? [waiting ? `${waiting} experiment${waiting > 1 ? 's need' : ' needs'} your decision` : 'Nothing is waiting for you', `${Math.max(0, overall.active - waiting)} in progress`].join(' · ')
             : undefined
         }
-        description="Each experiment implements one paper’s claim behind a feature flag, A/B tests it on your project, and compares the result with the paper."
+        description={
+          <span className="max-sm:hidden">Each experiment implements one paper’s claim behind a feature flag, A/B tests it on your project, and compares the result with the paper.</span>
+        }
         actions={
           <>
             {(projects.data?.length ?? 0) > 1 && (
@@ -177,6 +247,7 @@ export default function Experiments() {
                       const next = new URLSearchParams(prev)
                       if (event.target.value) next.set('project', event.target.value)
                       else next.delete('project')
+                      next.delete('offset')
                       return next
                     })
                   }
@@ -210,47 +281,80 @@ export default function Experiments() {
           </Banner>
         </div>
       )}
-      <Tabs<Tab>
+      <Tabs<ExperimentTab>
         id="experiment-tabs"
-        label="Experiment filters"
+        label="Experiment lists"
         value={tab}
         onChange={setTab}
         tabs={[
-          { value: 'needs_you', label: 'Needs you', count: needs.data?.length, attention: true },
-          { value: 'active', label: 'Active', count: active.data?.length },
-          { value: 'all', label: 'All', count: all.data?.length },
+          { value: 'needs_you', label: TAB_LABEL.needs_you, count: scope?.needs_you, attention: true },
+          { value: 'active', label: TAB_LABEL.active, count: scope?.active },
+          { value: 'all', label: TAB_LABEL.all, count: scope?.all },
         ]}
       />
       <TabPanel tabsId="experiment-tabs" value={tab} className="mt-4">
-        {current.isLoading ? (
+        <ExperimentListFilters
+          filters={filters}
+          onChange={setFilters}
+          onClear={clearAll}
+          search={search}
+          onSearch={setSearch}
+          facets={data?.facets}
+          total={data?.total}
+          tab={tab}
+          onShowAll={() => setTab('all')}
+        />
+        {/* Always present so screen readers hear the new count, including "0 experiments match". */}
+        <p className={cx('mb-2 text-xs text-muted', !data?.items.length && 'sr-only')} aria-live="polite">
+          {data && (
+            <>
+              {filtered ? `${pluralize(data.total, 'experiment')} ${data.total === 1 ? 'matches' : 'match'}` : pluralize(data.total, 'experiment')}
+              {tab !== 'all' && ` in ${TAB_LABEL[tab]}`}
+              {data.total > data.items.length && ` · showing ${offset + 1}–${offset + data.items.length}`}
+              {results.isFetching && results.isPlaceholderData && ' · updating…'}
+            </>
+          )}
+        </p>
+        {results.isLoading ? (
           <Skeleton variant="row" count={5} />
-        ) : current.isError ? (
-          <ErrorState error={current.error} onRetry={() => current.refetch()} />
-        ) : !current.data?.length ? (
+        ) : results.isError ? (
+          <ErrorState error={results.error} onRetry={() => results.refetch()} />
+        ) : !data?.items.length ? (
           <div className="card">
             <EmptyState
               icon={<FlaskIcon size={28} />}
-              title={tab === 'needs_you' ? 'No gates are waiting for you' : tab === 'active' ? 'Nothing in progress' : 'No experiments yet'}
+              title={emptyMessage.title}
+              action={
+                filtered ? (
+                  tab !== 'all' && scope && scope.all > 0 ? (
+                    <Button onClick={() => setTab('all')}>Show {scope.all} in All</Button>
+                  ) : (
+                    <Button onClick={clearAll}>Clear all filters</Button>
+                  )
+                ) : undefined
+              }
+              secondaryAction={filtered && tab !== 'all' && scope && scope.all > 0 ? <Button variant="invisible" onClick={clearAll}>Clear all filters</Button> : undefined}
             >
-              {tab === 'all' ? (
+              {emptyMessage.body ?? (
                 <>
                   Pick a claim on the <Link to="/recommendations">Recommendations</Link> page to start one.
                 </>
-              ) : (
-                'Experiments show up here when they need a decision or are running.'
               )}
             </EmptyState>
           </div>
         ) : (
-          <DataTable
-            label="Experiments"
-            rows={current.data}
-            rowKey={(row) => row.id}
-            rowHref={(row) => `/experiments/${row.id}`}
-            columns={COLUMNS}
-            rowClassName={(row) => (created.includes(row.id) ? 'bg-info-subtle/60' : undefined)}
-            className="md:overflow-hidden md:rounded-lg md:border md:border-line md:bg-canvas"
-          />
+          <>
+            <DataTable
+              label="Experiments"
+              rows={data.items}
+              rowKey={(row) => row.id}
+              rowHref={(row) => `/experiments/${row.id}`}
+              columns={COLUMNS}
+              rowClassName={(row) => (created.includes(row.id) ? 'bg-info-subtle/60' : undefined)}
+              className={cx('md:overflow-hidden md:rounded-lg md:border md:border-line md:bg-canvas', results.isPlaceholderData && 'opacity-70')}
+            />
+            <Pagination total={data.total} limit={LIMIT} offset={offset} onChange={setOffset} />
+          </>
         )}
       </TabPanel>
     </>

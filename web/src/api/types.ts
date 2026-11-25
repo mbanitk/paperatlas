@@ -575,6 +575,37 @@ export interface ExperimentSummary {
   adoption_median_delta_pct?: number | null
 }
 
+/** One value of a list filter and how many experiments it would match (given the other filters). */
+export interface FacetCount {
+  value: string
+  count: number
+}
+
+/** Experiments per list tab: needs you (a gate waits), active (not finished) and all. */
+export interface ExperimentScopeCounts {
+  needs_you: number
+  active: number
+  all: number
+}
+
+/** `GET /lab/experiments/search`: one page of filtered experiments, the total and the facet counts. */
+export interface ExperimentSearchResult {
+  total: number
+  limit: number
+  offset: number
+  items: ExperimentSummary[]
+  facets: {
+    /** Matches per tab with every other filter applied. */
+    scope: ExperimentScopeCounts
+    status: FacetCount[]
+    verdict: FacetCount[]
+    adoption: FacetCount[]
+    category: FacetCount[]
+  }
+  /** Per tab with no filters (project only). */
+  overall: ExperimentScopeCounts
+}
+
 export interface Guardrails {
   max_exact_match_drop?: number
   min_output_agreement?: number | null

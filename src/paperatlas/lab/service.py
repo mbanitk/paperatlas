@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
-from sqlalchemy import func, select, update
+from sqlalchemy import case, func, or_, select, update
 
 from paperatlas.db.engine import session_scope
 from paperatlas.db.schema import (
@@ -28,6 +29,8 @@ from paperatlas.db.schema import (
 )
 from paperatlas.distill.relations import paper_concept_map, prerequisite_chain, related_for_claims
 from paperatlas.lab.events import emit, enqueue, event_dict, events_since
+from paperatlas.lab.judge import ADOPTION_VERDICTS as ADOPTION_RENAMES
+from paperatlas.lab.judge import VERDICTS
 from paperatlas.lab.planner import EDITABLE_FIELDS, apply_overrides
 from paperatlas.lab.protocol import method_excerpt
 
@@ -783,6 +786,180 @@ def list_experiments(project_id: Optional[int] = None, status: Optional[str] = N
         elif status:
             query = query.where(Experiment.status == status)
         return [experiment_summary(*row) for row in session.execute(query).all()]
+
+
+# ---- experiment list: filters, facet counts, pages ----------------------------------------------------
+
+ALL_STATUSES = (*ACTIVE_STATUSES, *TERMINAL_STATUSES)
+EXPERIMENT_SCOPES = {"needs_you": tuple(GATE_OF_STATUS), "active": ACTIVE_STATUSES}
+CLAIM_VERDICTS = VERDICTS
+# The adoption check reuses the claim-check verdicts, renamed (reproduced → worth_adopting, partial → small_gain).
+ADOPTION_VERDICTS = tuple(ADOPTION_RENAMES.get(verdict, verdict) for verdict in VERDICTS)
+CHANGE_DIRECTIONS = ("gain", "loss")
+CHANGE_CHECKS = ("claim", "adoption")
+MAX_PAGE = 200
+
+
+def _adoption_verdict():
+    return Verdict.details["adoption"]["verdict"].astext
+
+
+def _adoption_delta():
+    value = Verdict.details["adoption"]["median_delta_pct"]
+    return case((func.jsonb_typeof(value) == "number", value.as_float()))
+
+
+def _check_values(name: str, values: Sequence[str], allowed: Sequence[str]) -> list[str]:
+    unknown = sorted(set(values) - set(allowed))
+    if unknown:
+        raise ServiceError(f"unknown {name}: {', '.join(unknown)} (expected one of {', '.join(allowed)})")
+    return list(dict.fromkeys(values))
+
+
+def _search_condition(q: str):
+    """Every word must match the title, technique, paper (title or id) or flag; `#12` / `12` also match
+    experiment or claim 12 (`#12` only those)."""
+    conditions = []
+    for word in q.split()[:8]:
+        text = or_(
+            *(
+                column.icontains(word.lstrip("#") if word.startswith("#") and len(word) > 1 else word, autoescape=True)
+                for column in (Concept.name, Claim.technique, Paper.title, Paper.paper_id, Experiment.flag_name)
+            )
+        )
+        number = re.fullmatch(r"#?(\d{1,18})", word)
+        if number:
+            ids = or_(Experiment.id == int(number.group(1)), Experiment.claim_id == int(number.group(1)))
+            conditions.append(ids if word.startswith("#") else or_(ids, text))
+        else:
+            conditions.append(text)
+    return conditions
+
+
+def search_experiments(
+    project_id: Optional[int] = None,
+    scope: Optional[str] = None,
+    q: Optional[str] = None,
+    statuses: Sequence[str] = (),
+    verdicts: Sequence[str] = (),
+    adoption: Sequence[str] = (),
+    categories: Sequence[str] = (),
+    change: Optional[str] = None,
+    min_change_pct: Optional[float] = None,
+    change_of: str = "claim",
+    limit: int = 50,
+    offset: int = 0,
+) -> dict[str, Any]:
+    """One page of experiments (newest first) matching every filter, the total, and facet counts.
+
+    Filters combine with AND; the values within one filter with OR. `scope` is the list tab (needs_you, active or
+    all). The measured change applies to the claim check (`median_delta_pct`) or the adoption check
+    (`adoption_median_delta_pct`): `change` keeps gains (> 0) or losses (< 0) only and `min_change_pct` sets the
+    minimum size (with a direction, at least +x% or −x%; alone, x% either way); experiments without that measured
+    change never match. Each facet counts the matches of every *other* filter, so its numbers say what picking
+    one more value would show.
+    """
+    if scope in (None, "", "all"):
+        scope = None
+    elif scope not in EXPERIMENT_SCOPES:
+        raise ServiceError(f"unknown scope: {scope} (expected needs_you, active or all)")
+    statuses = _check_values("status", statuses, ALL_STATUSES)
+    verdicts = _check_values("claim check outcome", verdicts, CLAIM_VERDICTS)
+    adoption = _check_values("adoption check outcome", adoption, ADOPTION_VERDICTS)
+    categories = list(dict.fromkeys(c for c in categories if c))
+    if change not in (None, "", *CHANGE_DIRECTIONS):
+        raise ServiceError(f"unknown change: {change} (expected gain or loss)")
+    if change_of not in CHANGE_CHECKS:
+        raise ServiceError(f"unknown change_of: {change_of} (expected claim or adoption)")
+    if min_change_pct is not None and min_change_pct < 0:
+        raise ServiceError("min_change must be ≥ 0 (it is the size of the change; use change=loss for losses)")
+    limit = max(1, min(int(limit), MAX_PAGE))
+    offset = max(0, int(offset))
+
+    delta = Verdict.median_delta_pct if change_of == "claim" else _adoption_delta()
+    conditions: dict[str, list] = {}
+    if scope:
+        conditions["scope"] = [Experiment.status.in_(EXPERIMENT_SCOPES[scope])]
+    if q and q.strip():
+        conditions["q"] = _search_condition(q.strip())
+    if statuses:
+        conditions["status"] = [Experiment.status.in_(statuses)]
+    if verdicts:
+        conditions["verdict"] = [Verdict.verdict.in_(verdicts)]
+    if adoption:
+        conditions["adoption"] = [_adoption_verdict().in_(adoption)]
+    if categories:
+        conditions["category"] = [Claim.category.in_(categories)]
+    if change or min_change_pct is not None:
+        size = min_change_pct or 0
+        if change == "gain":
+            conditions["change"] = [delta > 0, delta >= size]
+        elif change == "loss":
+            conditions["change"] = [delta < 0, delta <= -size]
+        else:
+            conditions["change"] = [delta.is_not(None), func.abs(delta) >= size]
+    project = [Experiment.project_id == project_id] if project_id else []
+
+    def where(*, without: Optional[str] = None) -> list:
+        return [*project, *(c for name, group in conditions.items() if name != without for c in group)]
+
+    def joined(query):
+        return (
+            query.select_from(Experiment)
+            .join(Claim, Claim.id == Experiment.claim_id)
+            .join(Concept, Concept.id == Claim.concept_id)
+            .join(Paper, Paper.paper_id == Claim.paper_id)
+            .outerjoin(Verdict, Verdict.experiment_id == Experiment.id)
+        )
+
+    def facet(column, name: str, order: Optional[Sequence[str]] = None) -> list[dict[str, Any]]:
+        # Group a subquery's column: JSON paths are bound parameters, so the same expression in SELECT and GROUP BY
+        # would not be recognised as one.
+        values = joined(select(column.label("value"))).where(*where(without=name)).subquery()
+        rows = session.execute(select(values.c.value, func.count()).group_by(values.c.value)).all()
+        counts = {value: count for value, count in rows if value is not None}
+        if order is not None:
+            values = [v for v in order if v in counts] + sorted(v for v in counts if v not in order)
+        else:
+            values = sorted(counts, key=lambda v: (-counts[v], v))
+        return [{"value": value, "count": counts[value]} for value in values]
+
+    def scope_counts(filters: list) -> dict[str, int]:
+        needs, active, total = session.execute(
+            joined(
+                select(
+                    func.count().filter(Experiment.status.in_(EXPERIMENT_SCOPES["needs_you"])),
+                    func.count().filter(Experiment.status.in_(EXPERIMENT_SCOPES["active"])),
+                    func.count(),
+                )
+            ).where(*filters)
+        ).one()
+        return {"needs_you": needs, "active": active, "all": total}
+
+    with session_scope() as session:
+        total = session.scalar(joined(select(func.count())).where(*where()))
+        rows = session.execute(
+            joined(select(Experiment, Claim, Concept, Paper, Verdict))
+            .where(*where())
+            .order_by(Experiment.id.desc())
+            .limit(limit)
+            .offset(offset)
+        ).all()
+        return {
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "items": [experiment_summary(*row) for row in rows],
+            "facets": {
+                "scope": scope_counts(where(without="scope")),
+                "status": facet(Experiment.status, "status", ALL_STATUSES),
+                "verdict": facet(Verdict.verdict, "verdict", CLAIM_VERDICTS),
+                "adoption": facet(_adoption_verdict(), "adoption", ADOPTION_VERDICTS),
+                "category": facet(Claim.category, "category"),
+            },
+            # Unfiltered (project only): what needs you and what is running, whatever the filters.
+            "overall": scope_counts(project),
+        }
 
 
 def get_experiment(experiment_id: int) -> dict[str, Any]:
