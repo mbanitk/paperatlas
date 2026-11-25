@@ -444,6 +444,56 @@ def test_restart_requeues_only_jobs_that_failed_in_the_shutdown(db):
     assert states == [("queued", True, None), ("failed", None, "real bug"), ("failed", None, "real bug")]
 
 
+def test_daily_scan_runs_only_the_scan_job(db, demo_repo, monkeypatch):
+    from paperatlas.db.engine import session_scope
+    from paperatlas.db.schema import Job, Triage
+    from paperatlas.lab.events import enqueue
+    from paperatlas.r2e import daily
+    from paperatlas.services import worker
+    from sqlalchemy import update
+
+    orchestrator.setup_checkpointer()
+    project_id = register_project(demo_repo)["id"]
+    other = enqueue("distill", {})
+
+    def fake_triage(payload, job):
+        with session_scope() as session:
+            session.execute(update(Triage).where(Triage.id == payload["triage_id"]).values(status="awaiting_pick"))
+        return {}
+
+    monkeypatch.setitem(worker.HANDLERS, "triage.run", fake_triage)
+    assert daily.scan(project_id, None, 5, print) == "awaiting_pick"
+    with session_scope() as session:
+        assert session.get(Job, other).status == "queued"  # left for the worker
+
+
+def test_daily_run_starts_services_and_a_batch_only_when_needed(db, monkeypatch):
+    from datetime import UTC, datetime
+
+    from paperatlas.db.engine import session_scope
+    from paperatlas.db.schema import Worker
+    from paperatlas.lab import batch
+    from paperatlas.r2e import daily
+
+    spawned = []
+    monkeypatch.setattr(daily, "_spawn", lambda args, log: spawned.append(args) or 4242)
+    monkeypatch.setattr(batch, "pending_claims", lambda *args, **kwargs: [7, 8])
+    assert daily.ensure_services(print, wait_s=0) == "started"
+    with session_scope() as session:
+        session.add(Worker(id="live:1", last_seen_at=datetime.now(UTC)))
+    assert daily.ensure_services(print) == "running"
+
+    with batch.batch_lock(1) as held:
+        said = []
+        assert held and batch.run_batch(1, say=said.append) == [] and "already running" in said[0]
+        assert daily.ensure_batch("lab", 1, 3, "marginal", print) == "running"
+    assert daily.ensure_batch("lab", 1, 3, "marginal", print) == "started"
+    monkeypatch.setattr(batch, "pending_claims", lambda *args, **kwargs: [])
+    assert daily.ensure_batch("lab", 1, 3, "marginal", print) == "idle"
+    batch_args = ["r2e", "batch", "--project", "lab", "--retest", "--parallel", "3", "--min-likelihood", "marginal"]
+    assert spawned == [["services", "up"], batch_args]
+
+
 def test_restart_resumes_experiments_interrupted_by_a_shutdown(lab, monkeypatch):
     from datetime import UTC, datetime, timedelta
 
