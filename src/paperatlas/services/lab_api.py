@@ -248,6 +248,16 @@ def experiment_log(experiment_id: int) -> dict[str, Any]:
     return service.experiment_log(experiment_id)
 
 
+@app.get("/experiments/{experiment_id}/changes", tags=["experiments"])
+def experiment_changes(
+    experiment_id: int,
+    iteration: Optional[int] = Query(None, ge=1, description="a saved iteration; default: the measured (kept) one"),
+    patch: bool = Query(True, description="include each file's diff (truncated for large changes)"),
+) -> dict[str, Any]:
+    """The code this experiment changed in the target project, per file, with the diff."""
+    return service.experiment_changes(experiment_id, iteration, patch)
+
+
 @app.get("/experiments/{experiment_id}/report", tags=["experiments"])
 def experiment_report(experiment_id: int) -> FileResponse:
     return FileResponse(service.report_path(experiment_id), media_type="text/html")

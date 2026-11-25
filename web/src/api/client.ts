@@ -2,6 +2,7 @@ import type {
   ClaimDetail,
   Claim,
   Experiment,
+  ExperimentChanges,
   ExperimentLog,
   ExperimentSpec,
   ExperimentSummary,
@@ -198,6 +199,8 @@ export const api = {
     rerun: (id: number, body: RerunBody) => post<Experiment>(`/lab/experiments/${id}/rerun`, body),
     events: (id: number, after = 0) => get<LabEvent[]>(`/lab/experiments/${id}/events${buildQuery({ after })}`),
     log: (id: number) => get<ExperimentLog>(`/lab/experiments/${id}/log`),
+    changes: (id: number, params: { iteration?: number; patch?: boolean } = {}, signal?: AbortSignal) =>
+      get<ExperimentChanges>(`/lab/experiments/${id}/changes${buildQuery({ iteration: params.iteration, patch: params.patch ?? true })}`, signal),
     reportUrl: (id: number) => `${API_BASE}/lab/experiments/${id}/report`,
     activity: (limit = 50) => get<LabEvent[]>(`/lab/activity${buildQuery({ limit })}`),
     jobs: (limit = 50, status?: string) => get<Job[]>(`/lab/jobs${buildQuery({ limit, status })}`),

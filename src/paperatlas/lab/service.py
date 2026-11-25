@@ -859,6 +859,75 @@ def get_experiment(experiment_id: int) -> dict[str, Any]:
         return data
 
 
+NOT_BUILT_STATUSES = ("blocked", "queued", "planning", "awaiting_approval", "approving", "rejected")
+
+
+def _changes_unavailable_reason(experiment: dict[str, Any]) -> str:
+    status = experiment["status"]
+    if status == "rejected":
+        return "The test plan was rejected, so nothing was built."
+    if status in NOT_BUILT_STATUSES:
+        return "Nothing has been built yet: the coding agent starts after the test plan is approved (Gate 2)."
+    if not experiment.get("branch"):
+        return "Nothing was built: the experiment stopped before the coding agent started."
+    return (
+        "The experiment's branch and worktree were removed before its diff was saved, so its code changes can't be "
+        "shown. The results and the build log are kept."
+    )
+
+
+def experiment_changes(experiment_id: int, iteration: Optional[int] = None, include_patch: bool = True) -> dict[str, Any]:
+    """The code an experiment changed in the target project: the saved diff of the measured (kept) iteration, or
+    of ``iteration``; while it's being built (or for experiments from before diffs were saved) the branch as it is
+    now, read from git."""
+    from paperatlas.lab import changes as code_changes
+    from paperatlas.lab.workspace import WorkspaceError
+
+    context = experiment_context(experiment_id)
+    experiment = context["experiment"]
+    build = experiment.get("build") or {}
+    stored = code_changes.stored_iterations(experiment_id)
+    kept = build.get("kept_iteration") or (build.get("code_changes") or {}).get("iteration")
+    iterations = []
+    for number in stored:
+        summary = code_changes.load_summary(experiment_id, number) or {}
+        iterations.append(
+            {
+                "iteration": number,
+                "files_changed": summary.get("files_changed"),
+                "additions": summary.get("additions"),
+                "deletions": summary.get("deletions"),
+                "head": summary.get("head"),
+                "summary": summary.get("summary"),
+            }
+        )
+    common = {"experiment_id": experiment_id, "status": experiment["status"], "kept_iteration": kept, "iterations": iterations}
+    if iteration is not None and iteration not in stored:
+        raise ServiceError(f"no saved diff for iteration {iteration} of experiment {experiment_id}", 404)
+    building = experiment["status"] == "building"
+    target = iteration
+    if target is None and not building:
+        current = build.get("iteration")
+        target = kept if kept in stored else current if current in stored else (stored[-1] if stored else None)
+    if target is not None:
+        loaded = code_changes.load(experiment_id, target)
+        if loaded:
+            summary, patch = loaded
+            return {**common, **code_changes.with_patches(summary, patch, include_patch), "available": True, "live": False}
+    base_branch = (context["profile"].get("repo") or {}).get("branch") or "main"
+    try:
+        located = code_changes.locate(
+            context["project"]["repo_path"], context["worktree"], experiment.get("branch"), base_branch, build.get("merge_sha")
+        )
+        if located:
+            summary, patch = code_changes.capture(*located, flag_name=experiment.get("flag_name"))
+            summary["iteration"] = build.get("iteration") if building or not kept else kept
+            return {**common, **code_changes.with_patches(summary, patch, include_patch), "available": True, "live": True}
+    except WorkspaceError as exc:
+        return {**common, "available": False, "reason": f"Couldn't read the diff from git: {exc}", "files": []}
+    return {**common, "available": False, "reason": _changes_unavailable_reason(experiment), "files": []}
+
+
 def _workloads(profile: dict[str, Any]) -> list[str]:
     workloads = profile.get("workloads") or []
     if isinstance(workloads, dict):

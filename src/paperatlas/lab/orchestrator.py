@@ -30,6 +30,8 @@ from sqlalchemy import case, select, update
 
 from paperatlas.db.engine import session_scope
 from paperatlas.db.schema import Experiment, Run, Topic, Triage, Verdict
+from paperatlas.lab import changes as code_changes
+from paperatlas.lab import effect as code_effect
 from paperatlas.lab import service
 from paperatlas.lab.analyst import analyse, fidelity_notes
 from paperatlas.lab.builder import build_experiment, ensure_protected_paths
@@ -318,8 +320,59 @@ def node_build(state: ExperimentState, report) -> dict:
     info["iteration"] = iteration
     if previous.get("iterations"):
         info["iterations"] = previous["iterations"]
+    info["code_changes"] = _record_changes(experiment_id, worktree, base, iteration, spec["flag_name"], report)
     set_experiment(experiment_id, build=info, status="smoke_testing")
     return {"iterate": False, "feedback": None}
+
+
+def _record_changes(
+    experiment_id: int, worktree, base: str, iteration: int, flag: str, report, head: str = "HEAD"
+) -> Optional[dict]:
+    """Persist the verified build's diff (branches and worktrees don't outlive a drop); never fails the build."""
+    try:
+        summary = code_changes.record(
+            experiment_id, worktree, code_changes.base_ref(worktree, base), iteration, head, flag, source="build"
+        )
+    except Exception as exc:  # noqa: BLE001 - the diff is a record, not a prerequisite
+        report("build", f"Could not save the diff of iteration {iteration}: {exc}", None, level="warning")
+        return None
+    report(
+        "build",
+        f"Saved the diff of iteration {iteration}: {summary['files_changed']} files, +{summary['additions']} −{summary['deletions']}",
+        {"iteration": iteration, "files_changed": summary["files_changed"]},
+    )
+    return code_changes.light(summary)
+
+
+def _iteration_changes(context: dict, iteration: int, sha: Optional[str], report) -> Optional[dict]:
+    """The saved diff summary of an iteration, saving it now if its build predates diff saving."""
+    experiment_id = context["experiment"]["id"]
+    summary = code_changes.load_summary(experiment_id, iteration)
+    worktree = context["worktree"]
+    if summary is None and worktree and worktree.exists() and code_changes.commit_exists(worktree, sha or "HEAD"):
+        base = (context["profile"].get("repo") or {}).get("branch") or "main"
+        flag = context["spec"].get("flag_name") or context["experiment"].get("flag_name")
+        summary = _record_changes(experiment_id, worktree, base, iteration, flag, report, head=sha or "HEAD")
+    return summary
+
+
+def _kept_changes(experiment_id: int, iteration: int, build: dict) -> tuple[Optional[dict], Optional[str]]:
+    """Summary and patch of the measured (kept) iteration's code, from the saved diff."""
+    stored = code_changes.load(experiment_id, iteration)
+    if stored:
+        return code_changes.light(stored[0]), stored[1]
+    current = build.get("code_changes")
+    if current and current.get("iteration") in (None, iteration):
+        return current, None
+    return None, None
+
+
+def _explain_result(experiment_id: int, verdict: dict, spec: dict, claim: dict, changes, patch, llm, analysis, tuning, report) -> Optional[dict]:
+    try:
+        return code_effect.explain(verdict, spec, claim, changes, patch, llm, analysis, tuning)
+    except Exception as exc:  # noqa: BLE001 - the explanation must never block Gate 3
+        report("judge", f"Could not explain the result from the code change: {exc}", None, level="warning")
+        return None
 
 
 @experiment_step("smoke")
@@ -468,6 +521,7 @@ def node_judge(state: ExperimentState, report) -> dict:
     iteration = int(state.get("iteration") or build.get("iteration") or 1)
     history = list(build.get("iterations") or [])
     report("judge", "Analysing the result against the paper", None)
+    llm = build_default_llm_client()
     analysis = analyse(
         verdict,
         spec,
@@ -475,7 +529,7 @@ def node_judge(state: ExperimentState, report) -> dict:
         tuning,
         fidelity_notes(artifacts_dir(experiment_id)),
         history,
-        build_default_llm_client(),
+        llm,
         summarize_roofline(context.get("roofline")),
     )
     entry = _iteration_entry(iteration, verdict, analysis, tuning)
@@ -486,6 +540,10 @@ def node_judge(state: ExperimentState, report) -> dict:
         quality_ok=verdict["quality_ok"],
         analysis=analysis,
     )
+    current_changes = _iteration_changes(context, iteration, entry["sha"], report)
+    if current_changes:
+        entry["changes"] = {k: current_changes.get(k) for k in ("files_changed", "additions", "deletions", "summary")}
+        build = {**build, "code_changes": code_changes.light(current_changes)}
     history.append(entry)
     best = max(history, key=_score)
     iterate = bool(analysis.get("worth_iterating")) and iteration < int(spec.get("max_iterations") or 1)
@@ -529,6 +587,11 @@ def node_judge(state: ExperimentState, report) -> dict:
         )
     kept = best if _score(best) > _score(entry) and best.get("sha") else entry
     verdict.update(analysis=analysis, iteration=kept["iteration"], iterations=history, tuning=tuning or None)
+    kept_changes, kept_patch = _kept_changes(experiment_id, kept["iteration"], build)
+    report("judge", "Explaining the result from the code change", None)
+    verdict["code_effect"] = _explain_result(
+        experiment_id, verdict, spec, context["claim"], kept_changes, kept_patch, llm, analysis, tuning, report
+    )
     render_report(
         report_path,
         context["experiment"],
@@ -536,17 +599,16 @@ def node_judge(state: ExperimentState, report) -> dict:
         context["claim"],
         context["paper"],
         spec,
-        build,
+        {**build, "code_changes": kept_changes} if kept_changes else build,
         verdict,
         results,
     )
     _save_verdict(experiment_id, verdict, report_path)
     pr_url = _maybe_open_pr(context, verdict, report)
-    set_experiment(
-        experiment_id,
-        status="awaiting_decision",
-        build={**build, "iterations": history, "kept_iteration": kept["iteration"], "pr_url": pr_url},
-    )
+    final_build = {**build, "iterations": history, "kept_iteration": kept["iteration"], "pr_url": pr_url}
+    if kept_changes:
+        final_build["code_changes"] = kept_changes
+    set_experiment(experiment_id, status="awaiting_decision", build=final_build)
     adoption = verdict.get("adoption")
     adopt_text = f" Adoption: {adoption['verdict'].replace('_', ' ')}." if adoption else ""
     report(

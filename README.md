@@ -30,6 +30,12 @@ flowchart LR
 - **Validate** — paired deltas, bootstrap 95% CI and quality guardrails give a verdict:
   `reproduced`, `partial`, `not_reproduced` or `regression`, with an HTML report (and a draft PR if
   the target repo has a GitHub remote).
+- **Explain** — each verified build's diff is saved under `data/r2e/experiments/<id>/changes/`
+  (`iteration-<n>.patch` + a `.json` summary; branches and worktrees don't outlive a drop). The
+  experiment page shows the measured iteration's files with +/− and each file's diff, and *Why this
+  result*: the code change linked to the gain, loss or no change, grounded in the checks' CIs and the
+  technique's counters per request (it says so plainly when the change never triggered or the effect
+  is within noise). One LLM call at the end of judging writes the explanation; rule-based otherwise.
 
 ## Architecture
 
@@ -87,6 +93,9 @@ Without `paperatlas services up`, run jobs with `paperatlas r2e worker` (or add 
 Individual stages: `paperatlas r2e topics refresh`, `paperatlas r2e discover`,
 `paperatlas r2e distill`, `paperatlas r2e claims --q "kv cache"`, `paperatlas r2e match`,
 `paperatlas r2e digest --project inference-lab` (weekly HTML digest).
+`paperatlas r2e changes [IDS…]` saves the diffs of experiments judged before diffs were saved (from
+their branch or worktree, per iteration while the commits exist) and explains their results; add
+`--no-llm` for rule-based text, `--force` to redo. Experiments the worker is building are skipped.
 
 ## Target project contract
 

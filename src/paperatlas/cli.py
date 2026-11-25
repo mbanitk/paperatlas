@@ -274,6 +274,19 @@ def cmd_report(args: argparse.Namespace) -> None:
     print(f"report written to {rerender_report(args.experiment)}")
 
 
+def cmd_changes(args: argparse.Namespace) -> None:
+    from paperatlas.lab.backfill import backfill_code_changes
+
+    counts = backfill_code_changes(
+        args.experiments or None, explain=not args.no_explain, use_llm=not args.no_llm, force=args.force,
+        say=lambda line: print(line, flush=True),
+    )
+    print(
+        f"{counts['experiments']} experiments: {counts['diffs']} diffs saved, {counts['explained']} results explained, "
+        f"{counts['no_diff']} without a recoverable diff, {counts['skipped']} skipped (in progress)"
+    )
+
+
 def cmd_explain(args: argparse.Namespace) -> None:
     from paperatlas.r2e.explainers import backfill
 
@@ -455,6 +468,16 @@ def build_parser() -> argparse.ArgumentParser:
     report = r2e_sub.add_parser("report", help="re-render an experiment's HTML report from stored results")
     report.add_argument("experiment", type=int)
     report.set_defaults(func=cmd_report)
+
+    code = r2e_sub.add_parser(
+        "changes",
+        help="save experiments' diffs from git and explain their results from the code change (backfill)",
+    )
+    code.add_argument("experiments", type=int, nargs="*", help="experiment ids (default: all)")
+    code.add_argument("--no-explain", action="store_true", help="only save the diffs")
+    code.add_argument("--no-llm", action="store_true", help="rule-based explanations (no LLM calls)")
+    code.add_argument("--force", action="store_true", help="re-save diffs and regenerate explanations that exist")
+    code.set_defaults(func=cmd_changes)
 
     explain = r2e_sub.add_parser("explain", help="generate plain-language explainers + diagrams")
     explain.add_argument("--project", help="also explain the top claims for this project")
