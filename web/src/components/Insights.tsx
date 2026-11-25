@@ -319,7 +319,7 @@ export function KeyResults({ results, max = 4, className }: { results: PaperExpl
       {results.slice(0, max).map((result, index) => (
         <li key={index} className="min-w-0">
           <StatTile
-            className="h-full"
+            fill
             label={sanitizeText(result.label)}
             value={formatResultValue(result.value) || MISSING.value}
             info={result.context ? <span>{sanitizeText(result.context)}</span> : undefined}

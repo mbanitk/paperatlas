@@ -794,7 +794,7 @@ export default function Recommendations() {
                 <option value="predicted">Expected gain here</option>
               </select>
             </div>
-            <div className="pb-1">
+            <div className="flex h-8 items-center">
               <Checkbox id="rec-blocked" checked={includeBlocked} onChange={(checked) => setParam('blocked', checked ? '1' : null)} label="Include blocked" />
             </div>
           </div>
