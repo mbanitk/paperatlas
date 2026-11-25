@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { ConceptLinkData, ConceptNode } from '../api/types'
 import type { ClaimRelated } from '../api/types'
 import { flowEdge, layoutConceptMap, neighbours, normalizeLinks, normalizeRelated, readingPathParts, shortEffect, shortName } from './conceptMap'
+import { containsPoint, samplePath } from './geometry'
 
 const node = (concept_id: number, order: number, role: string | null = 'core'): ConceptNode => ({
   concept_id,
@@ -64,6 +65,65 @@ describe('layoutConceptMap', () => {
       width: 0,
       columns: 0,
     })
+  })
+
+  // The two maps from the audit (OV-16): arxiv:2606.24033 and arxiv:2611.27561.
+  const paperMap = (nodes: [number, string, string, number][], links: [number, number, string][]) => ({
+    nodes: nodes.map(([concept_id, name, role, order]) => ({ concept_id, claim_id: concept_id, name, role, order })),
+    links: links.map(([source, target, relation]) => link(source, target, relation)),
+  })
+  const BLOCK_GTQ = paperMap(
+    [
+      [165, 'RoPE-block logit-error bound for key quantization', 'foundation', 1],
+      [166, 'Label-free Q/K energy block importance score', 'core', 2],
+      [168, 'TQ-MSE-instantiated Block-GTQ objective (4^{-b} penalty)', 'core', 3],
+      [167, 'Separable integer rate allocation with optimal largest-marginal-gain greedy', 'core', 4],
+      [169, 'Equal-rate grouping to realize mixed block rates with one codec per occupied rate', 'optimization', 5],
+      [170, 'Packed-cache fused attention without materializing fp16 KV in HBM', 'optimization', 6],
+      [171, 'Matched-budget accuracy gains at low KV rates (NIAH, LongBench-EN, AIME)', 'evaluation', 7],
+      [172, 'Packed serving memory/perplexity trade-off at 128K (Qwen2.5-3B, K3V3)', 'evaluation', 8],
+      [173, 'Stated limitations: no joint K/V budget optimization; limited deployment scope; safety not evaluated', 'limitation', 9],
+    ],
+    [
+      [166, 165, 'builds_on'], [168, 166, 'requires'], [167, 168, 'builds_on'], [169, 168, 'requires'], [170, 169, 'requires'],
+      [171, 166, 'evaluated_by'], [171, 168, 'evaluated_by'], [172, 170, 'evaluated_by'], [172, 168, 'evaluated_by'], [173, 168, 'evaluated_by'],
+    ],
+  )
+  const VQACC = paperMap(
+    [
+      [526, 'Empirical finding: on-chip traffic dominates after VQ removes DRAM bottleneck', 'foundation', 1],
+      [528, 'Limitation: EVA-style output-lookup degrades with batch and lacks KV/prefill support', 'limitation', 2],
+      [521, 'VQACC (WB-integrated VQ dequantization)', 'core', 3],
+      [522, 'Codebook-Index Mapping in Weight Buffer (WB)', 'core', 4],
+      [523, 'Index Address Generator + Port Multiplexing for Lookups', 'core', 5],
+      [524, 'Shift Layout Unit (rotator-based on-the-fly transpose)', 'extension', 6],
+      [525, 'Codebook-Stationary Tile Scheduling', 'extension', 7],
+      [527, 'Evaluation methodology: cycle-level SA simulator + RTL area/energy breakdown', 'evaluation', 8],
+    ],
+    [[521, 522, 'requires'], [521, 523, 'requires'], [521, 524, 'builds_on'], [523, 522, 'requires'], [524, 522, 'requires'], [525, 521, 'builds_on'], [521, 526, 'builds_on'], [521, 527, 'evaluated_by'], [521, 528, 'complements']],
+  )
+
+  it('routes every link around the nodes it passes and keeps names inside their nodes (OV-16)', () => {
+    for (const map of [BLOCK_GTQ, VQACC]) {
+      const layout = layoutConceptMap(map)
+      expect(new Set(layout.nodes.map((n) => n.height)).size).toBe(1)
+      for (const n of layout.nodes) {
+        expect(n.lines.length).toBeLessThanOrEqual(4)
+        expect(n.textBox!.x).toBeGreaterThanOrEqual(n.x)
+        expect(n.textBox!.x + n.textBox!.width).toBeLessThanOrEqual(n.x + n.width)
+        expect(n.textBox!.y).toBeGreaterThanOrEqual(n.y)
+        expect(n.textBox!.y + n.textBox!.height).toBeLessThanOrEqual(n.y + n.height)
+        expect(n.y).toBeGreaterThanOrEqual(0)
+        expect(n.y + n.height).toBeLessThanOrEqual(layout.height)
+      }
+      for (const l of layout.links) {
+        for (const sample of samplePath(l.segments, 2)) {
+          for (const n of layout.nodes) expect(containsPoint(n, sample.point, 1.5), `${l.source}→${l.target} through ${n.concept_id}`).toBe(false)
+          expect(sample.point.y).toBeGreaterThanOrEqual(0)
+          expect(sample.point.y).toBeLessThanOrEqual(layout.height)
+        }
+      }
+    }
   })
 })
 

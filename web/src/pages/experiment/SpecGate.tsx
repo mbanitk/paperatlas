@@ -1,17 +1,20 @@
 import { useState, type ReactNode } from 'react'
 import type { EditableField, Experiment, ExperimentSpec, Project, ProtocolField } from '../../api/types'
 import { useEditSpec, useSpecDecision } from '../../api/queries'
+import { StickyActionBar } from '../../components/ActionBar'
+import { CodeToken, MetricName } from '../../components/Badges'
 import { ConfirmDialog, Modal } from '../../components/Dialog'
 import { CheckIcon, GateIcon, XIcon } from '../../components/Icons'
 import { useToast } from '../../components/Toast'
-import { Button, Card, Chip, DefinitionList, Field, InlineError, cx, errorMessage } from '../../components/ui'
-import { formatDuration, formatPct, humanize } from '../../lib/format'
+import { Button, Card, Chip, DefinitionList, Disclosure, Field, InlineError, cx, errorMessage } from '../../components/ui'
+import { formatClaimed, formatSigned, humanize } from '../../lib/format'
 import {
   describeProtocolValue,
   isProtocolField,
   isProtocolV2,
   isScalarField,
   needsAdoptionCheck,
+  plainDuration,
   PROTOCOL_LABELS,
   protocolOverrides,
   protocolToForm,
@@ -21,8 +24,7 @@ import {
   type ProtocolForm,
 } from '../../lib/protocol'
 import { diffOverrides, FIELD_LABELS, rebaseForm, specToForm, validateSpecForm, type SpecForm } from '../../lib/spec'
-import { ProtocolEditor, ProtocolSummary } from './Protocol'
-import { PredictionPanel } from '../../components/Prediction'
+import { ProtocolEditor, ProtocolSummary, TestPlanGlance } from './Protocol'
 
 const fieldLabel = (field: EditableField | ProtocolField) => (isProtocolField(field) ? PROTOCOL_LABELS[field] : FIELD_LABELS[field])
 
@@ -52,20 +54,20 @@ export function SpecDetails({ spec, project, includeEditable = false }: { spec: 
   if (includeEditable) {
     items.push(
       ['Hypothesis', spec.hypothesis],
-      ['Feature flag', spec.flag_name ? <code className="code-inline">{spec.flag_name}</code> : '—'],
+      ['Feature flag', spec.flag_name ? <CodeToken>{spec.flag_name}</CodeToken> : 'Not set'],
       [
         'Primary metric',
         spec.primary_metric ? (
-          <span>
-            <code className="code-inline">{spec.primary_metric}</code> <span className="text-muted">{humanize(spec.direction)}</span>
+          <span className="flex flex-wrap items-baseline gap-x-1.5">
+            <MetricName metric={spec.primary_metric} showId /> <span className="text-muted">{humanize(spec.direction)}</span>
           </span>
         ) : (
-          '—'
+          'Not set'
         ),
       ],
-      ['Success threshold', spec.success_threshold_pct !== undefined ? formatPct(spec.success_threshold_pct, 1) : '—'],
-      ['Workload · model', `${spec.workload ?? '—'} · ${spec.model ? modelLabel(project, spec.model) : '—'}`],
-      ['Rounds', spec.rounds !== undefined ? `${spec.rounds} per arm (ABBA), ${spec.warmup ?? 0} warm-up` : '—'],
+      ['Success bar', spec.success_threshold_pct !== undefined ? `${formatSigned(spec.success_threshold_pct, { digits: 1 })} or better` : 'Not set'],
+      ['Workload · model', `${spec.workload ?? 'Not set'} · ${spec.model ? modelLabel(project, spec.model) : 'Not set'}`],
+      ['Rounds', spec.rounds !== undefined ? `${spec.rounds} per side, interleaved (ABBA), ${spec.warmup ?? 0} warm-up` : 'Not set'],
     )
   } else if (spec.direction) {
     items.push([
@@ -80,26 +82,30 @@ export function SpecDetails({ spec, project, includeEditable = false }: { spec: 
     ['Implementation notes', <span key="notes" className="whitespace-pre-line">{spec.implementation_notes}</span>],
     [
       'Secondary metrics',
-      spec.secondary_metrics?.length
-        ? spec.secondary_metrics.map((metric) => (
-            <code key={metric} className="code-inline mr-1">
-              {metric}
-            </code>
-          ))
-        : '—',
+      spec.secondary_metrics?.length ? (
+        <ul key="secondary" className="flex flex-wrap gap-x-3 gap-y-1">
+          {spec.secondary_metrics.map((metric) => (
+            <li key={metric}>
+              <MetricName metric={metric} showId />
+            </li>
+          ))}
+        </ul>
+      ) : (
+        'None'
+      ),
     ],
-    ['Lossless', spec.lossless ? 'yes — greedy outputs must match the baseline' : 'no — approximate technique, the quality guardrail applies'],
-    ['Paper claims', spec.claimed_gain_pct !== null && spec.claimed_gain_pct !== undefined ? formatPct(spec.claimed_gain_pct, 1) : 'not quantified'],
+    ['Lossless', spec.lossless ? 'Yes: greedy outputs must match the baseline' : 'No: an approximate technique, so the quality guardrail applies'],
+    ['Paper reports', formatClaimed(spec.claimed_gain_pct, { digits: 1 })],
     [
       'Guardrails',
       <ul key="guardrails" className="space-y-0.5">
-        {typeof guardrails.max_exact_match_drop === 'number' && <li>exact-match drop ≤ {(guardrails.max_exact_match_drop * 100).toFixed(1)} pts</li>}
-        {typeof guardrails.min_output_agreement === 'number' && <li>output agreement ≥ {(guardrails.min_output_agreement * 100).toFixed(0)}%</li>}
-        {typeof guardrails.max_peak_memory_increase_pct === 'number' && <li>peak memory increase ≤ {guardrails.max_peak_memory_increase_pct}%</li>}
+        {typeof guardrails.max_exact_match_drop === 'number' && <li>Exact match drops by at most {(guardrails.max_exact_match_drop * 100).toFixed(1)} points</li>}
+        {typeof guardrails.min_output_agreement === 'number' && <li>Output agreement at least {(guardrails.min_output_agreement * 100).toFixed(0)}%</li>}
+        {typeof guardrails.max_peak_memory_increase_pct === 'number' && <li>Peak memory grows by at most {guardrails.max_peak_memory_increase_pct}%</li>}
       </ul>,
     ],
-    ['Paper vs project', spec.paper_vs_project || '—'],
-    ['Timeouts', `build ${formatDuration(spec.build_timeout_s)} · smoke ${formatDuration(spec.smoke_timeout_s)} · eval ${formatDuration(spec.eval_timeout_s)}`],
+    ['Paper vs project', spec.paper_vs_project || 'Not reported'],
+    ['Time limits', `Build ${plainDuration(spec.build_timeout_s) || '?'} · smoke ${plainDuration(spec.smoke_timeout_s) || '?'} · A/B ${plainDuration(spec.eval_timeout_s) || '?'}`],
   )
   return <DefinitionList items={items} />
 }
@@ -119,7 +125,7 @@ function DecisionDialog({ open, onClose, kind, onSubmit, loading, error, overrid
     <Modal
       open={open}
       onClose={onClose}
-      title={kind === 'revise' ? 'Request a revision' : 'Reject this experiment?'}
+      title={kind === 'revise' ? 'Request changes to the test plan' : 'Reject this test plan?'}
       size="sm"
       dismissable={!loading}
       footer={
@@ -135,15 +141,15 @@ function DecisionDialog({ open, onClose, kind, onSubmit, loading, error, overrid
             disabled={required && !comment.trim()}
             loading={loading}
           >
-            {kind === 'revise' ? 'Send back to the planner' : 'Reject'}
+            {kind === 'revise' ? 'Send back to the planner' : 'Reject plan'}
           </Button>
         </>
       }
     >
       <p className="mb-3 text-muted">
         {kind === 'revise'
-          ? 'The planner rewrites the spec using your feedback, then it comes back here for approval.'
-          : 'The claim will not be tested; the experiment ends as rejected.'}
+          ? 'The planner rewrites the plan using your feedback, then it comes back here for approval.'
+          : 'The claim won’t be tested, and the experiment ends as rejected.'}
         {overrides > 0 && ' Your unsaved field edits are not applied.'}
       </p>
       <Field
@@ -178,6 +184,8 @@ export function SpecGate({ experiment, project }: { experiment: Experiment; proj
   const [form, setForm] = useState<SpecForm>(() => specToForm(spec, fields))
   const [protocolForm, setProtocolForm] = useState<ProtocolForm>(() => protocolToForm(spec))
   const [dialog, setDialog] = useState<'approve' | 'revise' | 'reject' | null>(null)
+  // The form opens on its own when the planner's plan doesn't validate (Approve is disabled until it's fixed).
+  const [editOpen, setEditOpen] = useState(() => Object.keys(validateSpecForm(specToForm(spec, fields), experiment.spec_options)).length > 0)
   const edit = useEditSpec(experiment.id)
   const decide = useSpecDecision(experiment.id)
   const locked = edit.isPending || decide.isPending
@@ -204,7 +212,7 @@ export function SpecGate({ experiment, project }: { experiment: Experiment; proj
   const save = () => {
     if (edit.isPending) return
     edit.mutate(overrides, {
-      onSuccess: () => toast.success(`Spec saved: ${changed.map(fieldLabel).join(', ')}`),
+      onSuccess: () => toast.success(`Plan saved: ${changed.map(fieldLabel).join(', ')}`),
       onError: (error) => toast.error(errorMessage(error)),
     })
   }
@@ -219,10 +227,10 @@ export function SpecGate({ experiment, project }: { experiment: Experiment; proj
           setDialog(null)
           toast.success(
             decision === 'approve'
-              ? 'Spec approved — the build job is queued.'
+              ? 'Plan approved: the build is queued.'
               : decision === 'revise'
-                ? 'Revision requested — the planner will rewrite the spec.'
-                : 'Experiment rejected.',
+                ? 'Changes requested: the planner will rewrite the plan.'
+                : 'Plan rejected.',
           )
         },
         onError: (error) => toast.error(errorMessage(error)),
@@ -243,7 +251,7 @@ export function SpecGate({ experiment, project }: { experiment: Experiment; proj
   }
 
   const fieldClass = (field: EditableField) =>
-    cx('input', changed.includes(field) && 'border-attention-emphasis bg-attention-subtle/40', errors[field] && 'border-danger')
+    cx('input', changed.includes(field) && 'border-caution-emphasis bg-caution-subtle/40', errors[field] && 'border-negative')
   const describedBy = (field: EditableField) => (errors[field] ? `spec-${field}-error` : `spec-${field}-hint`)
   const primary = metricInfo(project, form.primary_metric)
   const claimed = spec.claimed_gain_pct
@@ -283,109 +291,129 @@ export function SpecGate({ experiment, project }: { experiment: Experiment; proj
     />
   )
 
+  const changeSummary = changed.map(fieldLabel).join(', ')
+  const approveLabel = changed.length > 0 ? 'Approve with edits' : 'Approve and start build'
+
   return (
     <Card
       id="gate"
-      className="border-attention-emphasis/60 ring-1 ring-attention-emphasis/30"
+      attention
       title={
         <span className="flex items-center gap-2">
-          <GateIcon className="text-attention" /> Gate 2 · Review the experiment spec
+          <GateIcon className="text-caution-fg" /> Gate 2 · Approve the test plan
         </span>
       }
-      actions={changed.length > 0 ? <Chip tone="attention">{changed.length} unsaved change{changed.length > 1 ? 's' : ''}</Chip> : undefined}
+      actions={changed.length > 0 ? <Chip tone="caution">{changed.length} unsaved change{changed.length > 1 ? 's' : ''}</Chip> : undefined}
     >
-      <p className="mb-4 text-sm text-muted">
-        The planner turned the claim into this spec. Adjust the key fields if needed; on approval a coding agent implements{' '}
-        <code className="code-inline">{form.flag_name || spec.flag_name}</code> on a new branch and the A/B benchmark runs.
-      </p>
-      <form
-        onSubmit={(event) => {
-          event.preventDefault()
-          if (!hasErrors && !locked) open('approve')
-        }}
-        noValidate
-      >
-        <div className="grid gap-4 md:grid-cols-6">
-          {fields.includes('hypothesis') && (
-            <Field className="md:col-span-6" label={FIELD_LABELS.hypothesis} htmlFor="spec-hypothesis" error={errors.hypothesis} hint="One falsifiable sentence with the metric and the minimum effect.">
-              <textarea
-                id="spec-hypothesis"
-                className={cx(fieldClass('hypothesis'), 'min-h-16')}
-                value={form.hypothesis}
-                onChange={(event) => set('hypothesis', event.target.value)}
-                disabled={locked}
-                aria-invalid={!!errors.hypothesis}
-                aria-describedby={describedBy('hypothesis')}
-              />
-            </Field>
-          )}
-          {fields.includes('flag_name') && (
-            <Field className="md:col-span-2" label={FIELD_LABELS.flag_name} htmlFor="spec-flag_name" error={errors.flag_name} hint="snake_case technique name, off by default">
-              <input
-                id="spec-flag_name"
-                className={cx(fieldClass('flag_name'), 'font-mono')}
-                value={form.flag_name}
-                onChange={(event) => set('flag_name', event.target.value)}
-                disabled={locked}
-                aria-invalid={!!errors.flag_name}
-                aria-describedby={describedBy('flag_name')}
-                spellCheck={false}
-                autoComplete="off"
-              />
-            </Field>
-          )}
-          {fields.includes('primary_metric') && (
-            <Field
-              className="md:col-span-2"
-              label={FIELD_LABELS.primary_metric}
-              htmlFor="spec-primary_metric"
-              error={errors.primary_metric}
-              hint={primary ? [humanize(primary.direction), primary.unit].filter(Boolean).join(' · ') : undefined}
-            >
-              {select('primary_metric', options.metrics)}
-            </Field>
-          )}
-          {fields.includes('success_threshold_pct') && (
-            <Field
-              className="md:col-span-2"
-              label={FIELD_LABELS.success_threshold_pct}
-              htmlFor="spec-success_threshold_pct"
-              error={errors.success_threshold_pct}
-              hint={claimed !== null && claimed !== undefined ? `Minimum worthwhile gain · paper claims ${formatPct(claimed, 0)}` : 'Minimum worthwhile gain'}
-            >
-              {number('success_threshold_pct', 0, 500, 0.5)}
-            </Field>
-          )}
-          {fields.includes('workload') && (
-            <Field className="md:col-span-2" label={FIELD_LABELS.workload} htmlFor="spec-workload" error={errors.workload} hint={workloadDescription(project, form.workload)}>
-              {select('workload', options.workloads)}
-            </Field>
-          )}
-          {fields.includes('model') && (
-            <Field className="md:col-span-2" label={FIELD_LABELS.model} htmlFor="spec-model" error={errors.model} hint="Model used for the A/B evaluation">
-              {select('model', options.models, (value) => modelLabel(project, value))}
-            </Field>
-          )}
-          {fields.includes('rounds') && (
-            <Field className="md:col-span-1" label={FIELD_LABELS.rounds} htmlFor="spec-rounds" error={errors.rounds} hint="2–60, interleaved">
-              {number('rounds', 2, 60)}
-            </Field>
-          )}
-          {fields.includes('warmup') && (
-            <Field className="md:col-span-1" label={FIELD_LABELS.warmup} htmlFor="spec-warmup" error={errors.warmup} hint="0–5">
-              {number('warmup', 0, 5)}
-            </Field>
-          )}
-        </div>
+      <TestPlanGlance spec={preview} project={project} />
 
-        {!v2 && spec.prediction && (
-          <div className="mt-5 border-t border-line-muted pt-4 md:max-w-xl">
-            <PredictionPanel prediction={spec.prediction} claimed={spec.claimed_gain_pct} />
-          </div>
-        )}
-        {v2 && (
-          <div className="mt-5 space-y-3 border-t border-line-muted pt-4">
-            <ProtocolSummary spec={preview} changed={protocolChanged} />
+      <div className="mt-5 flex flex-col gap-3 border-t border-line-muted pt-4 lg:flex-row lg:items-center lg:justify-between">
+        <p className="max-w-xl text-xs text-muted">
+          Approving starts the build on a new branch. Nothing is merged without your decision at Gate 3. Not right? Request changes and the planner rewrites the plan.
+        </p>
+        <div className="flex flex-wrap items-center gap-2 max-sm:[&>*]:flex-1">
+          <Button variant="danger" onClick={() => open('reject')} disabled={decide.isPending} icon={<XIcon />}>
+            Reject
+          </Button>
+          <Button onClick={() => open('revise')} disabled={decide.isPending}>
+            Request changes
+          </Button>
+          <Button variant="primary" icon={<CheckIcon />} disabled={hasErrors || locked} onClick={() => !hasErrors && !locked && open('approve')}>
+            {approveLabel}
+          </Button>
+        </div>
+      </div>
+      {hasErrors && <p className="mt-2 text-xs text-negative-fg lg:text-right">Fix the highlighted fields under “Edit plan” to continue.</p>}
+
+      {v2 && <ProtocolSummary spec={preview} changed={protocolChanged} showPrediction={false} showFidelity={false} className="mt-5 border-t border-line-muted pt-4" />}
+
+      <div className="mt-4 space-y-2 border-t border-line-muted pt-3">
+        <Disclosure
+          label="Edit plan"
+          meta={changed.length ? ` · ${changed.length} unsaved: ${changeSummary}` : ' · hypothesis, flag, metric, success bar, workload, rounds, protocol'}
+          open={editOpen}
+          onToggle={setEditOpen}
+        >
+          <form
+            onSubmit={(event) => {
+              event.preventDefault()
+              if (!hasErrors && !locked) open('approve')
+            }}
+            noValidate
+            className="space-y-4 pt-1"
+          >
+            <div className="grid gap-4 md:grid-cols-6">
+              {fields.includes('hypothesis') && (
+                <Field className="md:col-span-6" label={FIELD_LABELS.hypothesis} htmlFor="spec-hypothesis" error={errors.hypothesis} hint="One falsifiable sentence with the metric and the minimum effect.">
+                  <textarea
+                    id="spec-hypothesis"
+                    className={cx(fieldClass('hypothesis'), 'min-h-16')}
+                    value={form.hypothesis}
+                    onChange={(event) => set('hypothesis', event.target.value)}
+                    disabled={locked}
+                    aria-invalid={!!errors.hypothesis}
+                    aria-describedby={describedBy('hypothesis')}
+                  />
+                </Field>
+              )}
+              {fields.includes('flag_name') && (
+                <Field className="md:col-span-2" label={FIELD_LABELS.flag_name} htmlFor="spec-flag_name" error={errors.flag_name} hint="snake_case technique name, off by default">
+                  <input
+                    id="spec-flag_name"
+                    className={cx(fieldClass('flag_name'), 'font-mono')}
+                    value={form.flag_name}
+                    onChange={(event) => set('flag_name', event.target.value)}
+                    disabled={locked}
+                    aria-invalid={!!errors.flag_name}
+                    aria-describedby={describedBy('flag_name')}
+                    spellCheck={false}
+                    autoComplete="off"
+                  />
+                </Field>
+              )}
+              {fields.includes('primary_metric') && (
+                <Field
+                  className="md:col-span-2"
+                  label={FIELD_LABELS.primary_metric}
+                  htmlFor="spec-primary_metric"
+                  error={errors.primary_metric}
+                  hint={primary ? [humanize(primary.direction), primary.unit].filter(Boolean).join(' · ') : undefined}
+                >
+                  {select('primary_metric', options.metrics)}
+                </Field>
+              )}
+              {fields.includes('success_threshold_pct') && (
+                <Field
+                  className="md:col-span-2"
+                  label={FIELD_LABELS.success_threshold_pct}
+                  htmlFor="spec-success_threshold_pct"
+                  error={errors.success_threshold_pct}
+                  hint={claimed !== null && claimed !== undefined ? `Minimum worthwhile gain · paper reports ${formatSigned(claimed, { digits: 0 })}` : 'Minimum worthwhile gain'}
+                >
+                  {number('success_threshold_pct', 0, 500, 0.5)}
+                </Field>
+              )}
+              {fields.includes('workload') && (
+                <Field className="md:col-span-2" label={FIELD_LABELS.workload} htmlFor="spec-workload" error={errors.workload} hint={workloadDescription(project, form.workload)}>
+                  {select('workload', options.workloads)}
+                </Field>
+              )}
+              {fields.includes('model') && (
+                <Field className="md:col-span-2" label={FIELD_LABELS.model} htmlFor="spec-model" error={errors.model} hint="Model used for the A/B evaluation">
+                  {select('model', options.models, (value) => modelLabel(project, value))}
+                </Field>
+              )}
+              {fields.includes('rounds') && (
+                <Field className="md:col-span-1" label={FIELD_LABELS.rounds} htmlFor="spec-rounds" error={errors.rounds} hint="2–60, interleaved">
+                  {number('rounds', 2, 60)}
+                </Field>
+              )}
+              {fields.includes('warmup') && (
+                <Field className="md:col-span-1" label={FIELD_LABELS.warmup} htmlFor="spec-warmup" error={errors.warmup} hint="0–5">
+                  {number('warmup', 0, 5)}
+                </Field>
+              )}
+            </div>
             {protocolFields.length > 0 && (
               <ProtocolEditor
                 form={protocolForm}
@@ -396,68 +424,76 @@ export function SpecGate({ experiment, project }: { experiment: Experiment; proj
                 disabled={locked}
               />
             )}
-          </div>
-        )}
-
-        <details className="mt-5 rounded-md border border-line-muted">
-          <summary className="cursor-pointer px-3 py-2 text-sm font-semibold text-fg select-none hover:bg-canvas-subtle">
-            Rest of the spec (read-only): technique, implementation notes, guardrails
-          </summary>
-          <div className="border-t border-line-muted p-3">
-            <SpecDetails spec={spec} project={project} />
-          </div>
-        </details>
-
-        <div className="mt-5 flex flex-col-reverse gap-3 border-t border-line-muted pt-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex flex-wrap gap-2">
-            <Button onClick={() => open('revise')} disabled={decide.isPending}>
-              Request revision
-            </Button>
-            <Button variant="danger" onClick={() => open('reject')} disabled={decide.isPending} icon={<XIcon />}>
-              Reject
-            </Button>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
             {changed.length > 0 && (
-              <>
+              <div className="flex flex-wrap items-center justify-end gap-2">
                 <Button variant="invisible" onClick={reset} disabled={edit.isPending}>
                   Reset
                 </Button>
                 <Button onClick={save} loading={edit.isPending} disabled={hasErrors || decide.isPending}>
                   Save edits
                 </Button>
-              </>
+              </div>
             )}
-            <Button type="submit" variant="primary" icon={<CheckIcon />} disabled={hasErrors || locked}>
-              {changed.length > 0 ? 'Approve with edits' : 'Approve'}
+            <button type="submit" hidden />
+          </form>
+        </Disclosure>
+        <Disclosure label="Rest of the plan" meta=" · technique, implementation notes, guardrails (read-only)">
+          <SpecDetails spec={spec} project={project} />
+        </Disclosure>
+      </div>
+
+      <StickyActionBar
+        open={changed.length > 0}
+        label="Unsaved plan edits"
+        summary={
+          <>
+            <strong>
+              {changed.length} unsaved change{changed.length > 1 ? 's' : ''}
+            </strong>
+            <span className="text-muted"> · {changeSummary}</span>
+          </>
+        }
+        actions={
+          <>
+            <Button size="sm" variant="invisible" onClick={reset} disabled={edit.isPending} className="max-sm:hidden">
+              Reset
             </Button>
-          </div>
-        </div>
-        {hasErrors && <p className="mt-2 text-right text-xs text-danger">Fix the highlighted fields to continue.</p>}
-      </form>
+            <Button size="sm" onClick={save} loading={edit.isPending} disabled={hasErrors || decide.isPending}>
+              Save
+            </Button>
+            <Button size="sm" variant="primary" icon={<CheckIcon />} disabled={hasErrors || locked} onClick={() => !hasErrors && !locked && open('approve')}>
+              Approve with edits
+            </Button>
+          </>
+        }
+      />
 
       <ConfirmDialog
         open={dialog === 'approve'}
         onClose={() => setDialog(null)}
         onConfirm={() => submit('approve')}
-        title="Approve the spec and start the build?"
-        confirmLabel={changed.length ? 'Approve with edits' : 'Approve'}
+        title="Approve the test plan and start the build?"
+        confirmLabel={changed.length ? 'Approve with edits' : 'Approve and start build'}
         loading={decide.isPending}
         error={dialog === 'approve' ? decide.error : null}
+        recap={
+          <>
+            <MetricName metric={preview.primary_metric} /> must improve by {formatSigned(Number(preview.success_threshold_pct), { digits: 1 })} or more ·{' '}
+            {String(preview.rounds ?? '?')} rounds per side on {String(preview.workload ?? 'the project workload')}
+          </>
+        }
+        cost={`Runs on the worker and uses the measurement machine: build up to ${plainDuration(spec.build_timeout_s) || '?'}, then the A/B tests (up to ${plainDuration(spec.eval_timeout_s) || '?'} each).`}
       >
         <p className="text-muted">
-          A coding agent will implement <code className="code-inline">{form.flag_name}</code> behind a flag on a new branch, then smoke-test
-          {v2 && preview.tune ? ', tune' : ''} and A/B benchmark it with {form.rounds} rounds per arm:{' '}
+          A coding agent implements <CodeToken>{form.flag_name || spec.flag_name}</CodeToken> behind a flag on a new branch. Then it’s smoke-tested
+          {v2 && preview.tune ? ', tuned' : ''} and measured:{' '}
           {v2 && needsAdoptionCheck(preview) ? (
-            <>
-              a claim check against the paper’s setup and an adoption check on <code className="code-inline">{form.workload}</code>
-            </>
+            <>a claim check against the paper’s setup, and an adoption check on your workload</>
           ) : (
-            <>
-              on <code className="code-inline">{form.workload}</code>
-            </>
+            <>one A/B test on your workload</>
           )}
-          {v2 && Number(preview.max_iterations) > 1 && <>, with up to {String(preview.max_iterations)} iterations when the result looks fixable</>}.
+          {v2 && Number(preview.max_iterations) > 1 && <>, with up to {String(preview.max_iterations)} iterations when the result looks fixable</>}. Nothing is merged
+          without your decision.
         </p>
         {changed.length > 0 && (
           <div className="mt-3">
@@ -466,8 +502,8 @@ export function SpecGate({ experiment, project }: { experiment: Experiment; proj
               {changed.map((field) => (
                 <li key={field}>
                   <span className="text-muted">{fieldLabel(field)}:</span>{' '}
-                  <del className="text-danger">{isProtocolField(field) ? describeProtocolValue(field, specProtocolValue(field, spec)) : String(spec[field] ?? '')}</del> →{' '}
-                  <ins className="font-semibold text-success no-underline">
+                  <del className="text-negative-fg">{isProtocolField(field) ? describeProtocolValue(field, specProtocolValue(field, spec)) : String(spec[field] ?? '')}</del> →{' '}
+                  <ins className="font-semibold text-fg no-underline">
                     {isProtocolField(field) ? describeProtocolValue(field, overrides[field]) : String(overrides[field])}
                   </ins>
                 </li>

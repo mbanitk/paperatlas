@@ -1,30 +1,49 @@
+import { autoUpdate, FloatingFocusManager, FloatingPortal, useClick, useDismiss, useFloating, useInteractions, useRole } from '@floating-ui/react'
 import { useQueryClient } from '@tanstack/react-query'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import { api } from '../api/client'
 import { keys, useCancelExperiment, useClaim, useExperiment, useExperiments, useProject, useRerunExperiment, useRetryExperiment } from '../api/queries'
 import { mergeEvents, useEventStream } from '../api/sse'
 import type { Experiment, LabEvent, Project } from '../api/types'
-import { CategoryChip, LiveDot, MODE_INFO, ModeBadge, StatusChip, VerdictBadge } from '../components/Badges'
+import { CategoryChip, CodeToken, LiveDot, MODE_INFO, ModeBadge, OutcomeBadge, StatusChip } from '../components/Badges'
 import { ClaimCardDetails } from '../components/ClaimCard'
 import { ConfirmDialog, Modal } from '../components/Dialog'
 import { EventTimeline } from '../components/EventTimeline'
-import { AlertIcon, BranchIcon, ClockIcon, ChevronDown, ChevronRight, GateIcon, RefreshIcon, SparkIcon, StopIcon } from '../components/Icons'
+import { AlertIcon, BranchIcon, ClockIcon, MoreIcon, RefreshIcon, StopIcon } from '../components/Icons'
 import { GenerateClaimExplainer } from '../components/Explainers'
-import { ClaimDeepDive, ClaimHeadline, ClaimOverview, ThemeBadge } from '../components/ClaimStory'
+import { ClaimDeepDive, ClaimHeadline, ClaimOverview } from '../components/ClaimStory'
 import { RelatedStrip } from '../components/Related'
 import { PredictionPanel } from '../components/Prediction'
 import { Stepper } from '../components/Stepper'
+import { floatingMiddleware } from '../components/Tooltip'
 import { useToast } from '../components/Toast'
-import { Banner, Button, Card, Chip, ErrorState, ExternalLink, InlineError, Loading, PageHeader, PaperLink, RelativeTime, cx, errorMessage } from '../components/ui'
-import { formatPct } from '../lib/format'
+import {
+  AnswerBlock,
+  Banner,
+  Breadcrumb,
+  Button,
+  Card,
+  Chip,
+  cx,
+  DefinitionList,
+  Disclosure,
+  ErrorState,
+  errorMessage,
+  ExternalLink,
+  InlineError,
+  Loading,
+  MathText,
+  PaperLink,
+  RelativeTime,
+} from '../components/ui'
+import { formatClaimed, formatRange } from '../lib/format'
 import { canCancel, canRerun, canRetry, isActiveStatus, normalizeStages, rerunsOf, statusInfo } from '../lib/stages'
+import { currentIteration, isProtocolV2, protocolOf, summarizeFailure } from '../lib/protocol'
 import { BuildCard, LogCard, ProjectFacts, RunsCard } from './experiment/Sections'
 import { SpecDetails, SpecGate } from './experiment/SpecGate'
 import { ProtocolSummary } from './experiment/Protocol'
-import { adoptionInfo, currentIteration, isProtocolV2, protocolOf } from '../lib/protocol'
-import { VerdictPanel } from './experiment/VerdictPanel'
-
+import { DecisionSummary, VerdictPanel } from './experiment/VerdictPanel'
 function useExperimentEvents(id: number, enabled: boolean) {
   const client = useQueryClient()
   const [events, setEvents] = useState<LabEvent[]>([])
@@ -51,45 +70,49 @@ function useExperimentEvents(id: number, enabled: boolean) {
   return { events, status }
 }
 
-/** Claim panel: plain-language lead + mini diagram + glance strip, explanation and raw claim card on demand. */
+/** Claim panel: the headline and the two key numbers; the explanation and raw claim card on demand (X-8). */
 function ClaimUnderTest({ experiment, project }: { experiment: Experiment; project?: Project }) {
   const claim = useClaim(experiment.claim_id, experiment.project_id)
-  const [open, setOpen] = useState<'explain' | 'card' | null>(null)
   const explainer = claim.data?.explainer
   const subject = { ...experiment.claim, explainer }
-  const toggle = (panel: 'explain' | 'card') => setOpen((current) => (current === panel ? null : panel))
+  const prediction = experiment.spec.prediction
   return (
     <div className="space-y-3">
-      <div className="flex min-w-0 items-start gap-3">
-        <ThemeBadge claim={subject} explainer={explainer} className="hidden sm:inline-flex" />
-        <div className="min-w-0 flex-1 [&>p:first-child]:mt-0 [&>div:first-child]:mt-0">
-          <ClaimHeadline claim={subject} explainer={explainer} />
-        </div>
+      <div className="[&>p:first-child]:mt-0 [&>div:first-child]:mt-0">
+        <ClaimHeadline claim={subject} explainer={explainer} />
       </div>
-      <ClaimOverview claim={subject} explainer={explainer} project={project} />
-      <RelatedStrip related={experiment.related ?? claim.data?.related} claimId={experiment.claim_id} paperId={experiment.paper_id} />
-      <div className="flex flex-wrap items-center gap-1">
+      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-1">
+        <AnswerBlock
+          register="claimed"
+          size="md"
+          value={typeof experiment.claimed_gain_pct === 'number' ? formatClaimed(experiment.claimed_gain_pct).replace(/^Paper reports /, '') : 'No number'}
+          confidence={typeof experiment.claimed_gain_pct === 'number' ? 'On the paper’s own setup' : 'The paper gives no number to compare with'}
+        />
+        <AnswerBlock
+          register="predicted"
+          size="md"
+          label={`Expected here${project?.hardware?.chip ? ` · ${String(project.hardware.chip)}` : ''}`}
+          value={formatRange(prediction?.predicted_gain_pct?.low, prediction?.predicted_gain_pct?.high)}
+          badge={prediction ? <OutcomeBadge kind="likelihood" value={prediction.likelihood} explain /> : undefined}
+          confidence={prediction ? 'Cost-model estimate, made when the plan was written' : undefined}
+        />
+      </div>
+      <div className="space-y-1.5">
         {explainer ? (
-          <Button size="sm" variant="invisible" onClick={() => toggle('explain')} aria-expanded={open === 'explain'} icon={<SparkIcon size={14} />}>
-            {open === 'explain' ? 'Hide explanation' : 'Explain'}
-          </Button>
+          <Disclosure label="Explain" meta=" · what the paper does, in plain words">
+            <div className="space-y-4">
+              <ClaimOverview claim={subject} explainer={explainer} project={project} />
+              <ClaimDeepDive explainer={explainer} projectName={experiment.project.name} />
+              <RelatedStrip related={experiment.related ?? claim.data?.related} claimId={experiment.claim_id} paperId={experiment.paper_id} />
+            </div>
+          </Disclosure>
         ) : (
           !claim.isLoading && <GenerateClaimExplainer claimId={experiment.claim_id} projectId={experiment.project_id} />
         )}
-        <Button size="sm" variant="invisible" onClick={() => toggle('card')} aria-expanded={open === 'card'} icon={open === 'card' ? <ChevronDown /> : <ChevronRight />}>
-          Claim card
-        </Button>
-      </div>
-      {open === 'explain' && explainer && (
-        <div className="border-t border-line-muted pt-4">
-          <ClaimDeepDive explainer={explainer} projectName={experiment.project.name} />
-        </div>
-      )}
-      {open === 'card' && (
-        <div className="border-t border-line-muted pt-3">
+        <Disclosure label="Claim card" meta=" · the raw claim">
           <ClaimCardDetails claim={experiment.claim} />
-        </div>
-      )}
+        </Disclosure>
+      </div>
     </div>
   )
 }
@@ -128,7 +151,7 @@ function PlanCard({ experiment }: { experiment: Experiment }) {
         <p className="text-muted">{MODE_INFO[mode]?.description ?? ''}</p>
         {dependsOn != null && (
           <section>
-            <h4 className="mb-1.5 text-xs font-semibold tracking-wide text-muted uppercase">Waits for</h4>
+            <h4 className="mb-1.5 text-xs font-semibold text-muted">Waits for</h4>
             <ExperimentRef id={dependsOn} />
             {experiment.error ? null : (experiment.spec?.baseline_flags as string[] | undefined)?.length ? (
               <p className="mt-1.5 text-xs text-muted">
@@ -136,19 +159,19 @@ function PlanCard({ experiment }: { experiment: Experiment }) {
                 {(experiment.spec.baseline_flags as string[]).map((flag, index) => (
                   <span key={flag}>
                     {index > 0 && ', '}
-                    <code className="code-inline">{flag}</code>
+                    <CodeToken>{flag}</CodeToken>
                   </span>
                 ))}{' '}
                 on, so only this claim’s change is measured.
               </p>
             ) : (
-              <p className="mt-1.5 text-xs text-muted">When it is merged its flag stays on in this experiment’s baseline, so only this claim’s change is measured.</p>
+              <p className="mt-1.5 text-xs text-muted">Once it’s merged, its flag stays on in this experiment’s baseline, so only this claim’s change is measured.</p>
             )}
           </section>
         )}
         {dependents.length > 0 && (
           <section>
-            <h4 className="mb-1.5 text-xs font-semibold tracking-wide text-muted uppercase">Unlocks</h4>
+            <h4 className="mb-1.5 text-xs font-semibold text-muted">Unlocks</h4>
             <ul className="space-y-1.5">
               {dependents.map((dependent) => (
                 <li key={dependent.id}>
@@ -161,16 +184,14 @@ function PlanCard({ experiment }: { experiment: Experiment }) {
         )}
         {bundle.length > 0 && (
           <section>
-            <h4 className="mb-1.5 text-xs font-semibold tracking-wide text-muted uppercase">Implemented together with</h4>
+            <h4 className="mb-1.5 text-xs font-semibold text-muted">Implemented together with</h4>
             <ul className="space-y-2">
               {bundle.map((member) => (
                 <li key={member.claim_id} className="rounded-md border border-line-muted px-2.5 py-1.5">
                   <Link to={`/research/claims/${member.claim_id}`} className="font-medium">
                     {member.name}
                   </Link>
-                  <p className="mt-0.5 line-clamp-2 text-xs text-muted" title={member.technique}>
-                    {member.technique}
-                  </p>
+                  <p className="mt-0.5 text-xs text-muted">{member.technique}</p>
                 </li>
               ))}
             </ul>
@@ -187,16 +208,16 @@ function BlockedBanner({ experiment }: { experiment: Experiment }) {
   const link = dependsOn != null ? <Link to={`/experiments/${dependsOn}`}>#{dependsOn}</Link> : 'its prerequisite'
   if (experiment.error)
     return (
-      <div role="alert" className="rounded-lg border border-attention-emphasis/40 bg-attention-subtle p-4">
-        <div className="flex items-center gap-2 font-semibold text-attention">
+      <div role="alert" className="rounded-lg border border-caution-emphasis/60 bg-caution-subtle p-4">
+        <div className="flex items-center gap-2 font-semibold text-caution-fg">
           <AlertIcon /> Prerequisite experiment {link} was not merged
         </div>
         {!/was not merged/.test(experiment.error) && <p className="mt-1 text-sm text-fg">{experiment.error.replace(/^plan:\s*/, '')}</p>}
-        <p className="mt-1 text-xs text-muted">Use Retry to run this experiment on its own (without the prerequisite), or cancel it.</p>
+        <p className="mt-1 text-sm text-muted">Use Retry to run this experiment on its own (without the prerequisite), or cancel it from More.</p>
       </div>
     )
   return (
-    <Banner tone="muted" icon={<ClockIcon className="text-muted" />}>
+    <Banner tone="neutral" icon={<ClockIcon className="text-muted" />}>
       <strong>Waiting for prerequisite {link}.</strong> This experiment starts automatically when {link} is merged.
     </Banner>
   )
@@ -305,40 +326,23 @@ function RerunDialog({ experiment, onClose }: { experiment: Experiment; onClose:
   )
 }
 
-function Actions({ experiment }: { experiment: Experiment }) {
-  const [dialog, setDialog] = useState<'cancel' | 'retry' | 'rerun' | null>(null)
+type DialogKind = 'cancel' | 'retry' | 'rerun'
+
+/** Dialogs for Retry, Re-run and Cancel; `open(kind)` is used by the header menu and the failure block. */
+function useExperimentDialogs(experiment: Experiment) {
+  const [dialog, setDialog] = useState<DialogKind | null>(null)
   const cancel = useCancelExperiment(experiment.id)
   const retry = useRetryExperiment(experiment.id)
   const toast = useToast()
-  return (
+  const dialogs = (
     <>
-      {canRetry(experiment.status, experiment.error) && (
-        <Button icon={<RefreshIcon />} onClick={() => setDialog('retry')}>
-          Retry
-        </Button>
-      )}
-      <span
-        title={
-          canRerun(experiment.status)
-            ? 'Start a new experiment for the same claim on the current code'
-            : `Re-run is available once the experiment has a verdict or has ended (it is ${statusInfo(experiment.status).label.toLowerCase()})`
-        }
-      >
-        <Button icon={<RefreshIcon />} onClick={() => setDialog('rerun')} disabled={!canRerun(experiment.status)}>
-          Re-run
-        </Button>
-      </span>
-      {canCancel(experiment.status) && (
-        <Button variant="danger" icon={<StopIcon />} onClick={() => setDialog('cancel')}>
-          Cancel experiment
-        </Button>
-      )}
       {dialog === 'rerun' && <RerunDialog experiment={experiment} onClose={() => setDialog(null)} />}
       <ConfirmDialog
         open={dialog === 'cancel'}
         onClose={() => setDialog(null)}
         title="Cancel this experiment?"
         confirmLabel="Cancel experiment"
+        cancelLabel="Keep it running"
         variant="danger"
         loading={cancel.isPending}
         error={cancel.error}
@@ -346,13 +350,13 @@ function Actions({ experiment }: { experiment: Experiment }) {
           cancel.mutate(undefined, {
             onSuccess: (result) => {
               setDialog(null)
-              toast.success(result.status === 'cancelling' ? 'Cancelling — the running step stops at the next checkpoint.' : 'Experiment cancelled.')
+              toast.success(result.status === 'cancelling' ? 'Cancelling: the running step stops at its next checkpoint.' : 'Experiment cancelled.')
             },
             onError: (error) => toast.error(errorMessage(error)),
           })
         }
       >
-        <p className="text-muted">Queued jobs are cancelled; a running build or benchmark stops at its next check. You can retry later from the last completed step.</p>
+        <p className="text-muted">Queued jobs are cancelled, and a running build or benchmark stops at its next check. You can retry later from the last completed step.</p>
       </ConfirmDialog>
       <ConfirmDialog
         open={dialog === 'retry'}
@@ -361,11 +365,12 @@ function Actions({ experiment }: { experiment: Experiment }) {
         confirmLabel="Retry"
         loading={retry.isPending}
         error={retry.error}
+        cost="Runs on the worker again from the last completed step."
         onConfirm={() =>
           retry.mutate(undefined, {
             onSuccess: () => {
               setDialog(null)
-              toast.success('Retry queued — continuing from the last completed step.')
+              toast.success('Retry queued: continuing from the last completed step.')
             },
             onError: (error) => toast.error(errorMessage(error)),
           })
@@ -374,35 +379,235 @@ function Actions({ experiment }: { experiment: Experiment }) {
         <p className="text-muted">
           {experiment.status === 'blocked'
             ? 'The experiment is queued now and runs without its prerequisite.'
-            : 'The experiment is re-queued and resumes from its last checkpoint (completed steps are not repeated).'}
+            : 'The experiment is queued again and resumes from its last checkpoint. Completed steps aren’t repeated.'}
         </p>
       </ConfirmDialog>
     </>
   )
+  return { open: setDialog, dialogs }
 }
 
-function GateCallout({ experiment }: { experiment: Experiment }) {
-  if (experiment.status === 'awaiting_approval')
-    return (
-      <Banner tone="attention" icon={<GateIcon className="text-attention" />} action={<a href="#gate" className="text-sm font-semibold">Review spec ↓</a>}>
-        <strong>Gate 2 — your approval is needed.</strong> Review the experiment spec, then approve, request a revision or reject.
-      </Banner>
-    )
-  if (experiment.status === 'awaiting_decision')
-    return (
-      <Banner tone="attention" icon={<GateIcon className="text-attention" />} action={<a href="#gate" className="text-sm font-semibold">See verdict ↓</a>}>
-        <strong>Gate 3 — merge or drop?</strong> The judge measured {formatPct(experiment.median_delta_pct)} vs the paper’s {formatPct(experiment.claimed_gain_pct, 0)}
-        {experiment.verdict_detail?.details?.adoption
-          ? `; adoption check: ${adoptionInfo(experiment.verdict_detail.details.adoption.verdict).label.toLowerCase()} (${formatPct(experiment.verdict_detail.details.adoption.median_delta_pct)} vs the project default).`
-          : '.'}
-      </Banner>
-    )
+/** "⋯ More": actions that aren't this page's next step (docs/ux-review.md X-13). */
+function MoreMenu({ experiment, onSelect }: { experiment: Experiment; onSelect: (kind: DialogKind) => void }) {
+  const [open, setOpen] = useState(false)
+  const arrowRef = useRef<Element | null>(null)
+  const { refs, floatingStyles, context } = useFloating({
+    open,
+    onOpenChange: setOpen,
+    placement: 'bottom-end',
+    strategy: 'fixed',
+    whileElementsMounted: autoUpdate,
+    middleware: floatingMiddleware(arrowRef, 300),
+  })
+  const { getReferenceProps, getFloatingProps } = useInteractions([useClick(context), useDismiss(context), useRole(context, { role: 'menu' })])
+  const rerunnable = canRerun(experiment.status)
+  const cancellable = canCancel(experiment.status)
+  const choose = (kind: DialogKind) => {
+    setOpen(false)
+    onSelect(kind)
+  }
+  const item = 'flex w-full items-start gap-2 rounded-md px-2.5 py-2 text-left text-sm hover:bg-canvas-subtle focus-visible:bg-canvas-subtle disabled:cursor-not-allowed disabled:opacity-60'
+  return (
+    <>
+      <Button ref={refs.setReference} icon={<MoreIcon size={16} />} aria-label="More actions" {...getReferenceProps()}>
+        More
+      </Button>
+      {open && (
+        <FloatingPortal>
+          <FloatingFocusManager context={context} modal={false}>
+            <div
+              ref={refs.setFloating}
+              style={{ ...floatingStyles, zIndex: 'var(--z-popover)' }}
+              className="w-72 rounded-lg border border-line bg-canvas p-1 shadow-lg"
+              {...getFloatingProps()}
+            >
+              <button type="button" role="menuitem" className={item} disabled={!rerunnable} onClick={() => choose('rerun')}>
+                <RefreshIcon size={16} className="mt-0.5 shrink-0 text-muted" />
+                <span>
+                  <span className="block font-medium text-fg">Re-run…</span>
+                  <span className="block text-xs text-muted">
+                    {rerunnable
+                      ? 'A new experiment for the same claim on the current code.'
+                      : `Available once there’s a verdict or the experiment has ended. Now: ${statusInfo(experiment.status).label}.`}
+                  </span>
+                </span>
+              </button>
+              {cancellable && (
+                <button type="button" role="menuitem" className={item} onClick={() => choose('cancel')}>
+                  <StopIcon size={16} className="mt-0.5 shrink-0 text-negative-fg" />
+                  <span>
+                    <span className="block font-medium text-negative-fg">Cancel experiment…</span>
+                    <span className="block text-xs text-muted">Stops the current step. You can retry later.</span>
+                  </span>
+                </button>
+              )}
+            </div>
+          </FloatingFocusManager>
+        </FloatingPortal>
+      )}
+    </>
+  )
+}
+
+function DetailItems({ experiment, reruns }: { experiment: Experiment; reruns: number[] }) {
+  const items: [ReactNode, ReactNode][] = [
+    [
+      'Paper',
+      <span key="paper">
+        <PaperLink paperId={experiment.paper_id} title={<MathText>{experiment.paper_title}</MathText>} />
+        {experiment.claim.paper_url && (
+          <>
+            {' '}
+            <ExternalLink href={experiment.claim.paper_url} className="text-xs text-muted">
+              source
+            </ExternalLink>
+          </>
+        )}
+      </span>,
+    ],
+  ]
+  if (experiment.category) items.push(['Category', <CategoryChip key="category" category={experiment.category} />])
+  if (experiment.mode && experiment.mode !== 'single')
+    items.push(['Mode', <ModeBadge key="mode" mode={experiment.mode} bundleSize={experiment.bundle?.length ?? experiment.bundle_claim_ids?.length} />])
+  if (experiment.flag_name) items.push(['Flag', <CodeToken key="flag">{experiment.flag_name}</CodeToken>])
+  if (experiment.branch)
+    items.push([
+      'Branch',
+      <span key="branch" className="inline-flex items-center gap-1">
+        <BranchIcon size={14} className="text-muted" /> <CodeToken>{experiment.branch}</CodeToken>
+      </span>,
+    ])
+  items.push([
+    'Project',
+    <span key="project">
+      {experiment.project.name} · created <RelativeTime iso={experiment.created_at} />
+    </span>,
+  ])
+  if (experiment.rerun_of_experiment_id != null)
+    items.push(['Re-run of', <Link key="rerun-of" to={`/experiments/${experiment.rerun_of_experiment_id}`}>#{experiment.rerun_of_experiment_id}</Link>])
+  if (reruns.length)
+    items.push([
+      'Re-runs',
+      <span key="reruns">
+        {reruns.map((rerunId, index) => (
+          <span key={rerunId}>
+            {index > 0 && ', '}
+            <Link to={`/experiments/${rerunId}`}>#{rerunId}</Link>
+          </span>
+        ))}
+      </span>,
+    ])
+  if (experiment.triage_id)
+    items.push(['From', <Link key="triage" to={`/recommendations?project=${experiment.project_id}&triage=${experiment.triage_id}`}>research scan #{experiment.triage_id}</Link>])
+  return (
+    <>
+      <dl className="mt-2 hidden flex-wrap items-center gap-x-4 gap-y-1.5 text-sm sm:flex">
+        {items.map(([label, value], index) => (
+          <div key={index} className="flex min-w-0 items-center gap-1.5">
+            <dt className="text-muted">{label}:</dt>
+            <dd className="min-w-0 [overflow-wrap:anywhere]">{value}</dd>
+          </div>
+        ))}
+      </dl>
+      <Disclosure label="Details" meta=" · paper, flag, branch" className="mt-2 sm:hidden">
+        <DefinitionList items={items} />
+      </Disclosure>
+    </>
+  )
+}
+
+/** Detail-page header: breadcrumb, the experiment as the h1, one status line, details (collapsed on mobile). */
+function ExperimentHeader({ experiment, reruns, onAction }: { experiment: Experiment; reruns: number[]; onAction: (kind: DialogKind) => void }) {
+  const adoption = experiment.verdict_detail?.details?.adoption
+  const retryable = canRetry(experiment.status, experiment.error) && experiment.status !== 'failed'
+  return (
+    <header className="mb-6 border-b border-line-muted pb-4">
+      <div className="flex items-start justify-between gap-3">
+        <Breadcrumb items={[{ label: 'Experiments', to: '/experiments' }, { label: `#${experiment.id}` }]} className="pt-1" />
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+          {retryable && (
+            <Button icon={<RefreshIcon />} onClick={() => onAction('retry')}>
+              Retry
+            </Button>
+          )}
+          <MoreMenu experiment={experiment} onSelect={onAction} />
+        </div>
+      </div>
+      <h1 className="mt-1 text-title text-fg [overflow-wrap:anywhere]">
+        <MathText>{experiment.title}</MathText>
+      </h1>
+      <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1.5">
+        <StatusChip status={experiment.status} explain />
+        {experiment.verdict && (
+          <span className="inline-flex items-center gap-1.5 text-xs text-muted">
+            Claim <OutcomeBadge kind="verdict" value={experiment.verdict} />
+          </span>
+        )}
+        {adoption?.verdict && (
+          <span className="inline-flex items-center gap-1.5 text-xs text-muted">
+            Here <OutcomeBadge kind="adoption" value={String(adoption.verdict)} />
+          </span>
+        )}
+        {experiment.status === 'awaiting_decision' && (
+          <a href="#gate" className="inline-flex min-h-6 items-center text-sm font-semibold">
+            See the recommendation ↓
+          </a>
+        )}
+        {experiment.status === 'awaiting_approval' && (
+          <a href="#gate" className="inline-flex min-h-6 items-center text-sm font-semibold">
+            Review the test plan ↓
+          </a>
+        )}
+      </div>
+      <DetailItems experiment={experiment} reruns={reruns} />
+    </header>
+  )
+}
+
+/** A failed experiment: what broke in plain words first, the traceback on demand (docs/ux-review.md X-11). */
+function FailureSummary({ experiment, onRetry }: { experiment: Experiment; onRetry: () => void }) {
+  const failure = summarizeFailure(experiment.error, experiment.stage)
+  const where = [failure.exitCode !== null ? `exit code ${failure.exitCode}` : null, failure.location ? `in ${failure.location}` : null].filter(Boolean).join(' ')
+  return (
+    <section role="alert" aria-labelledby="failure-title" className="rounded-lg border border-negative/30 bg-negative-subtle p-4">
+      <h2 id="failure-title" className="flex items-center gap-2 text-body-lg font-semibold text-negative-fg">
+        <AlertIcon /> {failure.title}
+      </h2>
+      <p className="mt-1 max-w-3xl text-body-lg text-fg [overflow-wrap:anywhere]">
+        {failure.plain}
+        {where && <span className="text-muted"> ({where})</span>}
+      </p>
+      {failure.cause && (
+        <p className="mt-1.5 max-w-3xl text-sm text-fg">
+          <span className="text-muted">Error: </span>
+          <code className="font-mono text-xs [overflow-wrap:anywhere]">{failure.cause}</code>
+        </p>
+      )}
+      <div className="mt-3 flex flex-wrap items-center gap-3">
+        {canRetry(experiment.status, experiment.error) && (
+          <Button variant="primary" icon={<RefreshIcon />} onClick={onRetry}>
+            Retry
+          </Button>
+        )}
+        <p className="text-sm text-muted">Fix the cause, then retry: completed steps aren’t repeated.</p>
+      </div>
+      {failure.technical && (
+        <Disclosure label="Show error output" className="mt-2">
+          <pre className="max-h-72 overflow-auto rounded-md border border-line bg-canvas p-2 font-mono text-xs whitespace-pre-wrap text-fg [overflow-wrap:anywhere]">{failure.technical}</pre>
+        </Disclosure>
+      )}
+    </section>
+  )
+}
+
+function StatusBanner({ experiment }: { experiment: Experiment }) {
   if (experiment.status === 'approving' || experiment.status === 'queued' || experiment.status === 'finalizing')
     return (
-      <Banner tone="accent">
+      <Banner tone="info" icon={<ClockIcon className="text-info-fg" />}>
         <strong>{statusInfo(experiment.status).label}.</strong> A job is queued for the worker; this page updates live when it starts.
       </Banner>
     )
+  if (experiment.status === 'cancelled' && experiment.error) return <Banner tone="neutral">{experiment.error}</Banner>
   return null
 }
 
@@ -424,152 +629,71 @@ export default function ExperimentDetail() {
         <ErrorState error={experiment.error} onRetry={() => experiment.refetch()} />
       </div>
     )
+  return <ExperimentPage data={experiment.data} project={project.data} reruns={rerunsOf(experiment.data.id, siblings.data)} events={events} streamStatus={streamStatus} />
+}
 
-  const data = experiment.data
+function ExperimentPage({ data, project, reruns, events, streamStatus }: { data: Experiment; project?: Project; reruns: number[]; events: LabEvent[]; streamStatus: string }) {
+  const { open, dialogs } = useExperimentDialogs(data)
   const stages = normalizeStages(data.stages, data.status, data.stage)
   const busy = isActiveStatus(data.status) && !['awaiting_approval', 'awaiting_decision'].includes(data.status)
   const iteration = currentIteration(data)
-  const reruns = rerunsOf(data.id, siblings.data)
   const maxIterations = protocolOf(data.spec).max_iterations
 
   return (
     <>
-      <PageHeader
-        eyebrow={
-          <span className="flex flex-wrap items-center gap-x-2">
-            <Link to="/experiments">Experiments</Link>
-            <span>/</span>
-            <span>#{data.id}</span>
-            <span>· {data.project.name}</span>
-            <span>
-              · created <RelativeTime iso={data.created_at} />
-            </span>
-            {data.rerun_of_experiment_id != null && (
-              <span>
-                · <RefreshIcon size={12} className="inline align-[-1px]" /> Re-run of{' '}
-                <Link to={`/experiments/${data.rerun_of_experiment_id}`}>#{data.rerun_of_experiment_id}</Link>
-              </span>
-            )}
-            {reruns.length > 0 && (
-              <span>
-                · Re-runs:{' '}
-                {reruns.map((rerunId, index) => (
-                  <span key={rerunId}>
-                    {index > 0 && ', '}
-                    <Link to={`/experiments/${rerunId}`}>#{rerunId}</Link>
-                  </span>
-                ))}
-              </span>
-            )}
-            {data.triage_id && (
-              <span>
-                · from <Link to={`/recommendations?project=${data.project_id}&triage=${data.triage_id}`}>research scan #{data.triage_id}</Link>
-              </span>
-            )}
-          </span>
-        }
-        title={
-          <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            {data.title}
-            <StatusChip status={data.status} className="text-sm" />
-            <VerdictBadge verdict={data.verdict} />
-          </span>
-        }
-        description={
-          <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <CategoryChip category={data.category} />
-            <ModeBadge mode={data.mode} bundleSize={data.bundle?.length ?? data.bundle_claim_ids?.length} />
-            {data.flag_name && (
-              <span>
-                flag <code className="code-inline">{data.flag_name}</code>
-              </span>
-            )}
-            {data.branch && (
-              <span className="inline-flex items-center gap-1">
-                <BranchIcon size={14} /> <code className="code-inline">{data.branch}</code>
-              </span>
-            )}
-            <span>
-              paper: <PaperLink paperId={data.paper_id} title={data.paper_title} />
-              {data.claim.paper_url && (
-                <>
-                  {' '}
-                  <ExternalLink href={data.claim.paper_url} className="text-xs text-muted">
-                    source
-                  </ExternalLink>
-                </>
-              )}
-            </span>
-          </span>
-        }
-        actions={<Actions experiment={data} />}
-      />
+      <ExperimentHeader experiment={data} reruns={reruns} onAction={open} />
 
-      <div className="space-y-4">
-        <GateCallout experiment={data} />
+      <div className="space-y-6">
+        {data.status === 'awaiting_approval' && <SpecGate key={data.id} experiment={data} project={project} />}
+        {data.verdict_detail && <DecisionSummary experiment={data} verdict={data.verdict_detail} />}
+        {data.status === 'failed' && <FailureSummary experiment={data} onRetry={() => open('retry')} />}
         <BlockedBanner experiment={data} />
-        {data.status === 'failed' && (
-          <div role="alert" className="rounded-lg border border-danger/40 bg-danger-subtle p-4">
-            <div className="flex items-center gap-2 font-semibold text-danger">
-              <AlertIcon /> Experiment failed
-            </div>
-            {data.error && <pre className="mt-2 max-h-56 overflow-auto text-xs whitespace-pre-wrap text-fg">{data.error}</pre>}
-            <p className="mt-2 text-xs text-muted">Fix the cause (see the log below) and use Retry — completed steps are not repeated.</p>
-          </div>
-        )}
-        {data.status === 'cancelled' && data.error && <Banner tone="muted">{data.error}</Banner>}
+        <StatusBanner experiment={data} />
 
-        <Card bodyClassName="px-4 py-5">
+        <Card title="Progress" bodyClassName="px-4 py-4">
           {iteration > 1 && (
-            <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-muted">
-              <Chip tone="done">
+            <div className="mb-3 flex flex-wrap items-center gap-2 text-sm text-muted">
+              <Chip tone="info">
                 Iteration {iteration}
                 {maxIterations >= iteration && ` of ${maxIterations}`}
               </Chip>
-              the judge diagnosed a fixable gap and sent the build back with a change
+              The analysis found a fixable gap, so the build went back to the coding agent with a change.
               {data.build.kept_iteration != null && data.build.kept_iteration < iteration && (
-                <span className="font-medium text-fg">
-                  · iteration {data.build.kept_iteration} scored best and was kept; later changes were reverted
-                </span>
+                <span className="font-medium text-fg">Iteration {data.build.kept_iteration} scored best and was kept; later changes were reverted.</span>
               )}
             </div>
           )}
           <Stepper
             stages={stages}
             waitingLabel={
-              data.status === 'blocked'
-                ? data.error
-                  ? 'prerequisite not merged'
-                  : `waiting for #${data.depends_on_experiment_id ?? 'prerequisite'}`
-                : undefined
+              data.status === 'blocked' ? (data.error ? 'prerequisite not merged' : `waiting for #${data.depends_on_experiment_id ?? 'prerequisite'}`) : undefined
             }
           />
         </Card>
 
         <div className="grid gap-6 xl:grid-cols-3">
           <div className="min-w-0 space-y-6 xl:col-span-2">
-            {data.status === 'awaiting_approval' && <SpecGate key={data.id} experiment={data} project={project.data} />}
-            {data.verdict_detail && <VerdictPanel experiment={data} verdict={data.verdict_detail} project={project.data} />}
+            {data.verdict_detail && <VerdictPanel experiment={data} verdict={data.verdict_detail} project={project} />}
 
             <Card
               title={`Timeline (${events.length})`}
               actions={isActiveStatus(data.status) ? <LiveDot status={streamStatus} /> : <span className="text-xs text-muted">{statusInfo(data.status).label}</span>}
-              bodyClassName="max-h-[520px] overflow-y-auto px-4 py-1"
+              bodyClassName="max-h-[560px] overflow-y-auto px-4 py-1"
             >
               <EventTimeline events={[...events].reverse()} emptyText={streamStatus === 'open' ? 'No events yet.' : 'Connecting to the live stream…'} />
             </Card>
 
             <LogCard experimentId={data.id} live={busy} />
             {data.status !== 'awaiting_approval' && Object.keys(data.spec).length > 0 && (
-              <Card title="Experiment spec">
+              <Card title="Test plan">
                 {isProtocolV2(data.spec) ? (
                   <ProtocolSummary spec={data.spec} className="mb-5 border-b border-line-muted pb-5" />
                 ) : (
-                  data.spec.prediction && (
-                    <PredictionPanel prediction={data.spec.prediction} claimed={data.spec.claimed_gain_pct} className="mb-5 md:max-w-xl" />
-                  )
+                  data.spec.prediction && <PredictionPanel prediction={data.spec.prediction} claimed={data.spec.claimed_gain_pct} className="mb-5 md:max-w-xl" />
                 )}
-                <SpecDetails spec={data.spec} project={project.data} includeEditable />
+                <Disclosure label="Full plan" meta=" · hypothesis, metrics, guardrails, time limits">
+                  <SpecDetails spec={data.spec} project={project} includeEditable />
+                </Disclosure>
               </Card>
             )}
           </div>
@@ -579,22 +703,23 @@ export default function ExperimentDetail() {
             <Card
               title="Claim under test"
               actions={
-                <Link to={`/research/claims/${data.claim_id}`} className="text-xs">
-                  Claim #{data.claim_id}
+                <Link to={`/research/claims/${data.claim_id}`} className="inline-flex min-h-6 items-center text-xs">
+                  Open claim #{data.claim_id} →
                 </Link>
               }
             >
-              <ClaimUnderTest experiment={data} project={project.data} />
+              <ClaimUnderTest experiment={data} project={project} />
             </Card>
             {data.status !== 'blocked' && <PlanCard experiment={data} />}
             <BuildCard experiment={data} />
             <RunsCard experiment={data} />
             <Card title="Target project">
-              <ProjectFacts project={project.data} />
+              <ProjectFacts project={project} />
             </Card>
           </div>
         </div>
       </div>
+      {dialogs}
     </>
   )
 }

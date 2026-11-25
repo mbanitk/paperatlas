@@ -2,6 +2,7 @@ import type {
   EditableField,
   Experiment,
   ExperimentSpec,
+  ExperimentSummary,
   Fidelity,
   FidelityLevel,
   Knob,
@@ -12,8 +13,19 @@ import type {
   PaperWorkload,
   ProtocolField,
   TuningResult,
+  VerdictDetails,
 } from '../api/types'
-import type { Tone } from './stages'
+import { formatSigned, humanizeMetric } from './format'
+import {
+  ADOPTION,
+  adoptionSemantics,
+  claimCheckSemantics,
+  DIAGNOSIS,
+  diagnosisSemantics,
+  FIDELITY,
+  type SemanticInfo,
+  type SemanticTone,
+} from './semantics'
 
 // Mirrors src/paperatlas/lab/protocol.py and planner._normalize_protocol.
 export const MAX_TUNE_CONFIGS = 4
@@ -348,34 +360,14 @@ export function workloadSummary(workload: PaperWorkload): string {
 
 // ---- verdicts, diagnoses, iterations ------------------------------------------------------------
 
-export const FIDELITY_INFO: Record<FidelityLevel, { label: string; tone: Tone; description: string }> = {
-  high: { label: 'High fidelity', tone: 'success', description: 'Baseline, workload and setup closely follow the paper.' },
-  medium: { label: 'Medium fidelity', tone: 'attention', description: 'Close to the paper, with some known gaps.' },
-  low: { label: 'Low fidelity', tone: 'danger', description: 'Large gaps to the paper — read any verdict with care.' },
-}
-
-export const ADOPTION_INFO: Record<string, { label: string; tone: Tone }> = {
-  worth_adopting: { label: 'Worth adopting', tone: 'success' },
-  small_gain: { label: 'Small gain', tone: 'attention' },
-  not_reproduced: { label: 'No gain', tone: 'neutral' },
-  regression: { label: 'Regression', tone: 'danger' },
-  inconclusive: { label: 'Inconclusive', tone: 'attention' },
-}
-export const adoptionInfo = (verdict: string | null | undefined) =>
-  ADOPTION_INFO[verdict ?? ''] ?? { label: (verdict ?? 'unknown').replace(/_/g, ' '), tone: 'neutral' as Tone }
-
-export const DIAGNOSIS_INFO: Record<string, { label: string; tone: Tone; description: string }> = {
-  reproduced: { label: 'Reproduced', tone: 'success', description: 'The claim check met the target.' },
-  partially_reproduced: { label: 'Partially reproduced', tone: 'attention', description: 'A real improvement, smaller than the paper’s.' },
-  implementation_suspect: { label: 'Implementation suspect', tone: 'danger', description: 'The counters show the technique is not doing what the paper describes.' },
-  untuned: { label: 'Not tuned', tone: 'attention', description: 'The mechanism works, but the knobs are far from where the paper operates.' },
-  regime_mismatch: { label: 'Workload mismatch', tone: 'neutral', description: 'The workload or model regime removes the benefit.' },
-  hardware_mismatch: { label: 'Hardware mismatch', tone: 'neutral', description: 'The mechanism works, but this hardware’s cost model cancels the gain.' },
-  claim_not_supported: { label: 'Claim not supported', tone: 'neutral', description: 'Faithful implementation and regime, still no effect.' },
-  inconclusive: { label: 'Inconclusive', tone: 'muted', description: 'Not enough evidence to explain the result.' },
-}
-export const diagnosisInfo = (diagnosis: string | null | undefined) =>
-  DIAGNOSIS_INFO[diagnosis ?? ''] ?? { label: (diagnosis ?? 'unknown').replace(/_/g, ' '), tone: 'neutral' as Tone, description: '' }
+// Words, tones and icons live in lib/semantics.ts (one vocabulary for the whole console); these names stay
+// for existing imports.
+export { ADOPTION, DIAGNOSIS, FIDELITY }
+export const FIDELITY_INFO: Record<FidelityLevel, SemanticInfo> = FIDELITY
+export const ADOPTION_INFO: Record<string, SemanticInfo> = ADOPTION
+export const adoptionInfo = (verdict: string | null | undefined): SemanticInfo => adoptionSemantics(verdict)
+export const DIAGNOSIS_INFO: Record<string, SemanticInfo> = DIAGNOSIS
+export const diagnosisInfo = (diagnosis: string | null | undefined): SemanticInfo => diagnosisSemantics(diagnosis)
 
 export const RUN_KIND_LABELS: Record<string, string> = { smoke: 'Smoke', tune: 'Tuning', eval: 'Claim check', adopt: 'Adoption check' }
 export const runKindLabel = (kind: string) => RUN_KIND_LABELS[kind] ?? kind.replace(/_/g, ' ')
@@ -400,3 +392,267 @@ export function chosenBy(tuning: Pick<TuningResult, 'baseline' | 'variant'>, con
 
 export const formatConfig = (config: Record<string, KnobValue> | null | undefined) =>
   config && Object.keys(config).length ? Object.entries(config).map(([k, v]) => `${k}=${formatKnobValue(v)}`).join(', ') : '—'
+
+// ---- Gate 3: the bottom line (docs/ux-review.md X-1) ----------------------------------------------
+
+export type DecisionAction = 'merge' | 'drop' | 'your_call'
+
+/** What `recommendDecision` reads: a `VerdictDetail`, or anything shaped like one (e.g. built from a list row). */
+export interface DecisionInput {
+  verdict: string | null | undefined
+  primary_metric?: string | null
+  median_delta_pct?: number | null
+  ci_low_pct?: number | null
+  ci_high_pct?: number | null
+  claimed_gain_pct?: number | null
+  quality_ok?: boolean | null
+  details?:
+    | (Pick<VerdictDetails, 'worth_adopting' | 'success_threshold_pct' | 'target_pct' | 'quality_problems' | 'comparison'> & {
+        adoption?: Partial<NonNullable<VerdictDetails['adoption']>> | null
+      })
+    | null
+}
+
+export interface CheckResult {
+  verdict: string
+  info: SemanticInfo
+  delta: number | null
+  low: number | null
+  high: number | null
+  /** false only when a quality guardrail is known to have failed. */
+  qualityOk: boolean
+  /** 'unmeasured': quality wasn't (fully) measured, which the judge reports as inconclusive, not as a failure. */
+  quality: 'ok' | 'failed' | 'unmeasured'
+  qualityProblems: string[]
+}
+
+export interface DecisionRecommendation {
+  action: DecisionAction
+  /** "Merge", "Drop" or "Your call". */
+  label: string
+  tone: SemanticTone
+  /** The decisive reason, with its number. */
+  reason: string
+  /** What the claim check says about the paper's claim. */
+  claimSentence: string
+  claim: CheckResult
+  /** The adoption check; derived from the claim check when that already ran on the project default. */
+  adoption: CheckResult
+  /** false when no separate adoption check ran (the claim check already used the project default and workload). */
+  separateAdoption: boolean
+  /** No separate adoption check, and the claim check used the paper's baseline or workload: nothing measured on the default. */
+  paperOnly: boolean
+  /** One line for dialogs and rows: "Claim check: Partly reproduced +2.8% · Adoption check: Worse than default −63.1%". */
+  recap: string
+}
+
+const num = (value: unknown): number | null => (typeof value === 'number' && Number.isFinite(value) ? value : null)
+
+/** The judge only returns `regression` with quality_ok=false when a guardrail broke; unmeasured quality is `inconclusive`. */
+const qualityState = (qualityOk: boolean | null | undefined, verdict: string): CheckResult['quality'] =>
+  qualityOk !== false ? 'ok' : verdict === 'regression' ? 'failed' : 'unmeasured'
+const signed = (value: number | null) => formatSigned(value, { digits: 1, fallback: 'not measured' })
+
+/** Adoption verdict implied by a claim check that already ran on the project default and workload. */
+function impliedAdoption(claim: string, worthAdopting: boolean | undefined): string {
+  if (claim === 'reproduced' || claim === 'partial') return worthAdopting === true ? 'worth_adopting' : worthAdopting === false ? 'small_gain' : claim === 'reproduced' ? 'worth_adopting' : 'small_gain'
+  return ['not_reproduced', 'regression', 'inconclusive'].includes(claim) ? claim : 'inconclusive'
+}
+
+function claimSentenceFor(verdict: string, delta: number | null, target: number | null, claimed: number | null): string {
+  const vs = target !== null ? ` vs a ${formatSigned(target, { digits: 1 })} target` : ''
+  const base =
+    verdict === 'reproduced'
+      ? `The paper’s claim held here (${signed(delta)}${vs}).`
+      : verdict === 'partial'
+        ? `The paper’s claim partly held here (${signed(delta)}${vs}).`
+        : verdict === 'not_reproduced'
+          ? `The paper’s claim didn’t reproduce here (${signed(delta)}, no clear change).`
+          : verdict === 'regression'
+            ? `Against the paper’s setup it was worse than the baseline (${signed(delta)}).`
+            : 'The claim check was inconclusive: not enough complete measurements.'
+  return claimed !== null ? `${base} The paper reports ${formatSigned(claimed, { digits: 0 })}.` : base
+}
+
+/**
+ * The bottom line for Gate 3, from the claim check and the adoption check (docs/ux-review.md X-1):
+ * - a failed quality guardrail, or an adoption check that came out worse than the default → **Drop**
+ * - worth adopting with quality intact → **Merge**
+ * - small gain, no measurable gain or inconclusive → **Your call** (no primary action), with the reason
+ * When no separate adoption check ran, the claim check (project default, project workload) stands in for it.
+ */
+export function recommendDecision(input: DecisionInput): DecisionRecommendation {
+  const details = input.details ?? {}
+  const claimVerdict = input.verdict ?? 'inconclusive'
+  const claimDelta = num(input.median_delta_pct)
+  const claimProblems = details.quality_problems ?? []
+  const claim: CheckResult = {
+    verdict: claimVerdict,
+    info: claimCheckSemantics(claimVerdict),
+    delta: claimDelta,
+    low: num(input.ci_low_pct),
+    high: num(input.ci_high_pct),
+    qualityOk: qualityState(input.quality_ok, claimVerdict) !== 'failed',
+    quality: qualityState(input.quality_ok, claimVerdict),
+    qualityProblems: claimProblems,
+  }
+  const separate = !!details.adoption?.verdict
+  // A claim check against the paper's baseline or workload says nothing about the project default on its own.
+  const paperOnly = !separate && (details.comparison?.baseline === 'paper baseline' || details.comparison?.workload === 'paper regime')
+  const adoptionVerdict = separate ? String(details.adoption!.verdict) : paperOnly ? 'inconclusive' : impliedAdoption(claimVerdict, details.worth_adopting)
+  const adoption: CheckResult = separate
+    ? {
+        verdict: adoptionVerdict,
+        info: adoptionSemantics(adoptionVerdict),
+        delta: num(details.adoption!.median_delta_pct),
+        low: num(details.adoption!.ci_low_pct),
+        high: num(details.adoption!.ci_high_pct),
+        qualityOk: qualityState(details.adoption!.quality_ok, adoptionVerdict) !== 'failed',
+        quality: qualityState(details.adoption!.quality_ok, adoptionVerdict),
+        qualityProblems: details.adoption!.quality_problems ?? [],
+      }
+    : { ...claim, verdict: adoptionVerdict, info: adoptionSemantics(adoptionVerdict), ...(paperOnly ? { delta: null, low: null, high: null } : {}) }
+
+  const metric = humanizeMetric(input.primary_metric) || 'The primary metric'
+  const threshold = num(details.success_threshold_pct)
+  const target = num(details.target_pct) ?? claimTarget(input.claimed_gain_pct, threshold)
+  const size = adoption.delta !== null ? `${Math.abs(Number(adoption.delta.toFixed(1)))}%` : null
+
+  let action: DecisionAction
+  let reason: string
+  const problems = [...new Set([...(claim.qualityOk ? [] : claim.qualityProblems), ...(adoption.qualityOk ? [] : adoption.qualityProblems)])]
+  if (!claim.qualityOk || !adoption.qualityOk) {
+    action = 'drop'
+    reason = `A quality guardrail failed${problems.length ? `: ${problems.join('; ')}` : ''}. The change alters outputs beyond what’s allowed.`
+  } else if (adoptionVerdict === 'regression') {
+    action = 'drop'
+    reason = size ? `${metric} is ${size} worse than the current default on your workload.` : 'It made things worse than the current default on your workload.'
+  } else if (adoptionVerdict === 'worth_adopting') {
+    action = 'merge'
+    reason = `${metric} is ${size ?? 'clearly'} better than the current default on your workload, with quality intact.`
+  } else {
+    action = 'your_call'
+    reason =
+      adoptionVerdict === 'small_gain'
+        ? `A small gain on your workload (${signed(adoption.delta)})${threshold !== null ? `, below the ${formatSigned(threshold, { digits: 1 })} success bar` : ''}. Merge only if it’s worth the extra code.`
+        : adoptionVerdict === 'not_reproduced'
+          ? `No measurable change on your workload (${signed(adoption.delta)}, within noise). Merging adds code without a clear benefit.`
+          : paperOnly
+            ? 'Only the paper’s setup was measured, so there’s no result on your default workload yet.'
+            : 'Not enough complete measurements to judge it on your workload. A re-run may settle it.'
+  }
+
+  const recap = separate
+    ? `Claim check: ${claim.info.label} ${signed(claim.delta)} · Adoption check: ${adoption.info.label} ${signed(adoption.delta)}`
+    : `Claim check (on your workload): ${claim.info.label} ${signed(claim.delta)}`
+
+  return {
+    action,
+    label: action === 'merge' ? 'Merge' : action === 'drop' ? 'Drop' : 'Your call',
+    tone: action === 'merge' ? 'positive' : action === 'drop' ? 'negative' : 'caution',
+    reason,
+    claimSentence: claimSentenceFor(claimVerdict, claim.delta, target, num(input.claimed_gain_pct)),
+    claim,
+    adoption,
+    separateAdoption: separate,
+    paperOnly,
+    recap,
+  }
+}
+
+/**
+ * Recommendation for a list row, only when the row alone settles it the same way the detail page would: a
+ * separate adoption check is required (older APIs omit the field; without it the claim check would need
+ * `worth_adopting` and the comparison, which rows don't carry). A claim-check regression next to a
+ * worth-adopting result is left open: only the detail page knows whether that regression was a quality failure.
+ */
+export function recommendForSummary(summary: Pick<ExperimentSummary, 'verdict' | 'median_delta_pct' | 'claimed_gain_pct' | 'adoption_verdict' | 'adoption_median_delta_pct'>): DecisionRecommendation | null {
+  if (!summary.verdict || !summary.adoption_verdict) return null
+  if (summary.verdict === 'regression' && summary.adoption_verdict === 'worth_adopting') return null
+  return recommendDecision({
+    verdict: summary.verdict,
+    median_delta_pct: summary.median_delta_pct,
+    claimed_gain_pct: summary.claimed_gain_pct,
+    details: { adoption: { verdict: summary.adoption_verdict, median_delta_pct: summary.adoption_median_delta_pct ?? null } },
+  })
+}
+
+// ---- failed experiments: plain sentence first, traceback on demand (X-11) ----------------------------
+
+export interface FailureSummary {
+  /** "Smoke test failed" */
+  title: string
+  /** "The benchmark crashed before measuring anything." */
+  plain: string
+  /** The exception at the bottom of the traceback: "ServerError: chat completion failed: HTTP 404 …" */
+  cause: string | null
+  /** Where it was raised: "inference_lab/bench/client.py, line 177" */
+  location: string | null
+  exitCode: number | null
+  timedOut: boolean
+  /** The raw error text, for "Show error output". */
+  technical: string
+}
+
+const FAILED_STEP: Record<string, { title: string; plain: string }> = {
+  plan: { title: 'Planning failed', plain: 'The planner couldn’t turn the claim into a test plan.' },
+  approve: { title: 'Starting the build failed', plain: 'The approved plan couldn’t be handed to the coding agent.' },
+  build: { title: 'Build failed', plain: 'The coding agent couldn’t produce a build that passes the project’s checks.' },
+  smoke: { title: 'Smoke test failed', plain: 'The benchmark crashed before measuring anything.' },
+  tune: { title: 'Tuning failed', plain: 'The benchmark crashed while trying different settings.' },
+  eval: { title: 'A/B test failed', plain: 'The benchmark crashed during the measured runs.' },
+  run: { title: 'A/B test failed', plain: 'The benchmark crashed during the measured runs.' },
+  adopt: { title: 'Adoption check failed', plain: 'The benchmark crashed while measuring your default workload.' },
+  judge: { title: 'Judging failed', plain: 'The measurements couldn’t be compared with the claim.' },
+  decide: { title: 'Applying your decision failed', plain: 'The merge or drop didn’t complete.' },
+  finalize: { title: 'Applying your decision failed', plain: 'The merge or drop didn’t complete.' },
+}
+
+/** Duration for prose: "45 s", "30 min", "2 h", "1 h 30 min". */
+export function plainDuration(seconds: number | null | undefined): string {
+  if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds < 0) return ''
+  if (seconds < 90) return `${Math.round(seconds)} s`
+  const minutes = Math.round(seconds / 60)
+  if (minutes < 90) return `${minutes} min`
+  const hours = Math.floor(minutes / 60)
+  const rest = minutes % 60
+  return rest ? `${hours} h ${rest} min` : `${hours} h`
+}
+
+const EXCEPTION_LINE = /^(?:[A-Za-z_][\w]*\.)*([A-Z][\w]*(?:Error|Exception|Exit|Interrupt|Failure|Failed))\b(?::\s*(.*))?$/
+
+/** Plain-language summary of an experiment's `error` ("smoke: smoke benchmark failed (exit 1):\n<traceback>"). */
+export function summarizeFailure(error: string | null | undefined, stage?: string | null): FailureSummary {
+  const technical = (error ?? '').trim()
+  const prefix = /^([a-z_]+):\s*/.exec(technical)
+  const step = FAILED_STEP[prefix?.[1] ?? ''] ?? FAILED_STEP[stage ?? ''] ?? { title: 'Experiment failed', plain: 'A step crashed before the experiment finished.' }
+  const exit = /\(exit (-?\d+)\)/.exec(technical)
+  const exitCode = exit ? Number(exit[1]) : null
+  const timeout = /\[timeout after (\d+)\s*s\]/.exec(technical)
+  const timedOut = !!timeout || exitCode === 124
+  const lines = technical.split('\n').map((line) => line.trim()).filter(Boolean)
+
+  let cause: string | null = null
+  for (let index = lines.length - 1; index >= 0 && !cause; index--) {
+    const match = EXCEPTION_LINE.exec(lines[index])
+    if (match) cause = match[2] ? `${match[1]}: ${match[2]}` : match[1]
+  }
+  if (!cause && lines.length) {
+    // No traceback: the message itself is the cause, unless it's only the generic "… failed (exit N):" header.
+    const first = lines[0].replace(/^[a-z_]+:\s*/, '')
+    if (!/failed \(exit -?\d+\):?$/.test(first) && !/^\[timeout/.test(first) && first !== step.title) cause = first
+  }
+  if (cause && cause.length > 220) cause = `${cause.slice(0, 219)}…`
+
+  let location: string | null = null
+  const files = [...technical.matchAll(/File "([^"<]+)", line (\d+)/g)]
+  if (files.length) {
+    const [, file, line] = files[files.length - 1]
+    const short = file.includes('/src/') ? file.slice(file.lastIndexOf('/src/') + 5) : file.split('/').slice(-3).join('/')
+    location = `${short}, line ${line}`
+  }
+
+  const seconds = timeout ? Number(timeout[1]) : null
+  const plain = timedOut ? `It ran out of time${seconds ? ` after ${plainDuration(seconds)}` : ''} before finishing.` : step.plain
+  return { title: step.title, plain, cause, location, exitCode, timedOut, technical }
+}

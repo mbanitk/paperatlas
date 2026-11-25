@@ -11,8 +11,12 @@ import {
   protocolOf,
   protocolOverrides,
   protocolToForm,
+  plainDuration,
   rebaseProtocol,
+  recommendDecision,
+  recommendForSummary,
   runKindLabel,
+  summarizeFailure,
   tuneConfigs,
   validateProtocol,
 } from './protocol'
@@ -127,5 +131,116 @@ describe('helpers', () => {
     expect(currentIteration(experiment('building', 0))).toBe(1)
     expect(currentIteration(experiment('building', 1))).toBe(2)
     expect(currentIteration(experiment('awaiting_decision', 2, 2))).toBe(2)
+  })
+})
+
+describe('recommendDecision', () => {
+  const CLAIMS = ['reproduced', 'partial', 'not_reproduced', 'regression', 'inconclusive']
+  const ADOPTIONS = ['worth_adopting', 'small_gain', 'not_reproduced', 'regression', 'inconclusive']
+  const verdict = (claim: string, adoption: string | null, quality: { claim?: boolean; adoption?: boolean } = {}) => ({
+    verdict: claim,
+    primary_metric: 'throughput_tokens_per_s',
+    median_delta_pct: 2.8,
+    claimed_gain_pct: null,
+    quality_ok: quality.claim ?? true,
+    details: {
+      success_threshold_pct: 5,
+      quality_problems: quality.claim === false ? ['output agreement 0.80 < 0.95'] : [],
+      adoption: adoption
+        ? { verdict: adoption, median_delta_pct: -63.1, quality_ok: quality.adoption ?? true, quality_problems: quality.adoption === false ? ['exact match dropped 4 pts'] : [] }
+        : null,
+    },
+  })
+
+  it('follows the adoption check for every claim/adoption/quality combination', () => {
+    for (const claim of CLAIMS)
+      for (const adoption of ADOPTIONS)
+        for (const [claimOk, adoptionOk] of [[true, true], [false, true], [true, false]]) {
+          const result = recommendDecision(verdict(claim, adoption, { claim: claimOk, adoption: adoptionOk }))
+          const failed = (!claimOk && claim === 'regression') || (!adoptionOk && adoption === 'regression')
+          const expected = failed || adoption === 'regression' ? 'drop' : adoption === 'worth_adopting' ? 'merge' : 'your_call'
+          expect(result.action, `${claim} / ${adoption} / quality ${claimOk},${adoptionOk}`).toBe(expected)
+          expect(result.separateAdoption).toBe(true)
+        }
+  })
+
+  it('states the bottom line for experiment #6 (partial claim, regression here)', () => {
+    const result = recommendDecision(verdict('partial', 'regression'))
+    expect(result).toMatchObject({ action: 'drop', label: 'Drop', tone: 'negative' })
+    expect(result.reason).toBe('Throughput (tokens/s) is 63.1% worse than the current default on your workload.')
+    expect(result.claimSentence).toBe('The paper’s claim partly held here (+2.8% vs a +5% target).')
+    expect(result.recap).toBe('Claim check: Partly reproduced +2.8% · Adoption check: Worse than default −63.1%')
+  })
+
+  it('treats unmeasured quality as inconclusive, not as a failed guardrail', () => {
+    const result = recommendDecision({ verdict: 'inconclusive', quality_ok: false, details: { quality_problems: ['no quality measurements in the results'] } })
+    expect(result).toMatchObject({ action: 'your_call' })
+    expect(result.claim.quality).toBe('unmeasured')
+    expect(recommendDecision(verdict('reproduced', 'inconclusive', { adoption: false })).adoption.quality).toBe('unmeasured')
+  })
+
+  it('names the failed guardrail', () => {
+    const result = recommendDecision(verdict('reproduced', 'regression', { adoption: false }))
+    expect(result.action).toBe('drop')
+    expect(result.reason).toMatch(/quality guardrail failed: exact match dropped 4 pts/)
+  })
+
+  it('reads the claim check as the adoption check when none ran separately', () => {
+    expect(recommendDecision(verdict('regression', null)).adoption.verdict).toBe('regression')
+    expect(recommendDecision(verdict('regression', null)).action).toBe('drop')
+    expect(recommendDecision({ ...verdict('reproduced', null), details: { worth_adopting: true } }).action).toBe('merge')
+    expect(recommendDecision({ ...verdict('partial', null), details: { worth_adopting: false } }).adoption.verdict).toBe('small_gain')
+    const notReproduced = recommendDecision({ ...verdict('not_reproduced', null), median_delta_pct: 0 })
+    expect(notReproduced).toMatchObject({ action: 'your_call', separateAdoption: false })
+    expect(notReproduced.recap).toBe('Claim check (on your workload): Not reproduced 0%')
+    // A claim check on the paper's workload alone says nothing about the project default.
+    const paperOnly = recommendDecision({ ...verdict('reproduced', null), details: { worth_adopting: true, comparison: { kind: 'claim', baseline: 'project default', workload: 'paper regime' } } })
+    expect(paperOnly).toMatchObject({ action: 'your_call' })
+    expect(paperOnly.adoption.delta).toBeNull()
+  })
+
+  it('mentions the paper’s number and the target only when they exist', () => {
+    expect(recommendDecision({ ...verdict('regression', null), median_delta_pct: -66.8, claimed_gain_pct: 41 }).claimSentence).toBe(
+      'Against the paper’s setup it was worse than the baseline (−66.8%). The paper reports +41%.',
+    )
+    expect(recommendDecision({ verdict: 'reproduced', median_delta_pct: 5.4 }).claimSentence).toBe('The paper’s claim held here (+5.4%).')
+  })
+
+  it('recommends from list rows only when the API sends the adoption check', () => {
+    const row = { verdict: 'partial' as const, median_delta_pct: 2.8, claimed_gain_pct: null }
+    expect(recommendForSummary(row)).toBeNull()
+    expect(recommendForSummary({ ...row, adoption_verdict: 'regression', adoption_median_delta_pct: -63.1 })?.action).toBe('drop')
+    expect(recommendForSummary({ ...row, adoption_verdict: null })).toBeNull()
+    // Only the detail page knows whether a claim-check regression was a quality failure.
+    expect(recommendForSummary({ ...row, verdict: 'regression', adoption_verdict: 'worth_adopting' })).toBeNull()
+  })
+})
+
+describe('summarizeFailure', () => {
+  it('puts a plain sentence before the traceback', () => {
+    const error = [
+      'smoke: smoke benchmark failed (exit 1):',
+      ' in _run_module_as_main',
+      '  File "<frozen runpy>", line 88, in _run_code',
+      '  File "/repo/data/r2e/worktrees/exp-7/src/inference_lab/bench/client.py", line 177, in chat_stream',
+      '    raise ServerError(f"chat completion failed")',
+      'inference_lab.bench.client.ServerError: chat completion failed: HTTP 404: b\'{"error": "generation thread died"}\'',
+    ].join('\n')
+    expect(summarizeFailure(error)).toMatchObject({
+      title: 'Smoke test failed',
+      plain: 'The benchmark crashed before measuring anything.',
+      cause: 'ServerError: chat completion failed: HTTP 404: b\'{"error": "generation thread died"}\'',
+      location: 'inference_lab/bench/client.py, line 177',
+      exitCode: 1,
+      timedOut: false,
+      technical: error,
+    })
+  })
+
+  it('explains timeouts and falls back to the stage', () => {
+    expect(summarizeFailure('smoke: smoke benchmark failed (exit 124):\n[timeout after 1800s]')).toMatchObject({ timedOut: true, cause: null, plain: 'It ran out of time after 30 min before finishing.' })
+    expect(summarizeFailure('verification failed: tests do not pass', 'build')).toMatchObject({ title: 'Build failed', cause: 'verification failed: tests do not pass' })
+    expect(summarizeFailure(null).title).toBe('Experiment failed')
+    expect([plainDuration(45), plainDuration(1800), plainDuration(7200), plainDuration(5400)]).toEqual(['45 s', '30 min', '2 h', '1 h 30 min'])
   })
 })

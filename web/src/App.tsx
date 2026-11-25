@@ -18,6 +18,8 @@ const Claims = lazy(() => import('./pages/research/Claims'))
 const ClaimDetailPage = lazy(() => import('./pages/research/ClaimDetail'))
 const Projects = lazy(() => import('./pages/Projects'))
 const System = lazy(() => import('./pages/System'))
+// Dev-only UX lab with every shared primitive (used by `npm run ux:check`); dropped from production builds.
+const UxLab = import.meta.env.DEV ? lazy(() => import('../dev/UxLab')) : null
 
 export default function App() {
   return (
@@ -39,6 +41,7 @@ export default function App() {
           </Route>
           <Route path="projects" element={<Projects />} />
           <Route path="system" element={<System />} />
+          {UxLab && <Route path="__ux" element={<UxLab />} />}
           <Route path="*" element={<NotFound />} />
         </Route>
       </Routes>

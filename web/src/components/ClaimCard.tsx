@@ -1,9 +1,9 @@
 import type { ReactNode } from 'react'
 import type { Claim } from '../api/types'
-import { claimedEffectView } from '../lib/claims'
-import { formatNumber, humanize } from '../lib/format'
-import { CategoryChip, DocTypeChip, EffortChip } from './Badges'
-import { AlertIcon } from './Icons'
+import { claimedEffectView, effectText } from '../lib/claims'
+import { formatNumber, humanize, humanizeMetric, MISSING, sanitizeText } from '../lib/format'
+import { CategoryChip, DocTypeChip, EffortChip, Tag } from './Badges'
+import { AlertIcon, ArrowDownIcon, ArrowUpIcon, PaperIcon } from './Icons'
 import { Chip, DefinitionList, ExternalLink, PaperLink } from './ui'
 
 export function Requirements({ claim }: { claim: Claim }) {
@@ -14,8 +14,8 @@ export function Requirements({ claim }: { claim: Claim }) {
   ].filter(Boolean) as string[]
   if (!items.length) return null
   return (
-    <Chip tone="danger" title="Paper prerequisites">
-      <AlertIcon size={12} /> requires {items.join(', ')}
+    <Chip tone="caution" title="The paper’s setup needs this; it may not run on this project’s hardware.">
+      <AlertIcon size={12} className="shrink-0" /> Requires {items.join(', ')}
     </Chip>
   )
 }
@@ -26,22 +26,38 @@ export function ClaimChips({ claim, showCategory = true }: { claim: Claim; showC
     <div className="flex flex-wrap items-center gap-1.5">
       {showCategory && <CategoryChip category={claim.category} />}
       <EffortChip effort={claim.effort} />
-      {!claim.testable && <Chip tone="muted">not testable</Chip>}
+      {!claim.testable && <Tag>Not testable</Tag>}
       <Requirements claim={claim} />
       <DocTypeChip docType={claim.paper_doc_type} />
     </div>
   )
 }
 
-/** Reported effect; only relative gains get a direction arrow and colour, absolute values stay neutral. */
+/**
+ * "Paper reports +41% decode speed" in the reference register (neutral ink + paper icon). Relative gains are
+ * signed; absolute values are shown as reported; "Paper gives no number" when there is none.
+ */
 export function ClaimedEffect({ claim }: { claim: Claim }) {
   const view = claimedEffectView(claim, claim.explainer)
+  const value = effectText(view, claim.direction)
   return (
-    <span className="tabular-nums" title={view.summary ?? (view.kind === 'neutral' ? 'Reported value, not a relative gain over a baseline' : undefined)}>
-      <span className={view.kind === 'gain' ? 'font-semibold text-done' : 'font-semibold text-fg'}>{view.text}</span>
-      {view.metric && <span className="text-muted"> {view.metric}</span>}
+    <span className="inline-flex flex-wrap items-baseline gap-x-1 tabular-nums">
+      <PaperIcon size={12} className="shrink-0 self-center text-muted" aria-hidden="true" />
+      {view.kind === 'none' ? (
+        <span className="text-muted">{value}</span>
+      ) : (
+        <>
+          <span className="text-muted">Paper reports</span>
+          <span className="font-semibold text-fg">{value}</span>
+          {view.metric && <span className="text-muted">{humanizeMetric(view.metric)}</span>}
+        </>
+      )}
     </span>
   )
+}
+
+function SectionHeading({ children }: { children: ReactNode }) {
+  return <h4 className="mb-1 text-sm font-semibold text-fg">{children}</h4>
 }
 
 /** Full claim card: effects, paper setup, prerequisites, risks and the evidence quote. */
@@ -50,11 +66,11 @@ export function ClaimCardDetails({ claim, showPaper = true }: { claim: Claim; sh
   const setup = card?.paper_setup ? Object.entries(card.paper_setup).filter(([, value]) => value) : []
   return (
     <div className="space-y-4 text-sm">
-      {claim.summary && <p className="text-fg">{claim.summary}</p>}
+      {claim.summary && <p className="text-fg">{sanitizeText(claim.summary)}</p>}
       <DefinitionList
         items={[
-          ['Technique', claim.technique],
-          ['Change required', claim.change_required ?? '—'],
+          ['Technique', sanitizeText(claim.technique)],
+          ['Change required', claim.change_required ? sanitizeText(claim.change_required) : MISSING.value],
           ...(showPaper && claim.paper_title
             ? ([
                 [
@@ -74,16 +90,31 @@ export function ClaimCardDetails({ claim, showPaper = true }: { claim: Claim; sh
       />
       {!!card?.effects?.length && (
         <div>
-          <h4 className="mb-1 text-xs font-semibold tracking-wide text-muted uppercase">Claimed effects</h4>
+          <SectionHeading>Effects the paper reports</SectionHeading>
           <ul className="space-y-1">
             {card.effects.map((effect, index) => (
               <li key={index} className="flex flex-wrap items-baseline gap-x-2">
-                <span className="font-semibold tabular-nums">
-                  {effect.value === null || effect.direction === 'none'
-                    ? 'qualitative'
-                    : `${effect.direction === 'decrease' ? '↓' : '↑'} ${formatNumber(effect.value, 2)}${effect.unit === '%' ? '%' : effect.unit ? `${effect.unit === 'x' ? '×' : ` ${effect.unit}`}` : ''}`}
+                <span className="inline-flex items-center gap-0.5 font-semibold tabular-nums">
+                  {effect.value === null || effect.direction === 'none' ? (
+                    'Qualitative'
+                  ) : (
+                    <>
+                      {effect.direction === 'decrease' ? (
+                        <>
+                          <ArrowDownIcon size={12} className="shrink-0" />
+                          <span className="sr-text">decrease </span>
+                        </>
+                      ) : (
+                        <>
+                          <ArrowUpIcon size={12} className="shrink-0" />
+                          <span className="sr-text">increase </span>
+                        </>
+                      )}
+                      {`${formatNumber(effect.value, 2)}${effect.unit === '%' ? '%' : effect.unit ? `${effect.unit === 'x' ? '×' : ` ${effect.unit}`}` : ''}`}
+                    </>
+                  )}
                 </span>
-                <span>{effect.metric}</span>
+                <span>{humanizeMetric(effect.metric)}</span>
                 {(effect.baseline || effect.conditions) && (
                   <span className="text-xs text-muted">
                     {effect.baseline && `vs ${effect.baseline}`}
@@ -98,14 +129,14 @@ export function ClaimCardDetails({ claim, showPaper = true }: { claim: Claim; sh
       )}
       {!!setup.length && (
         <div>
-          <h4 className="mb-1 text-xs font-semibold tracking-wide text-muted uppercase">Paper setup</h4>
+          <SectionHeading>Paper setup</SectionHeading>
           <DefinitionList items={setup.map(([key, value]) => [humanize(key), String(value)])} />
         </div>
       )}
       <div className="grid gap-4 sm:grid-cols-2">
         {!!card?.prerequisites?.length && (
           <div>
-            <h4 className="mb-1 text-xs font-semibold tracking-wide text-muted uppercase">Prerequisites</h4>
+            <SectionHeading>Prerequisites</SectionHeading>
             <ul className="list-disc space-y-0.5 pl-5">
               {card.prerequisites.map((item) => (
                 <li key={item}>{item}</li>
@@ -115,7 +146,7 @@ export function ClaimCardDetails({ claim, showPaper = true }: { claim: Claim; sh
         )}
         {!!card?.risks?.length && (
           <div>
-            <h4 className="mb-1 text-xs font-semibold tracking-wide text-muted uppercase">Risks</h4>
+            <SectionHeading>Risks</SectionHeading>
             <ul className="list-disc space-y-0.5 pl-5">
               {card.risks.map((item) => (
                 <li key={item}>{item}</li>
@@ -127,12 +158,12 @@ export function ClaimCardDetails({ claim, showPaper = true }: { claim: Claim; sh
       {(card?.evidence?.quote || claim.evidence_quote) && (
         <blockquote className="rounded-r-md border-l-3 border-accent bg-canvas-subtle px-3 py-2 text-muted">
           “{card?.evidence?.quote ?? claim.evidence_quote}”
-          {card?.evidence?.location && <span className="mt-1 block text-xs not-italic">— {card.evidence.location}</span>}
+          {card?.evidence?.location && <span className="mt-1 block text-xs not-italic">{card.evidence.location}</span>}
         </blockquote>
       )}
       {!!claim.key_points?.length && (
         <div>
-          <h4 className="mb-1 text-xs font-semibold tracking-wide text-muted uppercase">Key points</h4>
+          <SectionHeading>Key points</SectionHeading>
           <ul className="list-disc space-y-0.5 pl-5">
             {claim.key_points.map((point) => (
               <li key={point}>{point}</li>

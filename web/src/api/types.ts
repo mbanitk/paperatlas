@@ -567,6 +567,12 @@ export interface ExperimentSummary {
   depends_on_experiment_id?: number | null
   /** set on a re-run: the experiment it repeats (same claim, current code) */
   rerun_of_experiment_id?: number | null
+  /**
+   * Adoption check (method vs the project default on its workload) when it ran separately from the claim check.
+   * `null` when it didn't; absent from older lab-api versions.
+   */
+  adoption_verdict?: AdoptionVerdict | string | null
+  adoption_median_delta_pct?: number | null
 }
 
 export interface Guardrails {

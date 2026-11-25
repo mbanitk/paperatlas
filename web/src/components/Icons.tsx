@@ -1,4 +1,5 @@
 import type { ReactNode, SVGProps } from 'react'
+import type { SemanticIconName } from '../lib/semantics'
 
 type IconProps = SVGProps<SVGSVGElement> & { size?: number }
 
@@ -352,6 +353,43 @@ export const GLYPHS = {
     </>
   ),
   hash: <path d="M6 2.5l-1.5 11M11.5 2.5L10 13.5M2.8 5.8h11M2.2 10.2h11" />,
+  // Replacements for Unicode pictographs (★ ↻ ‹/› ≈ ◐ =) — docs/ux-review.md §3.7.
+  star: <path d="M8 1.8l1.9 3.9 4.3.6-3.1 3 .7 4.3L8 11.6l-3.8 2 .7-4.3-3.1-3 4.3-.6z" />,
+  rerun: (
+    <>
+      <path d="M13.2 8a5.2 5.2 0 1 1-1.6-3.8" />
+      <path d="M13.2 2.5v3h-3" />
+    </>
+  ),
+  code: <path d="M5.5 4.5L2 8l3.5 3.5M10.5 4.5L14 8l-3.5 3.5" />,
+  approx: <path d="M2.5 6.2c1.6-1.6 3.4-1.6 5.5 0s3.9 1.6 5.5 0M2.5 10.2c1.6-1.6 3.4-1.6 5.5 0s3.9 1.6 5.5 0" />,
+  half: (
+    <>
+      <circle cx="8" cy="8" r="5.8" />
+      <path d="M8 2.2a5.8 5.8 0 0 1 0 11.6z" fill="currentColor" />
+    </>
+  ),
+  equals: <path d="M3.5 6h9M3.5 10h9" />,
+  question: (
+    <>
+      <circle cx="8" cy="8" r="5.8" />
+      <path d="M6.3 6.4a1.8 1.8 0 1 1 2.4 1.7c-.5.2-.7.6-.7 1.1v.3M8 11.4v.01" />
+    </>
+  ),
+  menu: <path d="M2.5 4h11M2.5 8h11M2.5 12h11" />,
+  more: (
+    <>
+      <circle cx="3.5" cy="8" r="0.9" fill="currentColor" />
+      <circle cx="8" cy="8" r="0.9" fill="currentColor" />
+      <circle cx="12.5" cy="8" r="0.9" fill="currentColor" />
+    </>
+  ),
+  paper: (
+    <>
+      <path d="M4 1.8h5l3 3v9.4H4z" />
+      <path d="M9 1.8v3h3M6 8h4M6 10.5h4" />
+    </>
+  ),
 } satisfies Record<string, ReactNode>
 
 export type GlyphName = keyof typeof GLYPHS
@@ -373,8 +411,60 @@ export const ChecklistIcon = glyph(GLYPHS.checklist)
 export const CompareIcon = glyph(GLYPHS.compare)
 export const FlowIcon = glyph(GLYPHS.flow)
 export const HashIcon = glyph(GLYPHS.hash)
+export const StarIcon = glyph(GLYPHS.star)
+export const RerunIcon = glyph(GLYPHS.rerun)
+export const CodeIcon = glyph(GLYPHS.code)
+export const ApproxIcon = glyph(GLYPHS.approx)
+export const HalfIcon = glyph(GLYPHS.half)
+export const EqualsIcon = glyph(GLYPHS.equals)
+export const QuestionIcon = glyph(GLYPHS.question)
+export const MenuIcon = glyph(GLYPHS.menu)
+export const MoreIcon = glyph(GLYPHS.more)
+export const PaperIcon = glyph(GLYPHS.paper)
 
 /** Any glyph by name (themes, aspects, node kinds). */
 export function Glyph({ name, ...props }: IconProps & { name: GlyphName }) {
   return <Svg {...props}>{GLYPHS[name]}</Svg>
+}
+
+/**
+ * The icon that goes with a semantic value (lib/semantics.ts `icon`). Decorative: always put the word next to it.
+ * `pulse` is the animated "working" dot.
+ */
+export function SemanticIcon({ name, size = 12, className }: { name: SemanticIconName; size?: number; className?: string }) {
+  switch (name) {
+    case 'pulse':
+      return (
+        <span aria-hidden="true" className={`inline-flex shrink-0 items-center justify-center ${className ?? ''}`} style={{ width: size, height: size }}>
+          <span className="animate-pulse-dot inline-block size-1.5 rounded-full bg-current" />
+        </span>
+      )
+    case 'check':
+      return <CheckIcon size={size} className={className} />
+    case 'x':
+      return <XIcon size={size} className={className} />
+    case 'gate':
+      return <GateIcon size={size} className={className} />
+    case 'clock':
+      return <ClockIcon size={size} className={className} />
+    case 'merge':
+      return <MergeIcon size={size} className={className} />
+    case 'minus':
+      return <MinusIcon size={size} className={className} />
+    case 'half':
+      return <HalfIcon size={size} className={className} />
+    case 'equals':
+      return <EqualsIcon size={size} className={className} />
+    case 'arrow-up':
+      return <ArrowUpIcon size={size} className={className} />
+    case 'arrow-down':
+      return <ArrowDownIcon size={size} className={className} />
+    case 'paper':
+      return <PaperIcon size={size} className={className} />
+    case 'alert':
+      return <AlertIcon size={size} className={className} />
+    case 'question':
+    default:
+      return <QuestionIcon size={size} className={className} />
+  }
 }

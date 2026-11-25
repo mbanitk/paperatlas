@@ -729,6 +729,10 @@ def _stage_progress(status: str, error: Optional[str]) -> list[dict[str, str]]:
 
 
 def experiment_summary(experiment: Experiment, claim: Claim, concept: Concept, paper: Paper, verdict: Optional[Verdict]) -> dict[str, Any]:
+    # The adoption check (method vs the project default on its workload) only exists when it ran separately from
+    # the claim check; lists show both so a claim-check gain can't hide a regression on the default workload.
+    adoption = (verdict.details or {}).get("adoption") if verdict else None
+    adoption = adoption if isinstance(adoption, dict) else {}
     return {
         "id": experiment.id,
         "project_id": experiment.project_id,
@@ -752,6 +756,8 @@ def experiment_summary(experiment: Experiment, claim: Claim, concept: Concept, p
         "paper_title": paper.title,
         "verdict": verdict.verdict if verdict else None,
         "median_delta_pct": verdict.median_delta_pct if verdict else None,
+        "adoption_verdict": adoption.get("verdict"),
+        "adoption_median_delta_pct": adoption.get("median_delta_pct"),
         "created_at": _iso(experiment.created_at),
         "updated_at": _iso(experiment.updated_at),
     }
