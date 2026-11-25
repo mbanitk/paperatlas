@@ -92,6 +92,9 @@ def backfill_code_changes(
             saved, measured = [], None
             say(f"#{experiment_id}: could not read git: {str(exc).splitlines()[0]}")
         counts["diffs"] += len(saved)
+        # The verdict's own iteration is the code that was measured (an experiment that stopped mid-loop has a
+        # newer build whose numbers were never judged).
+        measured = _verdict_iteration(experiment_id) or measured
         summary = code_changes.load_summary(experiment_id, measured) if measured else None
         stored = code_changes.stored_iterations(experiment_id)
         if summary is None and stored:
@@ -111,6 +114,13 @@ def backfill_code_changes(
             counts["explained"] += explained
         say(line)
     return counts
+
+
+def _verdict_iteration(experiment_id: int) -> Optional[int]:
+    with session_scope() as session:
+        details = session.scalar(select(Verdict.details).where(Verdict.experiment_id == experiment_id)) or {}
+    iteration = details.get("iteration") if isinstance(details, dict) else None
+    return int(iteration) if isinstance(iteration, (int, float)) else None
 
 
 def _explain(experiment_id: int, context: dict[str, Any], measured: Optional[int], llm, force: bool) -> tuple[str, bool]:

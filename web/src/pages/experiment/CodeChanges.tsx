@@ -186,7 +186,8 @@ function DiffView({ file, wrap }: { file: CodeChangeFile; wrap: boolean }) {
   const lines = useMemo(() => parsePatch(file.patch), [file.patch])
   const [limit, setLimit] = useState(INITIAL_DIFF_LINES)
   if (file.binary) return <p className="text-sm text-muted">Binary file: no text diff.</p>
-  if (file.omitted) return <p className="text-sm text-muted">Not shown: this change is too large to load in the browser. The full diff is saved with the experiment’s artifacts.</p>
+  if (file.omitted || (!lines.length && file.patch_truncated))
+    return <p className="text-sm text-muted">Not shown: this diff is too large to load here. The full diff is saved with the experiment’s artifacts.</p>
   if (!lines.length) return <p className="text-sm text-muted">No text changes (renamed or mode change only).</p>
   const shown = lines.slice(0, limit)
   const text = wrap ? 'whitespace-pre-wrap [overflow-wrap:anywhere]' : 'whitespace-pre'

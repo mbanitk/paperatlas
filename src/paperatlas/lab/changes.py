@@ -358,22 +358,28 @@ def with_patches(summary: dict[str, Any], patch: Optional[str], include_patch: b
             file, chunk = files[index], chunks[index]
             lines = chunk.splitlines(keepends=True)
             file["patch_lines"] = len(lines)
-            if file.get("binary") or not chunk:
+            if file.get("binary"):
                 file["patch"] = None
                 continue
-            if budget <= 0:
-                file["patch"], file["omitted"] = None, True
-                truncated = True
+            if not chunk or budget <= 0:
+                # No chunk: the saved patch was cut before this file (or git gave none, e.g. a mode change).
+                file["patch"] = None
+                if budget <= 0 or summary.get("patch_truncated"):
+                    file["omitted"] = True
+                    truncated = True
                 continue
             if len(lines) > MAX_FILE_PATCH_LINES:
                 lines = lines[:MAX_FILE_PATCH_LINES]
                 file["patch_truncated"] = True
             text = "".join(lines)
-            if len(text.encode("utf-8")) > budget:
+            size = len(text.encode("utf-8"))
+            if size > budget:
                 text = text.encode("utf-8")[:budget].decode("utf-8", "ignore")
                 text = text[: text.rfind("\n") + 1]
                 file["patch_truncated"] = True
-            budget -= len(text.encode("utf-8"))
+                budget = 0
+            else:
+                budget -= size
             file["patch"] = text
             truncated = truncated or bool(file.get("patch_truncated"))
     return {**{k: v for k, v in summary.items() if k != "files"}, "files": files, "truncated": truncated}

@@ -551,6 +551,11 @@ def node_judge(state: ExperimentState, report) -> dict:
     report_path = artifacts_dir(experiment_id) / "report.html"
     if iterate:
         verdict.update(analysis=analysis, iteration=iteration, iterations=history, tuning=tuning or None)
+        # Rule-based (no LLM call) while iterating; the final judgement gets the full explanation.
+        changes_now, patch_now = _kept_changes(experiment_id, iteration, build)
+        verdict["code_effect"] = _explain_result(
+            experiment_id, verdict, spec, context["claim"], changes_now, patch_now, None, analysis, tuning, report
+        )
         _save_verdict(experiment_id, verdict, report_path)
         set_experiment(experiment_id, status="building", build={**build, "iterations": history})
         report(

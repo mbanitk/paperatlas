@@ -269,3 +269,43 @@ def test_judge_saves_the_diff_when_the_build_did_not(lab, monkeypatch):
     assert detail["verdict_detail"]["details"]["code_effect"]["files_changed"] == 1
     events = [event["message"] for event in service.experiment_events(experiment_id)]
     assert any("Could not save the diff of iteration 1: disk full" in message for message in events)
+
+
+def test_response_budget_omits_the_files_after_the_one_it_cuts(monkeypatch):
+    files = [{"path": f"src/{name}.py", "kind": "source", "additions": 30, "deletions": 0} for name in "abcd"]
+    patch = "".join(
+        f"diff --git a/{f['path']} b/{f['path']}\n--- /dev/null\n+++ b/{f['path']}\n@@ -0,0 +1,30 @@\n" + "".join(f"+line {i}\n" for i in range(30))
+        for f in files
+    )
+    monkeypatch.setattr(changes, "MAX_RESPONSE_PATCH_BYTES", 300)
+    result = changes.with_patches({"files": files}, patch)
+    first, *rest = result["files"]
+    assert first["patch_truncated"] and first["patch"].endswith("\n") and len(first["patch"].encode()) <= 300
+    assert all(f["omitted"] and f["patch"] is None for f in rest) and result["truncated"]
+    # The saved patch itself was cut (4 MB cap) before c.py: files without a chunk are omitted, not "no changes".
+    monkeypatch.setattr(changes, "MAX_RESPONSE_PATCH_BYTES", 100_000)
+    cut = changes.with_patches({"files": files, "patch_truncated": True}, patch[: patch.index("diff --git a/src/c.py")])
+    assert [bool(f.get("omitted")) for f in cut["files"]] == [False, False, True, True]
+
+
+def test_backfill_explains_the_iteration_the_verdict_measured(lab, monkeypatch):
+    _committing_build(lab, monkeypatch, ["v = 1\n"])
+    experiment_id = _approve(lab)
+    # As if iteration 2 was built after iteration 1's verdict and then the experiment failed.
+    worktree = service.experiment_context(experiment_id)["worktree"]
+    (worktree / "src" / "technique.py").write_text("v = 2\nw = 3\n")
+    _git(worktree, "commit", "-qam", "iteration 2")
+    shutil.rmtree(changes.changes_dir(experiment_id))
+    with session_scope() as session:
+        session.execute(
+            text("UPDATE lab.experiments SET status = 'failed', build = (build - 'code_changes' - 'kept_iteration') || '{\"iteration\": 2}' WHERE id = :id"),
+            {"id": experiment_id},
+        )
+        session.execute(text("UPDATE lab.verdicts SET details = details - 'code_effect' WHERE experiment_id = :id"), {"id": experiment_id})
+    from paperatlas.lab.backfill import backfill_code_changes
+
+    backfill_code_changes([experiment_id], use_llm=False, say=lambda line: None)
+    assert changes.stored_iterations(experiment_id) == [1, 2]
+    detail = service.get_experiment(experiment_id)
+    assert detail["build"]["code_changes"]["iteration"] == 1
+    assert detail["verdict_detail"]["details"]["code_effect"]["iteration"] == 1
