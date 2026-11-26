@@ -118,6 +118,8 @@ Without source keys, Semantic Scholar is rate limited and patents are skipped.
 
 The LLM key takes precedence. With `PAPERATLAS_LLM_PROVIDER=copilot`, the GitHub Copilot CLI is used
 when no key is set, and as the fallback when an OpenAI request fails (for example, an expired key).
+`PAPERATLAS_COPILOT_LLM_MODEL` / `PAPERATLAS_BUILDER_MODEL` pick the Copilot models (the CLI default otherwise);
+`PAPERATLAS_COPILOT_CONTEXT` and `PAPERATLAS_COPILOT_REASONING_EFFORT` apply to every Copilot CLI call.
 
 ## Paper ingestion (single papers)
 

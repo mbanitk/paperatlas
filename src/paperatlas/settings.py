@@ -58,3 +58,13 @@ def llm_base_url() -> str:
 
 def llm_timeout() -> float:
     return float(env("PAPERATLAS_LLM_TIMEOUT", "300"))
+
+
+def copilot_cli_flags(model: str | None = None) -> list[str]:
+    """Model, context-tier and reasoning-effort flags for every `copilot` CLI call (LLM and builder)."""
+    flags = ["--model", model] if model else []
+    if context := env("PAPERATLAS_COPILOT_CONTEXT"):
+        flags += ["--context", context]
+    if effort := env("PAPERATLAS_COPILOT_REASONING_EFFORT"):
+        flags += ["--reasoning-effort", effort]
+    return flags

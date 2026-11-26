@@ -169,6 +169,26 @@ def test_openai_key_takes_precedence_over_copilot_and_copilot_works_alone(monkey
     assert llm.build_default_llm_client(use_cache=False) is None
 
 
+def test_copilot_model_context_and_effort_reach_both_llm_and_builder_calls(monkeypatch, tmp_path):
+    import subprocess
+
+    from paperatlas.lab import builder
+    from paperatlas.llm.client import CopilotCliLLMClient
+
+    monkeypatch.setenv("PAPERATLAS_COPILOT_CONTEXT", "long_context")
+    monkeypatch.setenv("PAPERATLAS_COPILOT_REASONING_EFFORT", "high")
+    monkeypatch.setenv("PAPERATLAS_BUILDER_MODEL", "claude-opus-5.5")
+    monkeypatch.setattr("shutil.which", lambda name: "/bin/" + name)
+    commands = []
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: commands.append(cmd) or subprocess.CompletedProcess(cmd, 0, "OK", ""))
+    monkeypatch.setattr(builder, "run_command", lambda cmd, *a, **kw: commands.append(cmd))
+
+    CopilotCliLLMClient("claude-opus-5.5").generate("s", "u")
+    builder.CopilotCliBuilder().implement(tmp_path, "p", tmp_path / "build.log", 60, None, None)
+    expected = ["--model", "claude-opus-5.5", "--context", "long_context", "--reasoning-effort", "high"]
+    assert [cmd[-6:] for cmd in commands] == [expected, expected]
+
+
 def test_fallback_client_uses_copilot_when_openai_fails_and_skips_a_rejected_key():
     from paperatlas.llm.client import FallbackLLMClient, LLMClient, LLMConfig, LLMError
 

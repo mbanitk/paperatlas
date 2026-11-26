@@ -209,9 +209,7 @@ class CopilotCliLLMClient(LLMClient):
             raise LLMError("copilot CLI is not on PATH", unavailable=True)
         prompt = f"{system_prompt}\n\n{user_prompt}{schema_instruction(schema)}"
         command = ["copilot", "-p", prompt, "--available-tools=", "--no-ask-user", "--no-color", "--no-auto-update",
-                   "--no-custom-instructions", "-s"]
-        if self.cli_model:
-            command += ["--model", self.cli_model]
+                   "--no-custom-instructions", "-s", *settings.copilot_cli_flags(self.cli_model)]
         last_error = "no output"
         for attempt in range(self.config.max_retries):
             try:
