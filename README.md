@@ -36,7 +36,8 @@ flowchart LR
 [Interactive architecture field guide](docs/architecture.html) — open the HTML file locally to
 step through the instructions and data passed during a scan or spec approval. Select any block
 for its own component map, switch between execution and data flow, and select a component for
-source evidence. Moving arrows show direction; motion can be paused and starts off for reduced-motion users.
+source evidence. A filled dot marks a connected branch; a gap means two lines cross without connecting.
+Moving arrows show direction; motion can be paused and starts off for reduced-motion users.
 The guide works offline; only its source links need a connection.
 
 | Service | Port | Role |
