@@ -33,6 +33,16 @@ flowchart LR
 
 ## Architecture
 
+[Interactive architecture field guide](docs/architecture.html) — open the HTML file locally.
+The system context diagram opens directly to **System map · all connections**, grouped into clients,
+the PaperAtlas application, persistence and integrations. Select a block to inspect its execution
+and data flow, code-health evidence and suggested improvements. The [agentic workflow diagram](docs/architecture.html#agent-workflow) separates
+model proposals, coding-agent changes, measured verdicts and human decisions, including retry paths.
+On the expanded system map, hover or keyboard-focus a block to highlight its connections.
+A filled dot on a routed wire marks a connected branch; a gap means two lines cross without connecting.
+Moving arrows show direction; motion can be paused and starts off for reduced-motion users.
+The guide works offline; only its source links need a connection.
+
 | Service | Port | Role |
 |---|---|---|
 | `gateway` | 8100 | Web console (`web/`) + proxy for `/api/research/*` and `/api/lab/*` |
