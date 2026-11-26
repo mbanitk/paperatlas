@@ -432,6 +432,8 @@ def test_restart_requeues_only_jobs_that_failed_in_the_shutdown(db):
             Job(kind="distill", status="failed", locked_by="gone:1", attempts=1, finished_at=now - timedelta(seconds=20), error="shutting down"),
             Job(kind="explain", status="failed", locked_by="gone:1", attempts=1, finished_at=now - timedelta(hours=1), error="real bug"),
             Job(kind="discover", status="failed", locked_by="alive:2", attempts=1, finished_at=now - timedelta(seconds=5), error="real bug"),
+            Job(kind="match", status="failed", locked_by="gone:1", attempts=1, finished_at=now - timedelta(seconds=10),
+                error="smoke: smoke benchmark failed (exit 124):\n[timeout after 1800s]"),
         ]
         session.add_all(jobs)
         session.flush()
@@ -441,7 +443,8 @@ def test_restart_requeues_only_jobs_that_failed_in_the_shutdown(db):
     assert resume_interrupted("me:3")["jobs"] == []  # each shutdown is recovered once
     with session_scope() as session:
         states = [(job.status, job.payload.get("resumed"), job.error) for job in (session.get(Job, i) for i in ids)]
-    assert states == [("queued", True, None), ("failed", None, "real bug"), ("failed", None, "real bug")]
+    assert states[:3] == [("queued", True, None), ("failed", None, "real bug"), ("failed", None, "real bug")]
+    assert states[3][0] == "failed"  # timed out just before the shutdown: a real failure
 
 
 def test_restart_resumes_experiments_interrupted_by_a_shutdown(lab, monkeypatch):

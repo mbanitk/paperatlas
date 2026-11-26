@@ -11,6 +11,7 @@ shutdown are real and stay as they are.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timedelta
 
 from sqlalchemy import func, select, text, update
@@ -35,6 +36,8 @@ SHUTDOWN_WINDOW_S = float(env("PAPERATLAS_SHUTDOWN_WINDOW_S", "120") or 120)
 ORPHAN_GRACE_S = 60.0
 # Don't keep resuming a job that fails every time.
 MAX_ATTEMPTS = 5
+# A step that ran out its time budget failed on its own, even if that happened just before the shutdown.
+TIMED_OUT = re.compile(r"\(exit 124\)|\[timeout after \d+s\]|did not load the model within")
 # In progress and driven by a job (gates, `blocked` and `cancelling` wait for something else).
 IN_PROGRESS = (
     "queued",
@@ -137,7 +140,7 @@ def resume_interrupted(worker_id: str = WORKER_ID, window_s: float | None = None
 
 
 def _resumable(session: Session, job: Job) -> bool:
-    if job.attempts >= MAX_ATTEMPTS:
+    if job.attempts >= MAX_ATTEMPTS or TIMED_OUT.search(job.error or ""):
         return False
     owner = (
         Job.experiment_id == job.experiment_id
