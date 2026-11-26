@@ -15,12 +15,10 @@
     button { color: inherit; font: inherit; cursor: pointer; }
     a { color: #155c60; text-underline-offset: .18em; }
     :focus-visible { outline: 3px solid #1366bd; outline-offset: 3px; }
-    .wrap { width: min(100%, 84rem); margin-inline: auto; }
+    .wrap { width: min(100%, 102rem); margin-inline: auto; }
     .kicker, code, .ref { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
     .kicker { font-size: .72rem; letter-spacing: .09em; font-weight: 700; text-transform: uppercase; }
-    .mast { background: #193334; color: #f5fbf6; }
-    .mark { border: 1px solid #9bcec1; color: #b5e3cb; border-radius: 5px; padding: .12rem .4rem; }
-    .revision { color: #d0e7dc; font-size: .8rem; }
+    .revision { font-size: .8rem; }
     h1 { font-size: clamp(2rem, 4vw, 3.2rem); line-height: 1.05; letter-spacing: -.05em; }
     .lede { max-width: 64ch; color: var(--muted); font-size: 1.05rem; }
     .intro { padding-block: 1.3rem 1rem; }
@@ -36,7 +34,6 @@
     .board { --wire: #61819b; --blue: #195e91; --paper: #fbfdff; background: var(--paper); border: 1px solid #b5c6d1; border-radius: .8rem; }
     .board figcaption, .map-footer { padding: .65rem 1rem; }
     .board figcaption { border-bottom: 1px solid #d6e0e7; }
-    main.wrap { width: min(100%, 102rem); }
     .topology { position: relative; padding: 1.35rem; display: grid; align-items: center;
       grid-template-columns: minmax(0,1fr) minmax(0,3.7fr) minmax(0,1fr); column-gap: clamp(2.5rem, 5vw, 6rem);
       background: radial-gradient(#dce6ec .65px, transparent .65px) 0 0 / 14px 14px; }
@@ -87,13 +84,11 @@
     body:not(.flowing) .packet { display: none; }
     .motion-toggle { font: inherit; background: white; color: #244f70; border: 1px solid #adbfca; border-radius: .35rem; padding: .2rem .5rem; font-size: .85rem; }
     .motion-toggle[aria-pressed="true"] { background: #eaf2f5; }
-    #handoffs { padding: .35rem 1rem .65rem; }
-    #handoffs ol { padding-left: 1.3rem; }
+    .rating-guide { padding: .35rem 1rem .65rem; }
     .map-footer { border-top: 1px solid #d6e0e7; }
     .map-footer .node { width: auto; }
     .note { border-left: 4px solid var(--accent); }
     .node-summary { color: #354b4c; font-size: .87rem; line-height: 1.4; }
-    .trace { border-left: 3px solid #6e968a; background: #ebf0ea; font-size: .92rem; overflow-wrap: anywhere; }
     dialog { width: min(72rem, calc(100% - 1.5rem)); max-height: 94vh; max-height: 94dvh; padding: 0;
       color: var(--ink); border: 1px solid #9cafa8; border-radius: .85rem; background: #fcfdf9; overflow-y: auto; }
     dialog::backdrop { background: rgb(13 32 34 / 65%); }
@@ -120,8 +115,6 @@
     .lens label:has(:checked) { background: #234e6b; color: white; }
     .lens label:focus-within { outline: 2px solid #1366bd; outline-offset: 2px; }
     .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-    #detail-paths p { margin: .3rem 0 0; }
-    .example { font: inherit; padding: .25rem .4rem; border: 1px solid #aabdca; border-radius: .35rem; background: white; color: var(--ink); }
     .note h3 { font-size: 1rem; }
     .ref { font-size: .76rem; overflow-wrap: anywhere; }
     .next { border-top: 1px solid var(--rule); }
@@ -131,17 +124,7 @@
     .lane-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 35rem), 1fr)); gap: .7rem; align-items: start; }
     .lane-group { min-width: 0; container-type: inline-size; padding: .7rem; background: #fff; border: 1px solid #c6d4dd; border-radius: .45rem; }
     .lane-group summary { cursor: pointer; color: #244f70; font-weight: 700; }
-    .lane-group summary small { margin-left: .45rem; font-weight: 400; color: var(--muted); }
     .handoff-lane { display: flex; align-items: stretch; padding: .55rem 0; }
-    .handoff-lane + .handoff-lane { border-top: 1px solid #e4eaed; }
-    .handoff-lane > .node, .handoff-lane > .port { flex: 1 1 0; min-width: 0; width: auto; }
-    .handoff-lane .node { grid-template-columns: auto 1fr; gap: .15rem .35rem; align-content: start; padding: .45rem; }
-    .handoff-lane .node svg { grid-area: 1 / 1; width: 1rem; height: 1rem; }
-    .handoff-lane .node .badge { grid-area: 1 / 2; }
-    .handoff-lane .node strong { grid-area: 2 / 1 / 3 / -1; font-size: .86rem; overflow-wrap: anywhere; }
-    .handoff-lane .node small { grid-column: 1 / -1; overflow-wrap: anywhere; font: .7rem ui-monospace, monospace; }
-    .handoff-lane .port { grid-template-columns: 1fr; align-content: center; }
-    .handoff-lane .port svg { display: none; }
     .lane-wire { flex: none; align-self: center; display: grid; place-items: center; width: 2.6rem; min-height: 2.4rem;
       padding: 0; color: #326e9f; background: transparent; border: 0; border-radius: .25rem; }
     .lane-wire.data { color: #33745a; }
@@ -151,7 +134,6 @@
     .lane-wire .packet { stroke-dasharray: 4 32; animation: short-flow 2.5s linear infinite; }
     @keyframes short-flow { to { stroke-dashoffset: -36; } }
     .lane-label { margin-top: .45rem; font: 600 .72rem/1.35 ui-monospace, monospace; color: #486475; }
-    .handoff-lane .node[aria-pressed=true] { border-color: var(--accent); box-shadow: inset 3px 0 var(--accent); }
     .jump { font-size: .86rem; font-weight: 650; }
     #agent-workflow { scroll-margin-top: .7rem; }
     .agent-stage { flex: 1 1 0; min-width: 0; display: grid; align-content: start; gap: .2rem; text-align: left;
@@ -163,20 +145,10 @@
     #agent-notes dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(13rem, 100%), 1fr)); gap: 1rem; margin: .45rem 0; }
     #agent-notes dt { font-size: .75rem; font-weight: 700; color: var(--muted); }
     #agent-notes dd { margin: .15rem 0 0; font-size: .9rem; }
-    @container (max-width: 47rem) {
-      .handoff-lane.long { flex-direction: column; }
-      .handoff-lane.long .lane-wire { min-height: 1.7rem; }
-      .handoff-lane.long .lane-wire svg { transform: rotate(90deg); width: 1.7rem; }
-    }
     @container (max-width: 30rem) {
       .handoff-lane.multi { flex-direction: column; }
       .handoff-lane.multi .lane-wire { min-height: 1.7rem; }
       .handoff-lane.multi .lane-wire svg { transform: rotate(90deg); width: 1.7rem; }
-    }
-    @container (max-width: 16rem) {
-      .handoff-lane .node { grid-template-columns: 1fr; }
-      .handoff-lane .node svg { display: none; }
-      .handoff-lane .node .badge { grid-area: 1 / 1; }
     }
     @media (max-width: 64rem) {
       .topology { grid-template-columns: minmax(0,1fr) minmax(0,3.6fr) minmax(0,1fr); column-gap: 2.3rem; padding: .65rem; }
@@ -228,20 +200,13 @@
       <marker id="data-head" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5" markerHeight="5" orient="auto"><path d="M0 0 8 4 0 8z" fill="#477968"/></marker>
     </defs>
   </svg>
-  <header class="mast">
-    <div class="wrap flex items-center justify-between gap-4 px-4 py-3 sm:px-8">
-      <div class="flex items-center gap-3"><span class="mark kicker" aria-hidden="true">PA</span><strong>PaperAtlas</strong></div>
-      <a class="revision" href="https://github.com/mbanitk/paperatlas/tree/700bbbd2e757206b08919098d574e6fe9d77d4e9">Source snapshot <code>700bbbd</code></a>
-    </div>
-  </header>
   <main class="wrap px-4 pb-10 sm:px-8">
-    <header class="intro">
-      <div class="grid gap-3">
-        <p class="kicker">Engineering field guide / System context</p>
-        <h1>PaperAtlas architecture</h1>
-        <p class="small">Select a module on the system map to explore its execution and data flow.</p>
-        <a class="jump" href="#agent-workflow">Explore the agentic workflow: plan, build, measure and decide ↓</a>
-      </div>
+    <header class="intro flex flex-wrap items-center justify-between gap-3">
+      <h1>PaperAtlas architecture</h1>
+      <nav aria-label="Guide links" class="flex flex-wrap items-center gap-3">
+        <a class="jump" href="#agent-workflow">Agentic workflow ↓</a>
+        <a class="revision" href="https://github.com/mbanitk/paperatlas/tree/700bbbd2e757206b08919098d574e6fe9d77d4e9">Source <code>700bbbd</code></a>
+      </nav>
     </header>
 
     <figure class="board" aria-labelledby="map-title">
@@ -253,7 +218,7 @@
         </div>
         <div id="legend" aria-label="Code maintenance priorities" class="flex flex-wrap gap-2"></div>
       </figcaption>
-      <p id="map-caption"><strong>Start at the web console or CLI.</strong> Blue arrows carry calls; green dashed arrows carry data. Hover or keyboard-focus a module to highlight its connections. Select it to inspect its internals.</p>
+      <p id="map-caption">Start at the web console or CLI. Hover or focus a module to highlight its connections; select it to see its execution and data flow.</p>
       <div class="topology">
         <fieldset class="zone outer"><legend>Clients</legend>
           <div class="endpoints grid gap-2">
@@ -319,28 +284,23 @@
         <span class="line-key small"><svg aria-hidden="true"><use href="#branch-key"/></svg>Connected branch</span>
         <span class="line-key small"><svg aria-hidden="true"><use href="#cross-key"/></svg>Crossing only</span>
       </div>
-      <details id="handoffs" class="small"><summary>Triggers and handoffs for every connection</summary><ol></ol></details>
+      <details class="rating-guide small"><summary>What the code colors mean</summary>
+        <p><strong>Focused:</strong> one clear job. <strong>Review:</strong> a specific improvement is worth considering. <strong>Hotspot:</strong> several responsibilities change together. <strong>Scaffold:</strong> outside the live workflow. A module takes its highest component priority. Ratings describe the code, not its authorship.</p>
+      </details>
       <noscript><p class="p-4">Enable JavaScript to explore the interactive map. No network connection or PaperAtlas services are required.</p></noscript>
     </figure>
-    <details class="small mt-1"><summary>How to read the map and colors</summary>
-      <p>The system map shows each module once. A filled dot on a routed wire is a real branch; a gap means one wire passes underneath another without connecting. Moving dashes show direction, not live traffic. Block colors describe PaperAtlas code, not an external provider: Focused means one clear job; Review marks a seam to improve; Hotspot means responsibilities change together; Scaffold sits outside the live loop. A block takes its highest component priority. These judgments do not imply AI authorship.</p>
-    </details>
-    <aside class="trace mt-4 grid gap-1 p-4">
-      <strong>Trace one request: start a project scan</strong>
-      <p>The console posts to <code>/api/lab/projects/{id}/triage</code>. The gateway forwards to lab-api; the shared service creates a triage and queues <code>triage.run</code>. A worker discovers, distills and matches. The console reads progress as server-sent events. The result is a shortlist, not an automatic build.</p>
-    </aside>
     <figure id="agent-workflow" class="board mt-4" aria-labelledby="agent-title" tabindex="-1">
       <figcaption class="flex flex-wrap items-center justify-between gap-2">
-        <div><p class="kicker">Agentic workflow / interactive run</p><h2 id="agent-title">Who decides, who acts, who checks?</h2></div>
+        <h2 id="agent-title">Agentic workflow</h2>
         <button type="button" class="motion-toggle" aria-label="Animate flow"></button>
         <a class="jump" href="#map-title">System overview ↑</a>
       </figcaption>
       <div class="lane-sheet">
-        <p class="small">LangGraph runs the workflow. Language models propose claims, specs and diagnoses; the coding agent edits the target worktree. The target harness measures the change, and a person decides whether to keep it. Labels here identify roles, not code quality. Select a stage for its inputs, outputs and source.</p>
+        <p class="small">LangGraph coordinates the run. Models propose, the coding agent edits, the harness measures, and a person decides whether to merge. Select a stage for its inputs, outputs and source.</p>
         <div id="agent-lanes" class="lane-groups"></div>
-        <details id="agent-feedback" class="lane-group mt-4"><summary>Feedback paths <small>When the workflow goes back instead of forward</small></summary></details>
+        <details id="agent-feedback" class="lane-group mt-4"><summary>Revision and retry paths</summary></details>
       </div>
-      <section id="agent-notes" class="p-4" aria-label="Selected workflow stage" aria-live="polite"></section>
+      <section id="agent-notes" class="p-4" aria-label="Selected workflow stage" aria-live="polite" hidden></section>
       <div class="map-footer small"><strong>Pause and resume.</strong> The worker advances the experiment graph to an interrupt or the end. Postgres holds the graph checkpoint; a gate decision queues a gate-tagged resume job. The experiment row carries the status shown in the console. <span id="state-source"></span></div>
     </figure>
   </main>
@@ -355,22 +315,17 @@
         <div id="detail-tone"></div>
         <h2 class="detail-title" id="detail-title"></h2>
         <p id="detail-purpose" class="lede"></p>
-        <a id="agent-jump" class="jump" href="#agent-workflow" hidden>See this stage in the agentic workflow →</a>
       </header>
       <figure class="board">
         <figcaption class="flex flex-wrap items-center justify-between gap-2">
           <strong class="kicker">Component diagram</strong>
-          <select id="detail-layout" class="example" aria-label="Component diagram layout">
-            <option value="lanes">Connection lanes</option><option value="map">Component map</option>
-          </select>
           <button type="button" class="motion-toggle" aria-label="Animate flow"></button>
           <fieldset class="lens"><legend class="sr-only">Diagram view</legend>
             <label><input class="sr-only" type="radio" name="lens" value="execution" checked>Execution flow</label>
             <label><input class="sr-only" type="radio" name="lens" value="data">Data flow</label>
           </fieldset>
         </figcaption>
-        <div id="detail-lanes" class="lane-sheet"><div class="lane-group"></div></div>
-        <div id="detail-map" class="detail-map" hidden>
+        <div id="detail-map" class="detail-map">
           <fieldset class="zone"><legend id="left-title"></legend><div id="inputs" class="map-stack"></div></fieldset>
           <fieldset class="zone core"><legend id="inside-title"></legend><div id="components" class="map-stack"></div></fieldset>
           <fieldset class="zone"><legend id="right-title"></legend><div id="outputs" class="map-stack"></div></fieldset>
@@ -378,11 +333,9 @@
         </div>
         <div class="map-footer grid gap-1">
           <div class="flex flex-wrap items-center gap-2 small"><i id="detail-line" class="key-line" aria-hidden="true"></i><span id="flow-caption"></span>
-            <span class="line-key map-only"><svg aria-hidden="true"><use href="#branch-key"/></svg>Branch</span>
-            <span class="line-key map-only"><svg aria-hidden="true"><use href="#cross-key"/></svg>Not connected</span>
           </div>
-          <details id="detail-paths" class="small"><summary>Read connections as text</summary><div></div></details>
-          <details id="neighbors" class="small"><summary>What triggers this block, and what happens next?</summary><ul></ul></details>
+          <ul id="detail-paths" class="sr-only" aria-label="Connections in this view"></ul>
+          <details id="neighbors" class="small"><summary>Triggers and handoffs</summary><ul></ul></details>
         </div>
       </figure>
       <section class="grid gap-3" aria-labelledby="evidence-title">
@@ -746,7 +699,6 @@
     function lane(stops, wires) {
       const row = el("div", "handoff-lane", "");
       row.classList.toggle("multi", stops.length > 2);
-      row.classList.toggle("long", stops.length > 4);
       stops.forEach((stop, i) => {
         if (i) row.append(wires[i-1]);
         row.append(stop);
@@ -760,8 +712,6 @@
       $("#detail-id").textContent = `02 / ${zone}`;
       $("#detail-title").textContent = module.title;
       $("#detail-purpose").textContent = module.purpose;
-      $("#agent-jump").hidden = !["worker", "distill", "match", "build", "judge", "models"].includes(key);
-      $("#agent-jump").onclick = () => dialog.close();
       $("#detail-next").textContent = module.next;
       $("#detail-tone").replaceChildren(badge(el("span", "badge", ""), rating(module.parts)));
       const entry = {
@@ -791,13 +741,7 @@
       }
       function renderLens() {
         const data = $("[name=lens]:checked").value === "data";
-        const lanes = $("#detail-layout").value === "lanes";
         const map = $("#detail-map");
-        map.hidden = lanes;
-        $("#detail-lanes").hidden = !lanes;
-        for (const key of dialog.querySelectorAll(".map-only")) key.hidden = lanes;
-        const sheet = $("#detail-lanes .lane-group");
-        sheet.replaceChildren();
         map.dataset.mode = data ? "data" : "execution";
         $("#inside-title").textContent = module.title;
         $("#left-title").textContent = data ? "Input payload" : "Entry points";
@@ -805,7 +749,7 @@
         $("#detail-line").classList.toggle("data", data);
         $("#flow-caption").textContent = data ? "One example: follow the dashed arrows to see what changes hands." :
           "Solid arrows show execution order. Select a component to see its code.";
-        for (const id of ["#inputs", "#components", "#outputs", "#detail-paths div"]) $(id).replaceChildren();
+        for (const id of ["#inputs", "#components", "#outputs", "#detail-paths"]) $(id).replaceChildren();
         const nodes = new Map(), links = [];
         function port(id, parent, icon, label, description) {
           if (!nodes.has(id)) {
@@ -813,7 +757,7 @@
             box.append(glyph(icon), el("strong", "", label));
             if (description) box.append(el("small", "", description));
             nodes.set(id, box);
-            if (!lanes) $(parent).append(box);
+            $(parent).append(box);
           }
           return id;
         }
@@ -826,7 +770,7 @@
           button.setAttribute("aria-controls", "notes");
           button.append(glyph(moduleIcon), el("strong", "", part.title),
             badge(el("span", "badge", ""), part.tone), el("small", "", part.refs[0].split(":")[0].split("/").pop()));
-          if (!lanes) $("#components").append(button);
+          $("#components").append(button);
           nodes.set(index, button);
         }
         const routes = data ? [[module.data[0][0], ...module.via, module.data[2][0]]] : module.paths;
@@ -845,26 +789,15 @@
             const from = ids[i];
             if (!links.some(link => link.from === from && link.to === to)) links.push({from, to, kind: data ? "data" : "control"});
           });
-          if (lanes) sheet.append(lane(ids.map(id => nodes.get(id).cloneNode(true)),
-            ids.slice(1).map(() => laneWire(data ? "data" : "control", data ? "Data to" : "Then"))));
-          $("#detail-paths div").append(el("p", "", ids.map(id => $("strong", nodes.get(id)).textContent).join(" → ")));
-        }
-        if (lanes) {
-          for (const index of interior) {
-            if (!routes.some(route => route.includes(index))) {
-              sheet.append(el("p", "small", "Not executed on these paths:"), lane([nodes.get(index)], []));
-            }
-          }
+          $("#detail-paths").append(el("li", "", ids.map(id => $("strong", nodes.get(id)).textContent).join(" → ")));
         }
         selectPart(interior.find(hop => typeof hop === "number"));
         redrawDetail = () => {
-          if (dialog.open && !map.hidden) drawConnections($("#detail-wires"), nodes, links, map.querySelectorAll("legend"));
+          if (dialog.open) drawConnections($("#detail-wires"), nodes, links, map.querySelectorAll("legend"));
         };
         redrawDetail();
       }
       $("[name=lens][value=execution]").checked = true;
-      $("#detail-layout").value = "map";
-      $("#detail-layout").onchange = renderLens;
       $(".lens").onchange = renderLens;
       dialog.onclick = event => {
         const button = event.target.closest("button[data-part]");
@@ -872,7 +805,6 @@
         selectPart(Number(button.dataset.part));
         $("#notes").scrollIntoView({block: "nearest"});
       };
-      $("#detail-paths").open = false;
       dialog.showModal();
       renderLens();
       dialog.scrollTop = 0;
@@ -970,6 +902,7 @@
     };
     function inspectStage(id) {
       const s = agentStages[id], note = $("#agent-notes"), fields = document.createElement("dl");
+      note.hidden = false;
       for (const [label, text] of [["Input", s.input], ["Action", s.action], ["Output", s.output]]) {
         const field = document.createElement("div");
         field.append(el("dt", "", label), el("dd", "", text));
@@ -986,6 +919,7 @@
         button.type = "button";
         button.dataset.agentStage = id;
         button.setAttribute("aria-controls", "agent-notes");
+        button.setAttribute("aria-pressed", "false");
         button.append(el("small", "", s.role), el("strong", "", s.title));
         button.onclick = () => {
           inspectStage(id);
@@ -1014,12 +948,6 @@
     agentLane($("#agent-feedback"), "Build verification failed and attempts remain", ["verify", "build"], ["data"]);
     agentLane($("#agent-feedback"), "Fixable diagnosis, next changes and iteration budget remaining", ["budget", "build"], ["control"]);
     $("#state-source").append(source("lab/orchestrator.py:717-742"), " · ", source("lab/service.py:915-936"));
-    inspectStage("build");
-    for (const h of Object.values(handoffs)) {
-      const li = document.createElement("li");
-      li.append(el("strong", "", names(h)), ` — ${h.text}`);
-      $("#handoffs ol").append(li);
-    }
     const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
     function setMotion(on) {
       document.body.classList.toggle("flowing", on);
