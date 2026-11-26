@@ -151,3 +151,51 @@ def test_gateway_keeps_encoded_path_and_closes_failed_streams(monkeypatch):
     with pytest.raises(httpx.ReadError):
         web.get("/api/research/fail")
     assert closed
+
+
+def test_openai_key_takes_precedence_over_copilot_and_copilot_works_alone(monkeypatch):
+    from paperatlas.llm import client as llm
+
+    monkeypatch.delenv("PAPERATLAS_LLM_API_KEY", raising=False)
+    monkeypatch.setenv("PAPERATLAS_LLM_PROVIDER", "copilot")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    chain = llm.build_default_llm_client(use_cache=False)
+    assert isinstance(chain, llm.FallbackLLMClient)
+    assert [type(c) for c in chain.clients] == [llm.LLMClient, llm.CopilotCliLLMClient]
+
+    monkeypatch.delenv("OPENAI_API_KEY")
+    assert isinstance(llm.build_default_llm_client(use_cache=False), llm.CopilotCliLLMClient)
+    monkeypatch.delenv("PAPERATLAS_LLM_PROVIDER")
+    assert llm.build_default_llm_client(use_cache=False) is None
+
+
+def test_fallback_client_uses_copilot_when_openai_fails_and_skips_a_rejected_key():
+    from paperatlas.llm.client import FallbackLLMClient, LLMClient, LLMConfig, LLMError
+
+    class Provider(LLMClient):
+        def __init__(self, name, error=None):
+            super().__init__(LLMConfig(api_key="", model=name))
+            self.error, self.calls = error, 0
+
+        def _call(self, system_prompt, user_prompt, schema):
+            self.calls += 1
+            if self.error:
+                raise self.error
+            return '{"answer": "%s"}' % self.model
+
+    flaky = Provider("openai", LLMError("LLM error 500: overloaded"))
+    copilot = Provider("copilot")
+    chain = FallbackLLMClient([flaky, copilot])
+    assert chain.generate_json("s", "u", "answer", {}) == {"answer": "copilot"}
+    assert chain.model == "copilot"
+    flaky.error = None
+    assert chain.generate("s", "u") == '{"answer": "openai"}' and chain.model == "openai"
+
+    revoked = Provider("openai", LLMError("LLM error 401: invalid key", unavailable=True))
+    chain = FallbackLLMClient([revoked, Provider("copilot")])
+    chain.generate("s", "u")
+    chain.generate("s", "u")
+    assert revoked.calls == 1
+
+    with pytest.raises(LLMError, match="All LLM providers failed"):
+        FallbackLLMClient([Provider("a", LLMError("down")), Provider("b", LLMError("down"))]).generate("s", "u")

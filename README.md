@@ -116,6 +116,9 @@ Environment variables (or `.env`, see [`.env.example`](.env.example)):
 `PAPERATLAS_BUILDER` (`copilot`/`codex`), service ports and worker concurrency.
 Without source keys, Semantic Scholar is rate limited and patents are skipped.
 
+The LLM key takes precedence. With `PAPERATLAS_LLM_PROVIDER=copilot`, the GitHub Copilot CLI is used
+when no key is set, and as the fallback when an OpenAI request fails (for example, an expired key).
+
 ## Paper ingestion (single papers)
 
 ```bash
