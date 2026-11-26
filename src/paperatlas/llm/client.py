@@ -6,9 +6,10 @@ import hashlib
 import json
 import logging
 import re
+import threading
 import time
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Callable, Optional, Sequence
 
 import httpx
 from sqlalchemy import select
@@ -26,7 +27,10 @@ _RETRY_STATUS = {408, 409, 429, 500, 502, 503, 504}
 
 
 class LLMError(RuntimeError):
-    pass
+    def __init__(self, message: str, unavailable: bool = False) -> None:
+        super().__init__(message)
+        # True when retrying this provider can't help (rejected or revoked key, no quota, missing CLI).
+        self.unavailable = unavailable
 
 
 @dataclass
@@ -154,12 +158,13 @@ class LLMClient:
                 payload.pop("temperature")
                 attempt -= 1
                 continue
-            if response.status_code in _RETRY_STATUS and attempt < self.config.max_retries:
+            unavailable = response.status_code in (401, 403) or "insufficient_quota" in response.text
+            if response.status_code in _RETRY_STATUS and attempt < self.config.max_retries and not unavailable:
                 logger.warning("LLM %s, retrying (%d/%d)", response.status_code, attempt, self.config.max_retries)
                 time.sleep(2**attempt)
                 continue
             if response.status_code >= 400:
-                raise LLMError(f"LLM error {response.status_code}: {response.text[:500]}")
+                raise LLMError(f"LLM error {response.status_code}: {response.text[:500]}", unavailable=unavailable)
             data = response.json()
             usage = data.get("usage") or {}
             logger.info(
@@ -201,7 +206,7 @@ class CopilotCliLLMClient(LLMClient):
         import subprocess
 
         if not shutil.which("copilot"):
-            raise LLMError("copilot CLI is not on PATH")
+            raise LLMError("copilot CLI is not on PATH", unavailable=True)
         prompt = f"{system_prompt}\n\n{user_prompt}{schema_instruction(schema)}"
         command = ["copilot", "-p", prompt, "--available-tools=", "--no-ask-user", "--no-color", "--no-auto-update",
                    "--no-custom-instructions", "-s"]
@@ -227,6 +232,50 @@ class CopilotCliLLMClient(LLMClient):
             except LLMError as exc:
                 last_error = str(exc)
         raise LLMError(f"copilot CLI LLM failed: {last_error}")
+
+
+class FallbackLLMClient(LLMClient):
+    """Tries LLM providers in order: a failed request moves on to the next one.
+
+    A provider that is unavailable (rejected key, no quota, missing CLI) is skipped for the rest of the process,
+    so a revoked or expired key doesn't add a failed request to every call."""
+
+    def __init__(self, clients: Sequence[LLMClient]) -> None:
+        super().__init__(clients[0].config)
+        self.clients = list(clients)
+        self._skipped: set[int] = set()
+        self._lock = threading.Lock()
+        # Per thread, so concurrent callers (e.g. parallel distillation) record the model that answered them.
+        self._answered = threading.local()
+
+    @property
+    def model(self) -> str:
+        return getattr(self._answered, "client", self.clients[0]).model
+
+    def generate(self, system_prompt: str, user_prompt: str) -> str:
+        return self._first(lambda client: client.generate(system_prompt, user_prompt))
+
+    def generate_json(self, system_prompt: str, user_prompt: str, schema_name: str, schema: dict) -> dict:
+        return self._first(lambda client: client.generate_json(system_prompt, user_prompt, schema_name, schema))
+
+    def _first(self, request: Callable[[LLMClient], Any]) -> Any:
+        errors = []
+        for index, client in enumerate(self.clients):
+            if index in self._skipped:
+                continue
+            try:
+                result = request(client)
+            except LLMError as exc:
+                errors.append(f"{client.model}: {exc}")
+                if exc.unavailable:
+                    with self._lock:
+                        self._skipped.add(index)
+                logger.warning("LLM %s failed, trying the next provider: %s", client.model, exc)
+                continue
+            self._answered.client = client
+            return result
+        raise LLMError("All LLM providers failed: " + " | ".join(errors) if errors else "No LLM provider is available",
+                       unavailable=not errors)
 
 
 THINK_BLOCK = re.compile(r"<think>.*?</think>", re.S)
@@ -255,20 +304,25 @@ def schema_instruction(schema: Optional[tuple]) -> str:
 
 
 def build_default_llm_client(use_cache: bool = True) -> Optional[LLMClient]:
-    provider = (settings.env("PAPERATLAS_LLM_PROVIDER") or "").lower()
-    if provider == "copilot":
-        return CopilotCliLLMClient(
-            settings.env("PAPERATLAS_COPILOT_LLM_MODEL"), settings.llm_timeout(), LLMCache() if use_cache else None
-        )
+    """An OpenAI-compatible key takes precedence. PAPERATLAS_LLM_PROVIDER=copilot adds the Copilot CLI:
+    it is used on its own without a key, or as the fallback when an OpenAI request fails."""
+    cache = LLMCache() if use_cache else None
+    clients: list[LLMClient] = []
     api_key = settings.llm_api_key()
-    if not api_key:
+    if api_key:
+        clients.append(
+            LLMClient(
+                LLMConfig(
+                    api_key=api_key,
+                    model=settings.llm_model(),
+                    base_url=settings.llm_base_url(),
+                    timeout=settings.llm_timeout(),
+                ),
+                cache=cache,
+            )
+        )
+    if (settings.env("PAPERATLAS_LLM_PROVIDER") or "").lower() == "copilot":
+        clients.append(CopilotCliLLMClient(settings.env("PAPERATLAS_COPILOT_LLM_MODEL"), settings.llm_timeout(), cache))
+    if not clients:
         return None
-    return LLMClient(
-        LLMConfig(
-            api_key=api_key,
-            model=settings.llm_model(),
-            base_url=settings.llm_base_url(),
-            timeout=settings.llm_timeout(),
-        ),
-        cache=LLMCache() if use_cache else None,
-    )
+    return clients[0] if len(clients) == 1 else FallbackLLMClient(clients)
