@@ -76,7 +76,7 @@ try {
   const errors = []
   page.on('pageerror', e => errors.push(e.message))
   page.on('console', m => { if (m.type() === 'warning' || m.type() === 'error') errors.push(m.text()) })
-  for (const width of [1440, 838, 600, 390, 320]) {
+  for (const width of [1440, 1323, 838, 600, 390, 320]) {
     await page.setViewportSize({ width, height: 900 })
     await page.goto(url)
     const choice = page.locator('#trace-choice')
@@ -100,6 +100,13 @@ try {
     const overview = await page.locator('#wires').evaluate(inspect)
     const expected = await page.evaluate(() => new Set(Object.values(handoffs).map(h => JSON.stringify([h.from, h.to, h.kind]))).size)
     assert.equal(overview.paths, expected, 'Missing overview handoff')
+    if (width >= 1323) assert.ok(overview.crossings <= 6, 'Too many crossings in the expanded desktop gutters')
+    const worker = page.locator('.topology [data-key="worker"]')
+    await worker.hover()
+    assert.ok(await page.locator('#wires g.wire-quiet').count() > 0)
+    assert.equal(await page.locator('#wires g[data-net-source="worker"].wire-quiet').count(), 0)
+    await page.mouse.move(0, 0)
+    assert.equal(await page.locator('#wires g.wire-quiet').count(), 0)
     const zones = page.locator('.topology fieldset')
     assert.deepEqual(await zones.locator('legend').allTextContents(), ['Clients', 'PaperAtlas application', 'Persistence', 'Integration boundaries'])
     const [clients, app, storage, integrations] = await zones.evaluateAll(nodes => nodes.map(n => n.getBoundingClientRect().toJSON()))

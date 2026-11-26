@@ -36,23 +36,29 @@
     .board { --wire: #61819b; --blue: #195e91; --paper: #fbfdff; background: var(--paper); border: 1px solid #b5c6d1; border-radius: .8rem; }
     .board figcaption, .map-footer { padding: .65rem 1rem; }
     .board figcaption { border-bottom: 1px solid #d6e0e7; }
-    .topology { position: relative; padding: 1rem; display: grid; align-items: center;
-      grid-template-columns: minmax(0,1fr) minmax(0,3.7fr) minmax(0,1fr); column-gap: 3.6rem;
-      background: radial-gradient(#dce6ec .8px, transparent .8px) 0 0 / 12px 12px; }
-    .topology .core { padding-inline: 1.1rem; }
-    .tier + .tier { margin-top: 1.05rem; padding-top: .75rem; border-top: 1px solid #cfdee8; }
+    main.wrap:has(.topology:not([hidden])) { width: min(100%, 102rem); }
+    .topology { position: relative; padding: 1.35rem; display: grid; align-items: center;
+      grid-template-columns: minmax(0,1fr) minmax(0,3.7fr) minmax(0,1fr); column-gap: clamp(2.5rem, 5vw, 6rem);
+      background: radial-gradient(#dce6ec .65px, transparent .65px) 0 0 / 14px 14px; }
+    .topology .core { padding: 1rem 1.55rem 1.25rem; }
+    .tier + .tier { margin-top: 1.55rem; padding-top: 1.15rem; border-top: 1px solid #cfdee8; }
     .tier h3 { margin-bottom: .65rem; font: 650 .72rem/1.3 ui-monospace, monospace; color: #486475; }
-    .ingress { display: grid; align-items: center; grid-template-columns: minmax(0,1fr) minmax(0,1.5fr); gap: 1.6rem; }
-    .triplet, .sequence { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 1.35rem; }
+    .ingress { display: grid; align-items: center; grid-template-columns: minmax(0,1fr) minmax(0,1.5fr); gap: 2.5rem; }
+    .ingress .grid, .topology .endpoints { gap: 1.25rem; }
+    .triplet, .sequence { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 2.65rem; }
     .tier [data-key="build"] { grid-column: 2; }
-    .gate-label { font: .69rem/1.3 ui-monospace, monospace; color: #486475; padding: .4rem 0; }
+    .topology .node strong { min-width: 0; overflow-wrap: anywhere; }
+    .gate-label { font: .69rem/1.3 ui-monospace, monospace; color: #486475; padding: .9rem 0; }
     .outer .node { grid-template-columns: 1fr; justify-items: center; text-align: center; gap: .15rem; }
     .outer .node svg { grid-row: auto; width: 2rem; height: 2rem; }
     .boundary-note { font-size: .75rem; line-height: 1.35; color: var(--muted); }
     .integrations { grid-column: 2; }
-    .drop { margin: 0 auto; width: fit-content; display: flex; align-items: center; height: 2.2rem; font: .7rem ui-monospace, monospace; color: #385467; }
+    .drop { margin: 0 auto; width: fit-content; display: flex; align-items: center; height: 3rem; font: .7rem ui-monospace, monospace; color: #385467; }
     #map-caption { padding: .55rem 1rem; color: #385467; border-bottom: 1px solid #d6e0e7; font-size: .85rem; }
     #wires { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+    #wires .wire-quiet { opacity: .18; }
+    .topology .zone { border-color: #c4d1d8; }
+    .topology .core { border-color: #7498b2; }
     .control-line, .data-line { fill: none; stroke-width: 1.6; }
     .control-line { stroke: #326e9f; marker-end: url(#control-head); }
     .data-line { stroke: #477968; stroke-dasharray: 4 3; marker-end: url(#data-head); }
@@ -189,8 +195,11 @@
       .node { padding: .35rem; column-gap: .3rem; }
     }
     @media (min-width: 47rem) and (max-width: 55rem) {
-      .tier .triplet .node { grid-template-columns: 1fr; }
-      .tier .triplet .node svg { grid-row: auto; }
+      .triplet, .sequence { gap: 1.4rem; }
+      .topology .core { padding-inline: .9rem; }
+      .tier .node { grid-template-columns: minmax(0,1fr); }
+      .tier .node svg { grid-row: auto; }
+      .tier .node strong { overflow-wrap: anywhere; }
     }
     @media (max-width: 47rem) {
       .topology { grid-template-columns: minmax(0,1fr); padding-inline: 1.7rem; row-gap: .75rem; }
@@ -269,7 +278,7 @@
         <p class="small">Each lane is a separate path. A repeated block is the same component, not another service.</p>
         <div class="lane-groups"></div>
       </div>
-      <p id="map-caption" hidden><strong>Start at the web console or CLI.</strong> Blue arrows carry calls; green dashed arrows carry data. The worker starts a scan or resumes an approved experiment. A shortlist is not permission to build.</p>
+      <p id="map-caption" hidden><strong>Start at the web console or CLI.</strong> Blue arrows carry calls; green dashed arrows carry data. Hover or keyboard-focus a module to highlight its connections. Select it to inspect its internals.</p>
       <div class="topology" hidden>
         <fieldset class="zone outer"><legend>Clients</legend>
           <div class="endpoints grid gap-2">
@@ -1109,11 +1118,11 @@
 
     // Search only channels on the sides and centerlines of measured boxes. This keeps
     // orthogonal arrows off labels without shrinking the text or hard-coding viewport coordinates.
-    function wireRouter(rects, obstacles, width, height) {
-      const offsets = [-9, 0, 9];
+    function wireRouter(rects, obstacles, width, height, clearance, spacious) {
+      const offsets = [0, -1.5*clearance, 1.5*clearance];
       function axis(lo, mid, hi, limit) {
         const tracks = [2, 9, 16, 23, limit-23, limit-16, limit-9, limit-2, ...obstacles.flatMap(r => [r[lo], r[hi]])];
-        for (const r of rects.values()) tracks.push(r[lo]-8, r[hi]+8, ...offsets.map(d => r[mid]+d));
+        for (const r of rects.values()) tracks.push(r[lo]-clearance-2, r[hi]+clearance+2, ...offsets.map(d => r[mid]+d));
         return [...new Set(tracks)].filter(v => v >= 0 && v <= limit).sort((a,b) => a-b);
       }
       const xs = axis("left","cx","right",width), ys = axis("top","cy","bottom",height);
@@ -1128,7 +1137,8 @@
         if (j && open(x, ys[j-1]) && open(x, (ys[j-1]+y)/2)) join(n, n-cols);
       }
       function ports(r) {
-        return offsets.flatMap(d => [[r.left,r.cy+d,3,0],[r.right,r.cy+d,-3,0],[r.cx+d,r.top,0,3],[r.cx+d,r.bottom,0,-3]])
+        return offsets.flatMap(d => [[r.left,r.cy+d,clearance,0],[r.right,r.cy+d,-clearance,0],
+          [r.cx+d,r.top,0,clearance],[r.cx+d,r.bottom,0,-clearance]])
           .filter(([x,y]) => open(x,y) && xs.includes(x) && ys.includes(y))
           .map(([x,y,dx,dy]) => ({n: ys.indexOf(y)*cols + xs.indexOf(x), axis: dx ? 0 : 1, tip: [x+dx,y+dy]}));
       }
@@ -1140,7 +1150,7 @@
         const along = vertical ? ys : xs, across = vertical ? xs : ys;
         const lo = vertical ? Math.min(y,Y) : Math.min(x,X), hi = vertical ? Math.max(y,Y) : Math.max(x,X);
         for (let j = 0; j < across.length; j++) {
-          if (Math.abs(across[j] - (vertical ? x : y)) >= 6) continue;
+          if (Math.abs(across[j] - (vertical ? x : y)) >= Math.max(6, clearance+2)) continue;
           for (let i = 0; i < along.length-1; i++) {
             if (along[i] < hi && along[i+1] > lo) nearbyLane[vertical ? i*cols+j : j*cols+i] |= vertical ? 2 : 1;
           }
@@ -1173,7 +1183,7 @@
           }
           queue.splice(lo, 0, [state, distance]);
         }
-        for (const p of seeds.values()) enqueue(p.n*2+p.axis, !p.branch && hasTrunk ? 40 : 0, -1);
+        for (const p of seeds.values()) enqueue(p.n*2+p.axis, !p.branch && hasTrunk ? (spacious ? 8 : 40) : 0, -1);
         while (queue.length) {
           let [state, distance] = queue.pop();
           if (distance !== cost[state]) continue;
@@ -1196,7 +1206,6 @@
               const [x,y] = points[i+1], before = points[i], after = points[i+2];
               const straight = before[0] === x && after[0] === x ? 1 : before[1] === y && after[1] === y ? 0 : -1;
               const existing = traffic[cell];
-              if (existing && i !== 0) existing.wire.gaps.push([x,y]);
               traffic[cell] = {wire, axis: existing || i === 0 || i === walk.length-1 ? -1 : straight};
               if (straight === -1) bends.push([x,y]);
             });
@@ -1206,7 +1215,7 @@
               const [x,y] = point(cell);
               if (bends.some(([X,Y]) => Math.abs(x-X)+Math.abs(y-Y) < 6)) traffic[cell].axis = -1;
             }
-            return "M" + bends.map(p => p.join(" ")).join(" L");
+            return bends;
           }
           for (const next of adj[n]) {
             const axis = Number(Math.abs(next-n) === cols);
@@ -1218,7 +1227,9 @@
             if (there && (there.axis < 0 || there.axis === axis)) continue;
             const length = axis ? Math.abs(ys[Math.floor(next/cols)]-ys[Math.floor(n/cols)]) : Math.abs(xs[next%cols]-xs[n%cols]);
             const near = nearbyLane[Math.min(n,next)] & (axis ? 2 : 1);
-            enqueue(next*2+axis, distance + length*(near ? 70 : 1) + (axis !== state%2 ? 42 : 0) + (there ? 80 : 0), state);
+            const turn = axis !== state%2 ? (spacious ? 96 : 42) : 0;
+            const crossing = there ? (spacious ? 320 : 80) : 0;
+            enqueue(next*2+axis, distance + length*(near ? 70 : 1) + turn + crossing, state);
           }
         }
         // At a cramped breakpoint a port may only be accessible around a corner.
@@ -1230,27 +1241,47 @@
     function drawConnections(svg, nodes, links, labels) {
       const frame = svg.getBoundingClientRect();
       if (!frame.width) return;
-      const measure = r => ({
-        left: Math.floor(r.left-frame.left)-3, right: Math.ceil(r.right-frame.left)+3,
-        top: Math.floor(r.top-frame.top)-3, bottom: Math.ceil(r.bottom-frame.top)+3,
+      const spacious = svg.id === "wires" && frame.width > 1000;
+      const clearance = spacious ? 8 : 3;
+      const measure = (r, pad) => ({
+        left: Math.floor(r.left-frame.left)-pad, right: Math.ceil(r.right-frame.left)+pad,
+        top: Math.floor(r.top-frame.top)-pad, bottom: Math.ceil(r.bottom-frame.top)+pad,
         cx: Math.round(r.left-frame.left+r.width/2), cy: Math.round(r.top-frame.top+r.height/2)
       });
-      const rects = new Map([...nodes].map(([id, node]) => [id, measure(node.getBoundingClientRect())]));
+      const rects = new Map([...nodes].map(([id, node]) => [id, measure(node.getBoundingClientRect(), clearance)]));
       const obstacles = [...rects.values()];
       for (const label of labels) {
         const range = document.createRange();
         range.selectNodeContents(label);
-        for (const r of range.getClientRects()) if (r.width && r.height) obstacles.push(measure(r));
+        for (const r of range.getClientRects()) if (r.width && r.height) obstacles.push(measure(r, 3));
       }
-      const route = wireRouter(rects, obstacles, Math.floor(frame.width), Math.floor(frame.height));
+      const route = wireRouter(rects, obstacles, Math.floor(frame.width), Math.floor(frame.height), clearance, spacious);
       const span = ({from,to}) => Math.abs(rects.get(from).cx-rects.get(to).cx) + Math.abs(rects.get(from).cy-rects.get(to).cy);
       // Reserve direct, local connections first; long peripheral routes can use the outside lanes.
       const wires = links.map(link => ({...link, gaps: []})).sort((a,b) => span(a)-span(b));
-      for (const wire of wires) wire.d = route(wire);
+      const segments = [];
+      for (const wire of wires) {
+        const points = route(wire);
+        if (!points) continue;
+        wire.d = "M" + points.map(p => p.join(" ")).join(" L");
+        // Only cut a gap where the final, simplified polylines actually pass
+        // through one another. Grid-search visits near a turn aren't crossings.
+        const current = points.slice(1).map(([x,y], i) => {
+          const [X,Y] = points[i], horizontal = y === Y;
+          const a = horizontal ? x : y, b = horizontal ? X : Y;
+          return {wire, horizontal, at: horizontal ? y : x, lo: Math.min(a,b), hi: Math.max(a,b)};
+        });
+        for (const s of current) for (const t of segments) {
+          if (s.horizontal !== t.horizontal && s.lo < t.at && t.at < s.hi && t.lo < s.at && s.at < t.hi) {
+            t.wire.gaps.push(s.horizontal ? [t.at,s.at] : [s.at,t.at]);
+          }
+        }
+        segments.push(...current);
+      }
       const defs = svgElement("defs", {}), paths = [], dots = [];
       wires.forEach(({from,to,kind,d,gaps,junction}, index) => {
         if (!d) { console.warn(`No clear channel for ${from} → ${to}; see the text connections.`); return; }
-        const group = svgElement("g", {});
+        const group = svgElement("g", {"data-net-source": from, "data-net-target": to, "data-kind": kind});
         if (gaps.length) {
           const id = `${svg.id}-gap-${index}`;
           const mask = svgElement("mask", {id, maskUnits: "userSpaceOnUse", x: 0, y: 0, width: frame.width, height: frame.height});
@@ -1262,11 +1293,30 @@
         group.append(svgElement("path", {d, class: `${kind}-line`, "data-from": from, "data-to": to}),
           svgElement("path", {d, class: `packet ${kind}`}));
         paths.push(group);
-        if (junction) dots.push(svgElement("circle", {cx: junction[0], cy: junction[1], r: 3.6, class: `junction ${kind}`}));
+        if (junction) dots.push(svgElement("circle", {cx: junction[0], cy: junction[1], r: 3.6, class: `junction ${kind}`, "data-net-source": from, "data-net-target": to, "data-kind": kind}));
       });
       $(":scope > g", svg).replaceChildren(defs, ...paths, ...dots);
     }
     const mapNodes = new Map([...document.querySelectorAll(".topology [data-key]")].map(n => [n.dataset.key, n]));
+    // A logical branch can start midway along its source's trunk. Keep that entire
+    // source/kind network legible rather than highlighting a disconnected arrowhead.
+    function emphasize(key) {
+      const elements = [...document.querySelectorAll("#wires [data-net-source]")];
+      const net = e => `${e.dataset.netSource}:${e.dataset.kind}`;
+      const related = new Set(elements.filter(e => e.dataset.netSource === key || e.dataset.netTarget === key).map(net));
+      for (const e of elements) e.classList.toggle("wire-quiet", related.size > 0 && !related.has(net(e)));
+    }
+    const topology = $(".topology");
+    function updateEmphasis() {
+      const node = topology.querySelector("button:focus-visible") || topology.querySelector("button:hover");
+      emphasize(node?.dataset.key);
+    }
+    for (const node of mapNodes.values()) {
+      node.addEventListener("pointerenter", updateEmphasis);
+      node.addEventListener("pointerleave", updateEmphasis);
+      node.addEventListener("focus", updateEmphasis);
+      node.addEventListener("blur", () => requestAnimationFrame(updateEmphasis));
+    }
     let traceStep = 0;
     function drawWires() {
       if ($(".topology").hidden) return;
@@ -1275,6 +1325,7 @@
       const links = active ? [active] : Object.values(handoffs).filter((h, i, all) =>
         !all.slice(0,i).some(other => other.from === h.from && other.to === h.to && other.kind === h.kind));
       drawConnections($("#wires"), mapNodes, links, document.querySelectorAll(".topology legend, .tier h3, .boundary-note, .gate-label, .drop"));
+      updateEmphasis();
     }
     function showTrace() {
       const choice = $("#trace-choice").value;

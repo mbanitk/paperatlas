@@ -38,6 +38,7 @@ Connection lanes show calls and data transfers with straight arrows; **System ma
 groups modules into clients, the PaperAtlas application, persistence and integrations. Select a block to inspect its execution and data flow, or step through
 a scan or approval. The [agentic workflow diagram](docs/architecture.html#agent-workflow) separates
 model proposals, coding-agent changes, measured verdicts and human decisions, including retry paths.
+On the expanded system map, hover or keyboard-focus a block to highlight its connections.
 A filled dot on a routed wire marks a connected branch; a gap means two lines cross without connecting.
 Moving arrows show direction; motion can be paused and starts off for reduced-motion users.
 The guide works offline; only its source links need a connection.
