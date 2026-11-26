@@ -33,6 +33,10 @@ flowchart LR
 
 ## Architecture
 
+[Interactive architecture field guide](docs/architecture.html) — open the HTML file locally and select
+a block to see its internal data flow, source references, and suggested refactoring priorities.
+The guide works offline; only its source links need a connection.
+
 | Service | Port | Role |
 |---|---|---|
 | `gateway` | 8100 | Web console (`web/`) + proxy for `/api/research/*` and `/api/lab/*` |
