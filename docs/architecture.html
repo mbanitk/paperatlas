@@ -6,7 +6,7 @@
   <meta name="description" content="An interactive field guide to PaperAtlas: how requests become experiments, and where to improve the code.">
   <title>PaperAtlas · Architecture field guide</title>
   <style id="tailwind">/*! tailwindcss v4.3.5 | MIT License | https://tailwindcss.com */
-:root,:host{--spacing:.25rem}.mt-1{margin-top:var(--spacing)}.mt-4{margin-top:calc(var(--spacing) * 4)}.mt-auto{margin-top:auto}.flex{display:flex}.grid{display:grid}.flex-col{flex-direction:column}.flex-wrap{flex-wrap:wrap}.content-start{align-content:flex-start}.items-baseline{align-items:baseline}.items-center{align-items:center}.items-start{align-items:flex-start}.justify-between{justify-content:space-between}.gap-1{gap:var(--spacing)}.gap-2{gap:calc(var(--spacing) * 2)}.gap-3{gap:calc(var(--spacing) * 3)}.gap-4{gap:calc(var(--spacing) * 4)}.gap-5{gap:calc(var(--spacing) * 5)}.p-3{padding:calc(var(--spacing) * 3)}.p-4{padding:calc(var(--spacing) * 4)}.px-3{padding-inline:calc(var(--spacing) * 3)}.px-4{padding-inline:calc(var(--spacing) * 4)}.py-2{padding-block:calc(var(--spacing) * 2)}.py-3{padding-block:calc(var(--spacing) * 3)}.py-8{padding-block:calc(var(--spacing) * 8)}.pt-1{padding-top:var(--spacing)}.pt-3{padding-top:calc(var(--spacing) * 3)}.pt-4{padding-top:calc(var(--spacing) * 4)}.pb-10{padding-bottom:calc(var(--spacing) * 10)}@media (width>=40rem){.sm\:grid-cols-2{grid-template-columns:repeat(2,minmax(0,1fr))}.sm\:p-6{padding:calc(var(--spacing) * 6)}.sm\:px-6{padding-inline:calc(var(--spacing) * 6)}.sm\:px-8{padding-inline:calc(var(--spacing) * 8)}}</style>
+:root,:host{--spacing:.25rem}.mt-1{margin-top:var(--spacing)}.mt-4{margin-top:calc(var(--spacing) * 4)}.flex{display:flex}.grid{display:grid}.flex-wrap{flex-wrap:wrap}.content-start{align-content:flex-start}.items-center{align-items:center}.justify-between{justify-content:space-between}.gap-1{gap:var(--spacing)}.gap-2{gap:calc(var(--spacing) * 2)}.gap-3{gap:calc(var(--spacing) * 3)}.gap-4{gap:calc(var(--spacing) * 4)}.gap-5{gap:calc(var(--spacing) * 5)}.p-3{padding:calc(var(--spacing) * 3)}.p-4{padding:calc(var(--spacing) * 4)}.px-3{padding-inline:calc(var(--spacing) * 3)}.px-4{padding-inline:calc(var(--spacing) * 4)}.py-2{padding-block:calc(var(--spacing) * 2)}.py-3{padding-block:calc(var(--spacing) * 3)}.pt-3{padding-top:calc(var(--spacing) * 3)}.pb-10{padding-bottom:calc(var(--spacing) * 10)}@media (width>=40rem){.sm\:p-6{padding:calc(var(--spacing) * 6)}.sm\:px-6{padding-inline:calc(var(--spacing) * 6)}.sm\:px-8{padding-inline:calc(var(--spacing) * 8)}}</style>
   <style>
     :root { color-scheme: light; --ink: #192d31; --muted: #475f62; --rule: #c9d4cf; }
     * { box-sizing: border-box; }
@@ -21,10 +21,9 @@
     .mast { background: #193334; color: #f5fbf6; }
     .mark { border: 1px solid #9bcec1; color: #b5e3cb; border-radius: 5px; padding: .12rem .4rem; }
     .revision { color: #d0e7dc; font-size: .8rem; }
-    h1 { font-size: clamp(2.1rem, 5vw, 4rem); line-height: 1.02; letter-spacing: -.055em; }
+    h1 { font-size: clamp(2rem, 4vw, 3.2rem); line-height: 1.05; letter-spacing: -.05em; }
     .lede { max-width: 64ch; color: var(--muted); font-size: 1.05rem; }
-    .intro { display: grid; gap: 1.4rem; align-items: center; }
-    .key { background: #edf1e9; border: 1px solid var(--rule); border-radius: .7rem; }
+    .intro { padding-block: 1.3rem 1rem; }
     .small { color: var(--muted); font-size: .86rem; }
     [data-tone="focused"] { --accent: #23705a; --wash: #eef7f0; --line: #a2c9b9; }
     [data-tone="review"] { --accent: #825600; --wash: #fff7e4; --line: #d8c394; }
@@ -33,20 +32,54 @@
     .badge { display: inline-flex; align-items: center; gap: .35rem; width: fit-content; color: var(--accent);
       background: var(--wash); font-size: .75rem; font-weight: 700; white-space: nowrap; }
     .badge::before { content: ""; width: .52rem; height: .52rem; border-radius: 50%; background: var(--accent); }
-    .key .badge { padding: .1rem .5rem; border: 1px solid var(--line); border-radius: 1rem; }
-    .board { background: #fff; border: 1px solid var(--rule); border-radius: .9rem; }
-    .lane + .lane { border-top: 1px solid var(--rule); }
-    .lane-heading { font-size: 1.13rem; letter-spacing: -.025em; }
-    .lane-number { color: #53726e; border-right: 1px solid var(--rule); padding-right: .8rem; }
-    .nodes { display: grid; gap: 1.35rem; grid-template-columns: repeat(var(--columns), minmax(0, 1fr)); }
-    .node, .note { border: 1px solid var(--line); border-left: 4px solid var(--accent);
-      border-radius: .55rem; background: var(--wash); }
-    .node { position: relative; width: 100%; text-align: left; }
-    .node:hover { box-shadow: 0 2px 0 var(--line); border-color: var(--accent); }
-    .node-title { font-size: 1.04rem; line-height: 1.2; letter-spacing: -.025em; }
+    #legend .badge { padding: .1rem .5rem; border: 1px solid var(--line); border-radius: 1rem; }
+    .board { --wire: #61819b; --blue: #195e91; --paper: #fbfdff; background: var(--paper); border: 1px solid #b5c6d1; border-radius: .8rem; }
+    .board figcaption, .map-footer { padding: .65rem 1rem; }
+    .board figcaption { border-bottom: 1px solid #d6e0e7; }
+    .topology { position: relative; padding: 1rem; display: grid; align-items: center; grid-template-columns: minmax(0,1fr) 3.6rem minmax(0,3.7fr) 3.6rem minmax(0,1fr);
+      background-image: radial-gradient(#dce6ec .8px, transparent .8px); background-size: 12px 12px; }
+    #wires { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+    .control-line, .data-line { fill: none; stroke-width: 1.6; }
+    .control-line { stroke: #326e9f; marker-end: url(#control-head); }
+    .data-line { stroke: #477968; stroke-dasharray: 4 3; marker-end: url(#data-head); }
+    .key-line { width: 1.5rem; border-top: 2px solid #326e9f; }
+    .key-line.data { border-top: 2px dashed #477968; }
+    .zone { margin: 0; padding: .75rem; min-inline-size: 0; border: 1px dashed #8aa6b7; border-radius: .4rem; background: var(--paper); }
+    .zone legend { padding: 0 .35rem; font-size: .84rem; font-weight: 700; color: #385467; }
+    .core { border: 2px dashed #4782ae; background: #f1f7fb; }
+    .core legend { font-size: 1.13rem; color: var(--blue); }
+    .tier + .tier { margin-top: .65rem; padding-top: .65rem; border-top: 1px solid #cfdee8; }
+    .tier h3 { margin-bottom: .35rem; font: 650 .72rem/1.3 ui-monospace, monospace; color: #486475; }
+    .ingress { display: grid; align-items: center; grid-template-columns: minmax(0,1fr) 1.6rem minmax(0,1.5fr); }
+    .fork { display: grid; grid-template-columns: 1fr 1fr; align-self: stretch; padding-block: 0; }
+    .fork::before { content: ""; align-self: center; border-top: 1px solid var(--wire); }
+    .fork::after { content: ""; align-self: center; height: calc(50% + .25rem); border: 1px solid var(--wire); border-right: 0; }
+    .triplet { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .45rem; }
+    .sequence { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 1.05rem; }
+    .sequence .node + .node::before { content: "→"; position: absolute; right: 100%; width: 1.05rem; text-align: center; color: var(--blue); }
+    .gate-label { font: .69rem/1.3 ui-monospace, monospace; color: #486475; padding: .4rem 0; }
+    .node, .note { background: var(--wash); border: 1px solid var(--line); border-radius: .4rem; }
+    .node { position: relative; display: grid; grid-template-columns: auto 1fr; align-content: center; align-items: center; column-gap: .5rem;
+      width: 100%; min-height: 2.75rem; padding: .4rem .55rem; text-align: left; }
+    .node svg { grid-row: span 2; width: 1.4rem; height: 1.4rem; color: var(--blue); }
+    .node strong { font-size: .88rem; line-height: 1.2; }
+    .node .badge { font-size: .67rem; }
+    .node[data-step] { outline: 2px solid var(--blue); outline-offset: 1px; }
+    .node[data-step]::after { content: attr(data-step); position: absolute; top: -.4rem; right: -.28rem; min-width: 1.12rem;
+      padding: 0 .18rem; border-radius: .25rem; color: white; background: var(--blue); font: bold .75rem/1.12rem ui-monospace, monospace; text-align: center; }
+    .node[data-step]:focus-visible { outline: 3px solid #2534c5; outline-offset: 4px; }
+    .node:hover, button.hop:hover { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+    .outer .node { grid-template-columns: 1fr; justify-items: center; text-align: center; gap: .15rem; }
+    .outer .node svg { grid-row: auto; width: 2rem; height: 2rem; }
+    .boundary-note { font-size: .75rem; line-height: 1.35; color: var(--muted); }
+    .wire { visibility: hidden; font: .7rem ui-monospace, monospace; color: #385467; }
+    .integrations { grid-column: 3; }
+    .drop { margin: 0 auto; width: fit-content; display: flex; align-items: center; height: 2.2rem; gap: .45rem; font: .7rem ui-monospace, monospace; color: #385467; }
+    .drop::before { content: "↕"; display: grid; align-content: center; height: 100%; font-size: 1.3rem; color: var(--wire); }
+    .map-footer { border-top: 1px solid #d6e0e7; }
+    .map-footer .node { width: auto; }
+    .note { border-left: 4px solid var(--accent); }
     .node-summary { color: #354b4c; font-size: .87rem; line-height: 1.4; }
-    .inspect { font-size: .75rem; font-weight: 700; color: var(--accent); }
-    .flow .node:not(:last-child)::after { content: "→"; position: absolute; right: -1.2rem; top: 42%; color: #647a75; }
     .trace { border-left: 3px solid #6e968a; background: #ebf0ea; font-size: .92rem; }
     dialog { width: min(57rem, calc(100% - 1.5rem)); max-height: 89vh; max-height: 89dvh; padding: 0;
       color: var(--ink); border: 1px solid #9cafa8; border-radius: .85rem; background: #fcfdf9; overflow-y: auto; }
@@ -57,26 +90,67 @@
     .detail-title { font-size: clamp(1.6rem, 4vw, 2.4rem); line-height: 1.15; letter-spacing: -.045em; }
     .path-figure { background: #edf2ed; border: 1px solid var(--rule); border-radius: .55rem; }
     .path { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem; }
-    .hop { background: white; border: 1px solid #b7c9bf; padding: .18rem .5rem; border-radius: .3rem; font-size: .84rem; }
-    .hop[data-tone] { background: var(--wash); color: var(--accent); border-color: var(--line); font-weight: 650; }
+    .path + .path { border-top: 1px dashed #b5c9bc; padding-top: .5rem; }
+    .data-figure { background: #eff5fb; border-color: #c6d7e3; }
+    .payloads { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 1.25rem; }
+    .payloads li { position: relative; background: white; border: 1px solid #bed0df; border-radius: .35rem; padding: .55rem; font-size: .85rem; overflow-wrap: anywhere; }
+    .payloads li:not(:last-child)::after { content: "→"; position: absolute; right: -1.05rem; top: calc(50% - .65rem); color: #316482; }
+    .payloads strong { display: block; margin-bottom: .14rem; color: #244f70; }
+    .example { font: inherit; padding: .25rem .4rem; border: 1px solid #aabdca; border-radius: .35rem; background: white; color: var(--ink); }
+    #trace-route { color: #28516a; font-size: .85rem; }
+    .hop { padding: .15rem .25rem; font-size: .84rem; }
+    button.hop { background: var(--wash); color: var(--accent); border: 1px solid var(--line); border-radius: .35rem; padding: .45rem .65rem; font-weight: 650; }
+    button.hop[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 -3px var(--accent); }
     .arrow { color: #536b63; }
     .note h3 { font-size: 1rem; }
     .ref { font-size: .76rem; overflow-wrap: anywhere; }
     .next { border-top: 1px solid var(--rule); }
-    @media (min-width: 56rem) { .intro { grid-template-columns: 1.5fr 1fr; } }
-    @media (max-width: 61rem) {
-      .nodes { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .flow .node:not(:last-child)::after { content: none; }
+    @media (max-width: 64rem) {
+      .topology { grid-template-columns: minmax(0,1fr) 2.3rem minmax(0,3.6fr) 2.3rem minmax(0,1fr); padding: .65rem; }
+      .zone { padding: .5rem; }
+      .node { padding: .35rem; column-gap: .3rem; }
+    }
+    @media (max-width: 47rem) {
+      .topology { grid-template-columns: minmax(0,1fr); }
+      .outer .endpoints { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); }
+      .boundary-note { margin-top: .25rem; }
+      #wires { display: none; }
+      .wire { visibility: visible; display: flex; align-items: center; justify-content: center; height: 2rem; }
+      .integrations { grid-column: 1; grid-row: 4; }
+      .map-footer { align-items: flex-start; }
     }
     @media (max-width: 35rem) {
-      .nodes { grid-template-columns: 1fr; gap: .9rem; }
-      .flow .node:not(:last-child)::after { content: "↓"; top: 100%; left: 50%; right: auto; line-height: .95rem; }
+      .triplet { grid-template-columns: repeat(2,minmax(0,1fr)); }
+      .sequence { grid-template-columns: 1fr; gap: .85rem; }
+      .sequence .node + .node::before { content: "↓"; top: -.9rem; right: 50%; line-height: .85rem; }
+      .integrations .triplet { grid-template-columns: 1fr; }
       .path { align-items: flex-start; flex-direction: column; }
       .path .arrow { transform: rotate(90deg); margin-left: .55rem; line-height: .8; }
+      .payloads { grid-template-columns: 1fr; gap: .9rem; }
+      .payloads li:not(:last-child)::after { content: "↓"; top: 100%; left: 1rem; right: auto; line-height: .9rem; }
     }
   </style>
 </head>
 <body>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <symbol id="screen" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="15" rx="2"/><path d="M2 7h20M8 22h8m-4-4v4"/></symbol>
+      <symbol id="terminal" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m6 9 3 3-3 3m6 0h5"/></symbol>
+      <symbol id="routing" viewBox="0 0 24 24"><path d="M2 12h8m0 0 6-7h5m-11 7 6 7h5M18 2l3 3-3 3m0 8 3 3-3 3"/></symbol>
+      <symbol id="server" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="7" rx="2"/><path d="M6 6.5h3m-3 11h3"/></symbol>
+      <symbol id="cube" viewBox="0 0 24 24"><path d="m12 2 9 5v10l-9 5-9-5V7zm-9 5 9 5 9-5m-9 5v10"/></symbol>
+      <symbol id="worker" viewBox="0 0 24 24"><path d="M7 3v4m10-4v4M7 17v4m10-4v4M2 9h4m-4 6h4m12-6h4m-4 6h4"/><rect x="6" y="6" width="12" height="12" rx="2"/><path d="m10 9 5 3-5 3z"/></symbol>
+      <symbol id="book" viewBox="0 0 24 24"><path d="M12 6Q8 3 2 4v15q6-1 10 2 4-3 10-2V4q-6-1-10 2zm0 0v15"/></symbol>
+      <symbol id="filter" viewBox="0 0 24 24"><path d="M2 4h20l-8 9v6l-4 2v-8z"/></symbol>
+      <symbol id="compare" viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/><path stroke-width="4" d="M8 3v6m9 0v6M9 15v6"/></symbol>
+      <symbol id="chart" viewBox="0 0 24 24"><path d="M3 3v18h19M7 17v-4m5 4V9m5 8V5"/></symbol>
+      <symbol id="file" viewBox="0 0 24 24"><path d="M5 2h9l5 5v15H5zm9 0v6h5M8 12h8m-8 4h6"/></symbol>
+      <symbol id="db" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v7c0 4 18 4 18 0V5M3 12v7c0 4 18 4 18 0v-7"/></symbol>
+      <symbol id="folder" viewBox="0 0 24 24"><path d="M2 7V4h8l3 3h9v13H2zm0 3h20"/></symbol>
+      <symbol id="model" viewBox="0 0 24 24"><circle cx="5" cy="12" r="3"/><circle cx="18" cy="5" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8 11 7-5m-7 7 7 5"/></symbol>
+      <symbol id="repo" viewBox="0 0 24 24"><circle cx="7" cy="5" r="2"/><circle cx="7" cy="19" r="2"/><circle cx="18" cy="6" r="2"/><path d="M7 7v10m0-2c0-5 11-1 11-7"/></symbol>
+    </defs>
+  </svg>
   <header class="mast">
     <div class="wrap flex items-center justify-between gap-4 px-4 py-3 sm:px-8">
       <div class="flex items-center gap-3"><span class="mark kicker" aria-hidden="true">PA</span><strong>PaperAtlas</strong></div>
@@ -84,28 +158,103 @@
     </div>
   </header>
   <main class="wrap px-4 pb-10 sm:px-8">
-    <header class="intro py-8">
+    <header class="intro">
       <div class="grid gap-3">
-        <p class="kicker">Engineering field guide / System architecture</p>
-        <h1>From paper to proof.</h1>
-        <p class="lede">PaperAtlas finds a research claim, tries it in a target project, and measures whether it holds up. Select a block to see what runs inside it and which code is worth revisiting.</p>
+        <p class="kicker">Engineering field guide / System context</p>
+        <h1>PaperAtlas architecture</h1>
+        <p class="small">From research claim to measured experiment. Select a block for its execution flow, data flow and source code.</p>
       </div>
-      <aside class="key grid gap-2 p-4" aria-label="Maintenance priority legend">
-        <strong>How to read the colors</strong>
-        <div id="legend" class="flex flex-wrap gap-2"></div>
-        <p class="small">Focused: one clear job. Review: a specific seam to improve. Hotspot: several responsibilities change together. Scaffold: outside the running loop.</p>
-        <p class="small">A block takes its highest component priority. These are source-review judgments, not defect counts or guesses about AI authorship.</p>
-      </aside>
     </header>
 
-    <article class="board" aria-label="High-level architecture diagram">
-      <div class="flex flex-wrap items-baseline justify-between gap-2 px-4 pt-4 sm:px-6">
-        <h2 class="kicker">Level 01 / System map</h2>
-        <span id="count" class="small"></span>
+    <figure class="board" aria-labelledby="map-title">
+      <figcaption class="flex flex-wrap items-center justify-between gap-2">
+        <div class="flex flex-wrap items-center gap-3">
+          <h2 id="map-title" class="kicker">01 / System context diagram</h2>
+          <select id="trace-choice" class="example" aria-label="Highlight an example execution path">
+            <option value="all">All connections</option>
+            <option value="scan">Trace: start a scan</option>
+            <option value="approval">Trace: approve a spec</option>
+          </select>
+        </div>
+        <div id="legend" aria-label="Code maintenance priorities" class="flex flex-wrap gap-2"></div>
+      </figcaption>
+      <div id="trace-route" class="px-4 pt-3" aria-live="polite" hidden></div>
+      <div class="topology">
+        <fieldset class="zone outer"><legend>Clients</legend>
+          <div class="endpoints grid gap-2">
+            <button data-key="console" data-icon="screen"></button>
+            <button data-key="cli" data-icon="terminal"></button>
+          </div>
+          <p class="boundary-note mt-1">Web → gateway (HTTP)<br>CLI → shared service (Python)</p>
+        </fieldset>
+        <div class="wire">↓ Client calls</div>
+        <fieldset class="zone core"><legend>PaperAtlas application</legend>
+          <section class="tier"><h3>01 / HTTP entry points</h3>
+            <div class="ingress">
+              <button data-key="gateway" data-icon="routing"></button><span class="fork" aria-hidden="true"></span>
+              <div class="grid gap-2">
+                <button data-key="research" data-icon="server"></button>
+                <button data-key="lab" data-icon="server"></button>
+              </div>
+            </div>
+          </section>
+          <section class="tier"><h3>02 / Commands, queued work &amp; operator tools</h3>
+            <div class="triplet">
+              <button data-key="service" data-icon="cube"></button>
+              <button data-key="worker" data-icon="worker"></button>
+              <button data-key="ops" data-icon="terminal"></button>
+            </div>
+          </section>
+          <section class="tier"><h3>03 / Workflow stages · called by the worker</h3>
+            <div class="sequence">
+              <button data-key="discover" data-icon="book"></button>
+              <button data-key="distill" data-icon="filter"></button>
+              <button data-key="match" data-icon="compare"></button>
+            </div>
+            <p class="gate-label">Pick claim (Gate 1) → approve plan (Gate 2) ↓</p>
+            <div class="sequence">
+              <button data-key="build" data-icon="worker"></button>
+              <button data-key="judge" data-icon="chart"></button>
+            </div>
+            <p class="gate-label">After the verdict: merge or drop (Gate 3).</p>
+          </section>
+        </fieldset>
+        <div class="wire">Application ↔ persistence</div>
+        <fieldset class="zone outer"><legend>Persistence</legend>
+          <div class="endpoints grid gap-2">
+            <button data-key="db" data-icon="db"></button>
+            <button data-key="files" data-icon="folder"></button>
+          </div>
+          <p class="boundary-note mt-1">Query results → lab API<br>Kept report → local files</p>
+        </fieldset>
+        <div class="integrations">
+          <div class="drop">via PaperAtlas adapters</div>
+          <fieldset class="zone outer"><legend>Integration boundaries</legend>
+            <div class="triplet">
+              <button data-key="feeds" data-icon="book"></button>
+              <button data-key="models" data-icon="model"></button>
+              <button data-key="target" data-icon="repo"></button>
+            </div>
+          </fieldset>
+        </div>
+        <svg id="wires" aria-hidden="true">
+          <defs>
+            <marker id="control-head" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5" markerHeight="5" orient="auto"><path d="M0 0 8 4 0 8z" fill="#326e9f"/></marker>
+            <marker id="data-head" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5" markerHeight="5" orient="auto"><path d="M0 0 8 4 0 8z" fill="#477968"/></marker>
+          </defs>
+          <g></g>
+        </svg>
       </div>
-      <div id="lanes"></div>
+      <div class="map-footer flex flex-wrap items-center gap-3">
+        <span class="kicker">Outside the running loop</span><button data-key="scaffold" data-icon="cube"></button>
+        <span class="flex items-center gap-2 small"><i class="key-line"></i>Execution call</span>
+        <span class="flex items-center gap-2 small"><i class="key-line data"></i>Data transfer</span>
+      </div>
       <noscript><p class="p-4">Enable JavaScript to explore the interactive map. No network connection or PaperAtlas services are required.</p></noscript>
-    </article>
+    </figure>
+    <details class="small mt-1"><summary>How to read the map and colors</summary>
+      <p>Dashed outlines mark ownership boundaries, not network hops. Arrows show representative calls and payload transfers, not every dependency. The gateway forks to two HTTP services. Each block color describes PaperAtlas code, not an external provider. Focused means one clear job; Review marks a specific seam to improve; Hotspot means several responsibilities change together; Scaffold sits outside the live loop. A block takes its highest component priority. These judgments do not imply AI authorship.</p>
+    </details>
     <aside class="trace mt-4 grid gap-1 p-4">
       <strong>Trace one request: start a project scan</strong>
       <p>The console posts to <code>/api/lab/projects/{id}/triage</code>. The gateway forwards to lab-api; the shared service creates a triage and queues <code>triage.run</code>. A worker discovers, distills and matches. The console reads progress as server-sent events. The result is a shortlist, not an automatic build.</p>
@@ -124,32 +273,21 @@
         <p id="detail-purpose" class="lede"></p>
       </header>
       <figure class="path-figure grid gap-2 p-4">
-        <figcaption class="kicker">Internal paths · follow the arrows</figcaption>
+        <figcaption><strong>Execution flow</strong><p class="small">Follow the calls and decisions. Select a colored step to inspect its implementation below.</p></figcaption>
         <div class="grid gap-2" id="paths"></div>
       </figure>
+      <figure class="path-figure data-figure grid gap-2 p-4">
+        <figcaption><strong>Data flow</strong><p class="small">What enters, what changes shape, and where the result goes.</p></figcaption>
+        <ol class="payloads" id="data-flow"></ol>
+      </figure>
       <section class="grid gap-3" aria-labelledby="evidence-title">
-        <h2 id="evidence-title" class="kicker">Component notes / source evidence</h2>
-        <div id="notes" class="grid gap-3 sm:grid-cols-2"></div>
+        <h2 id="evidence-title" class="kicker">Selected step / source evidence</h2>
+        <div id="notes" aria-live="polite"></div>
       </section>
       <aside class="next grid gap-1 pt-3"><strong>One practical next step</strong><p id="detail-next"></p></aside>
     </div>
   </dialog>
 
-  <template id="lane-template">
-    <section class="lane grid gap-3 p-4 sm:p-6">
-      <header>
-        <div class="flex items-baseline gap-3"><span class="lane-number kicker"></span><h2 class="lane-heading"></h2></div>
-        <p class="small mt-1"></p>
-      </header>
-      <div class="nodes"></div>
-    </section>
-  </template>
-  <template id="node-template">
-    <button type="button" class="node flex flex-col items-start gap-2 p-3" aria-haspopup="dialog">
-      <span class="badge"></span><strong class="node-title"></strong>
-      <span class="node-summary"></span><span class="inspect mt-auto pt-1">Inspect block <span aria-hidden="true">↗</span></span>
-    </button>
-  </template>
   <template id="note-template">
     <article class="note grid content-start gap-2 p-3">
       <span class="badge"></span><h3></h3><p class="node-summary"></p><div class="grid gap-1"></div>
@@ -162,220 +300,278 @@
     const tones = { scaffold: "Scaffold", focused: "Focused", review: "Review", hotspot: "Hotspot" };
     const part = (title, tone, note, ...refs) => ({ title, tone, note, refs });
     // A numeric hop refers to a component below; a text hop is an input, output or external boundary.
-    const lanes = [
-      {
-        title: "Request path", flow: true,
-        caption: "Follow a scan from left to right. The CLI skips HTTP and joins at the service layer. Simple reads return without a worker.",
-        modules: [
-          {
-            title: "Console & CLI", summary: "Two ways to inspect research and operate the gates.",
-            purpose: "A researcher can start a scan in the browser, then pick a claim or approve its spec from the terminal. Both operate on the same records.",
-            paths: [[0, 1, "HTTP gateway"], ["paperatlas r2e scan", 2, "Shared service"]],
-            parts: [
-              part("React console", "hotspot", "Routes split research from experiments, but Recommendations.tsx puts the scan dialog, live triage, card rendering and prerequisite selection in one 980-line page.",
-                "/web/src/App.tsx:23-48", "/web/src/pages/Recommendations.tsx:50-131", "/web/src/pages/Recommendations.tsx:388-428"),
-              part("Query & event clients", "focused", "Pages use React Query hooks over the HTTP client. A separate event-stream hook tracks a cursor and merges updates; the page need not decode SSE itself.",
-                "/web/src/api/client.ts:85-111", "/web/src/api/queries.ts:299-360", "/web/src/api/sse.ts:21-49"),
-              part("Python CLI", "review", "Command handlers call Python services directly. One 177-line argparse builder wires the database, process controls and research commands together.",
-                "cli.py:167-187", "cli.py:301-477")
-            ],
-            next: "Extract the scan dialog and triage-progress view from Recommendations.tsx before changing how claims are ranked. Neither component needs to own the selection policy."
-          },
-          {
-            title: "Gateway & APIs", summary: "Route web requests to the research or lab process.",
-            purpose: "The gateway serves the built console and forwards requests. Two FastAPI services own the HTTP surface; neither is the benchmark executor.",
-            paths: [["/api/research/*", 0, 1, "Research reads / jobs"], ["/api/lab/*", 0, 2, "Lab commands / events"]],
-            parts: [
-              part("Gateway :8100", "focused", "A two-entry backend map selects the upstream. The proxy preserves encoded paper IDs and streams the response rather than buffering a live event feed.",
-                "services/gateway.py:15-63"),
-              part("Research API :8101", "focused", "Topics, papers and claims have read endpoints. Refresh, discovery and distillation routes enqueue named jobs and return job IDs.",
-                "services/research_api.py:90-120"),
-              part("Lab API :8102", "focused", "Project scans and experiment decisions delegate to services. For live progress, the common SSE responder polls event rows after a cursor.",
-                "services/lab_api.py:160-184", "services/lab_api.py:198-211", "services/common.py:50-83")
-            ],
-            next: "Keep business rules out of new routes. For a new streamed view, reuse the cursor-based responder instead of introducing a second event protocol."
-          },
-          {
-            title: "Shared service", summary: "Query the catalog, start scans and record decisions.",
-            purpose: "HTTP handlers, CLI commands and graph nodes call lab/service.py. It is a productive first refactor target: one 1,106-line file owns both research reads and experiment state changes.",
-            paths: [["Read request", 0, "Response"], ["Start scan / pick", 1, "Queued job"], ["Gate decision", 2, "Resume job"]],
-            parts: [
-              part("Read models", "hotspot", "Paper and claim lookups, recommendation joins and experiment summaries all assemble client payloads in the same module as lifecycle commands.",
-                "lab/service.py:139-221", "lab/service.py:336-411", "lab/service.py:731-788"),
-              part("Scan & experiment creation", "review", "Starting a triage and turning picks into experiments are separate operations. Creation also handles bundles, prerequisite ordering and dependent jobs.",
-                "lab/service.py:414-519", "lab/service.py:544-564"),
-              part("Atomic gate transition", "focused", "A row lock serializes competing decisions. Status, event and resume job are written in the same transaction; moving one write independently would break that guarantee.",
-                "lab/service.py:883-892", "lab/service.py:915-980")
-            ],
-            next: "Move the read-only paper and claim queries behind a research-read module first. Keep existing callers stable and leave gate writes together."
-          },
-          {
-            title: "Queue & workflows", summary: "Lease jobs, advance graphs and resume after review.",
-            purpose: "A worker claims a Postgres job and dispatches it by kind. The triage graph ends at a shortlist. The experiment graph checkpoints in agent.* and interrupts for spec approval and the final decision.",
-            paths: [[0, 1, 2, "Gate 1: shortlist"], [0, 1, 3, "Gate 2 / Gate 3"]],
-            parts: [
-              part("Job lease", "focused", "A transaction claims a runnable job; owner-checked updates prevent an old worker from recording an outcome after losing its lease.",
-                "lab/events.py:131-177"),
-              part("Worker dispatch", "focused", "A handler table maps job kinds to functions. A lease heartbeat is separate from the thread pool that executes them; the supervisor launches this worker alongside the HTTP processes.",
-                "services/worker.py:104-149", "services/worker.py:167-219", "services/supervisor.py:18-42"),
-              part("Triage graph", "focused", "The edges spell out topics, discover, distill, match and shortlist. The last node records awaiting_pick and ends the graph rather than starting a build.",
-                "lab/orchestrator.py:883-927"),
-              part("Experiment graph", "hotspot", "In the 927-line orchestrator, node_judge alone spans 101 lines: it diagnoses results, chooses iterations, can restore a commit, renders a report and attempts a draft PR.",
-                "lab/orchestrator.py:457-557", "lab/orchestrator.py:648-696")
-            ],
-            next: "Extract the choice of which iteration to keep as a pure function. Leave Git changes, status writes and checkpoint transitions in the graph until replay behavior is covered."
-          }
-        ]
+    const modules = {
+      console: {
+        title: "Web console", summary: "React client",
+        purpose: "A researcher starts a scan in the browser. React components send commands via the gateway and render progress from the lab event stream.",
+        paths: [["Start scan", 0, 1, "Gateway"], ["Progress event", 1, 0, "Refresh the view"]],
+        data: [["User input", "Project ID and scan options"], ["HTTP response", "Triage ID and queued status"], ["Browser state", "Event IDs, stages and messages in the progress view"]],
+        parts: [
+          part("React console", "hotspot", "Routes split research from experiments, but Recommendations.tsx puts the scan dialog, live triage, card rendering and prerequisite selection in one 980-line page.",
+            "/web/src/App.tsx:23-48", "/web/src/pages/Recommendations.tsx:50-131", "/web/src/pages/Recommendations.tsx:388-428"),
+          part("Query & event clients", "focused", "Pages use React Query hooks over the HTTP client. A separate event-stream hook tracks a cursor and merges updates; the page need not decode SSE itself.",
+            "/web/src/api/client.ts:85-111", "/web/src/api/queries.ts:299-360", "/web/src/api/sse.ts:21-49")
+        ],
+        next: "Extract the scan dialog and triage-progress view from Recommendations.tsx before changing how claims are ranked. Neither component needs to own the selection policy."
       },
-      {
-        title: "Research → experiment", flow: true,
-        caption: "Work performed by the graphs, not five more services. In an interactive run you pick claims, approve the spec, then decide whether to merge or drop.",
-        modules: [
-          {
-            title: "Discover", summary: "Turn seed areas into ranked topics and papers.",
-            purpose: "Configured seed areas drive searches across arXiv, Semantic Scholar, OpenAlex, Hugging Face Papers and USPTO. The result passed to distillation is a set of selected paper IDs.",
-            paths: [["config/r2e.yaml", 0, 1, 2, "Selected IDs + text"], ["Single paper / URL", 3, "Paper store"]],
-            parts: [
-              part("Source connectors", "review", "Connectors return common PaperMetadata and share HTTP backoff. The arXiv connector also calls a private feed parser on the older ingestion client, coupling the two paths.",
-                "discovery/sources/base.py:20-86", "discovery/sources/arxiv.py:12-40"),
-              part("Topic selection", "focused", "refresh_topics coordinates separate functions for collecting, embedding, clustering, scoring and labeling candidates. Cluster selection can be examined independently of fetching.",
-                "discovery/topics.py:82-118", "discovery/topics.py:305-347"),
-              part("Paper ranking", "focused", "rank_topic assigns scores and ranks. discover takes the top papers per topic and fetches PDF text only when the row lacks it and a PDF URL exists.",
-                "discovery/ranking.py:87-164"),
-              part("Single-paper ingestion", "review", "concepts/extraction also accepts identifiers, URLs and arXiv queries. These paths repeat the enrich-and-persist sequence around the same PDF parser and PaperStore.",
-                "concepts/extraction/pipeline.py:37-92", "concepts/extraction/pipeline.py:130-150")
-            ],
-            next: "Expose the arXiv feed parser as a shared public function. Exercise it with the same feed fixture from both entry points before changing either connector."
-          },
-          {
-            title: "Distill", summary: "Extract testable claims and connect related ideas.",
-            purpose: "A paper becomes concepts with claim cards: the proposed change, metric, baseline and evidence. A heuristic fallback produces non-testable concepts rather than inventing a measurable gain.",
-            paths: [["Paper text", 0, 1, 2, "Stored claims"], ["Stored claims", 3, "Groups / links"]],
-            parts: [
-              part("Claim extractor", "review", "LLM failure or empty output can select the heuristic path, but the source property is based on whether a client exists. A fallback result can therefore be stored as LLM-derived.",
-                "distill/extractor.py:101-120", "distill/pipeline.py:83-90"),
-              part("Claim contract", "focused", "Pydantic models define effects and evidence. Parsing validates each concept separately so one malformed item need not invalidate the rest of a paper.",
-                "distill/claims.py:50-85", "distill/extractor.py:156-164"),
-              part("Batch persistence", "review", "The pipeline embeds and saves claims, then schedules optional maps and explanations. It imports a private bulk-run helper from the explainer module.",
-                "distill/pipeline.py:83-150"),
-              part("Groups & concept links", "focused", "Dedup groups similar claims across papers. A separate concept-map pass describes relationships inside one paper; relations.py reads those links for cards and prerequisite chains.",
-                "distill/dedup.py:41-89", "distill/concept_map.py:175-224", "distill/relations.py:60-129")
-            ],
-            next: "Return the actual extraction source with each paper's results. Add a case where a configured model fails and verify that the stored provenance says heuristic."
-          },
-          {
-            title: "Match & plan", summary: "Rank feasible claims and draft the experiment spec.",
-            purpose: "A fast technique on the paper's hardware may not help here. Matching combines the target's capabilities and metrics with predicted gain. Planning happens only after a claim is picked.",
-            paths: [["Target lab.yaml", 0, 1], ["Claims + profile", 1, 2, "Gate 1: pick"], ["Picked claim", 3, "Gate 2: approve spec"]],
-            parts: [
-              part("Project profile", "focused", "Reads lab.yaml, Git facts and registered techniques; persists a project embedding. A separate measurement can supply a roofline (where the engine spends time).",
-                "lab/profiler.py:60-110", "lab/profiler.py:155-194"),
-              part("Cost prediction", "review", "predict produces a hardware-aware estimate, not a benchmark. Its category-specific rules occupy a single 118-line function.",
-                "lab/costmodel.py:118-235"),
-              part("Claim matcher", "hotspot", "match_project loads candidates, computes scores and blockers, requests optional model review, upserts matches and may generate explainers in one 137-line function.",
-                "lab/matcher.py:186-322"),
-              part("Spec planner", "review", "The planner picks a metric and workload, builds an optional model prompt, normalizes the answer and enforces thresholds in the same function. protocol.py defines the comparison arms.",
-                "lab/planner.py:229-341", "lab/protocol.py:157-180")
-            ],
-            next: "Separate scoring one claim from loading and saving matches. Pin the order, blockers and target metric on a small set of claims before moving the database loop."
-          },
-          {
-            title: "Build & measure", summary: "Run a flagged change against a controlled baseline.",
-            purpose: "The target repository supplies its own install, test and bench_ab commands. PaperAtlas prepares an isolated branch, verifies the change and records measurements; it does not substitute a synthetic benchmark.",
-            paths: [["Approved spec", 0, 1, "Verified flag"], ["Verified flag", 2, 3, "Target A/B harness"], ["Harness JSON", 2, "Run records + logs"]],
-            parts: [
-              part("Experiment workspace", "focused", "workspace.py encapsulates branch and worktree operations. process.py handles cancellation and log capture; safety.py scrubs the environment passed to project commands.",
-                "lab/workspace.py:36-52", "lab/process.py:59-90", "lab/safety.py"),
-              part("Builder & verification", "review", "Copilot and Codex share an adapter boundary. The same 403-line builder file also formats prompts, checks protected paths and verifies that the flag and tests work.",
-                "lab/builder.py:36-108", "lab/builder.py:286-347"),
-              part("Benchmark runner", "review", "Smoke, optional tuning, evaluation and adoption checks share run_benchmark. It assembles arms, records the run, waits for the GPU, executes the harness, validates output and persists completion.",
-                "lab/runner.py:68-183"),
-              part("GPU coordination", "focused", "A Postgres advisory lock serializes benchmark use across workers. A separate check reports background GPU activity so noisy measurements can be interpreted.",
-                "lab/gpu.py:19-39", "lab/gpu.py:56-84")
-            ],
-            next: "Extract benchmark command preparation from run_benchmark so claim and adoption arm selection can be checked without a GPU, database or subprocess."
-          },
-          {
-            title: "Judge & report", summary: "Separate measured effect from interpretation.",
-            purpose: "The claim check compares against the paper baseline when available. A separate adoption check, when needed, compares against project defaults. A verdict is evidence for Gate 3, not permission to merge.",
-            paths: [["Paired A/B results", 0, 1, "Bounded retry or report"], ["Kept run + verdict", 2, "Gate 3: merge / drop"]],
-            parts: [
-              part("Statistical judge", "focused", "evaluate works on result, spec and profile values, not the database. It checks paired deltas, bootstrap intervals and guardrails; missing measurements can yield inconclusive.",
-                "lab/judge.py:102-191"),
-              part("Analyst", "focused", "The analyst explains the measured verdict and may suggest another iteration. Model failure has an explicit rule-based fallback that does not request another build.",
-                "lab/analyst.py:90-119", "lab/analyst.py:145-167"),
-              part("Report renderer", "focused", "Chart helpers and a Jinja template render the kept evidence to HTML. Rendering is distinct from the graph node that records the verdict and asks for a decision.",
-                "lab/report.py:119-179", "lab/report.py:181-242", "lab/templates/report.html")
-            ],
-            next: "Preserve the judge/analyst split. When changing a threshold, use paired fixtures for a gain, a regression and missing quality data; do not change the analyst prompt to alter the verdict."
-          }
-        ]
+      cli: {
+        title: "Python CLI", summary: "Terminal client",
+        purpose: "Commands share Python functions and Postgres state with the web services. A scan does not need to round-trip through HTTP.",
+        paths: [["r2e scan", 0, 1, "Queue triage.run"], ["If --inline", 2, "Execute queued jobs"]],
+        data: [["Arguments", "--project, --per-topic and --no-llm"], ["Service input", "Resolved project ID + triage options"], ["Output", "Triage ID on stdout; status after inline execution"]],
+        parts: [
+          part("Parse command", "review", "One 177-line argparse builder wires database, process-control and research commands together.", "cli.py:301-477"),
+          part("Call service", "focused", "cmd_scan resolves the project and calls start_triage, just like the lab API.", "cli.py:167-179"),
+          part("Drain queue", "focused", "Inline mode uses the worker's execute function and renews leases while claiming queued jobs.", "cli.py:56-65")
+        ],
+        next: "Group parser registration by command family before adding more subcommands. Keep the existing handlers and command names."
       },
-      {
-        title: "Shared systems & boundaries", flow: false,
-        caption: "These are dependencies and side paths, not later stages. The gray block belongs to the original scaffold, not the live research loop.",
-        modules: [
-          {
-            title: "Storage & search", summary: "Durable evidence, experiment state and hybrid retrieval.",
-            purpose: "Postgres with pgvector stores research.*, lab.* and the agent.* graph checkpoints. The filesystem holds worktrees, logs, benchmark artifacts, reports and digests; it is not the job queue.",
-            paths: [["Papers & claims", 1, 0], ["Search text + embedding", 2, "Ranked IDs"], ["Run artifacts", 3, "Local files"]],
-            parts: [
-              part("Schema & migrations", "focused", "SQLAlchemy models describe research and lab rows. Alembic upgrades those schemas, while the graph checkpointer creates its own tables in agent.",
-                "db/schema.py:1-46", "db/migrate.py", "lab/orchestrator.py:59-72"),
-              part("PaperStore", "review", "One store owns ingestion, embeddings and claim replacement. Re-distillation also needs to know about lab experiments to avoid deleting claims on which results depend.",
-                "db/store.py:119-159", "db/store.py:282-321"),
-              part("Hybrid search", "focused", "A single query ranks lexical and vector candidates and combines their ranks. It returns each rank separately, making disagreements easier to inspect.",
-                "db/search.py:31-100"),
-              part("Artifact paths", "focused", "Workspace helpers locate an experiment's artifacts; the runner records the JSON and log paths on the Run row. The database row and the benchmark file have different roles.",
-                "lab/workspace.py:17-39", "lab/runner.py:86-126")
-            ],
-            next: "Before moving claim persistence, keep a database test that re-distills a paper with a live experiment and proves that its claim and run history survive."
-          },
-          {
-            title: "Model adapters", summary: "Shared embeddings, structured generation and cache.",
-            purpose: "Embeddings support clustering, deduplication, search and matching. The text-generation client is a different dependency: it produces structured content for extraction, planning and explanation.",
-            paths: [["Text", 0, "Normalized vectors"], ["Prompt + schema", 1, "Hit: stored response"], ["Cache miss", 2, "Generated response"]],
-            parts: [
-              part("Sentence encoder", "focused", "A cached model returns normalized vectors and checks the dimension against the database contract. This is the active embeddings code, not the empty FAISS scaffold.",
-                "embeddings/text.py:16-45"),
-              part("Response cache", "focused", "The LLM client checks its Postgres cache before calling a provider, then stores the result. The settings module supplies model and connection configuration.",
-                "llm/client.py:38-112", "settings.py"),
-              part("Provider boundary", "review", "The HTTP provider requests strict JSON-schema output. The Copilot CLI adapter instead prompts for JSON and parses text; callers cannot assume equivalent schema enforcement.",
-                "llm/client.py:113-133", "llm/client.py:191-241")
-            ],
-            next: "Share fixtures for malformed and incomplete replies across provider adapters. Keep validation at the boundary where generated data becomes a claim or spec."
-          },
-          {
-            title: "Explanations & ops", summary: "Narrate results, batch experiments and schedule scans.",
-            purpose: "These are optional entry points around the main loop. An explanation or digest reads existing evidence; scheduled scans and batch runs reuse the same commands and experiment records.",
-            paths: [["Research rows", 0, "Console explanation"], [1, "Scan then digest"], ["Testable project claims", 2, "Experiment jobs"]],
-            parts: [
-              part("Explainers", "review", "r2e/explainers.py spans 569 lines: output schemas, diagram cleanup, topic statistics, prompting, persistence and parallel backfill live together.",
-                "r2e/explainers.py:229-260", "r2e/explainers.py:414-472", "r2e/explainers.py:507-569"),
-              part("Weekly schedule & digest", "focused", "The macOS launchd job invokes scan then digest. Installation is opt-in. The digest builder reads recent topics, claims and verdicts rather than rerunning experiments.",
-                "r2e/schedule.py:15-48", "r2e/digest.py:38-85"),
-              part("Batch driver", "review", "run_batch mixes capacity checks, claim selection and experiment creation in one polling loop. Batch mode automatically approves Gate 2; it leaves Gate 3 to a person.",
-                "lab/batch.py:59-124")
-            ],
-            next: "Give bulk explanation scheduling a public helper independent of prompt construction. Distillation and matching could then stop importing the explainer module's private _run_all."
-          },
-          {
-            title: "Original scaffold", summary: "Prototype API, ranking models and reserved packages.",
-            purpose: "Do not follow these directories to debug a production recommendation. The running project fits claims with lab/matcher.py; the original search/recommend/graph API is a separate app.",
-            paths: [["uvicorn api.main:app", 0, "Prototype routes"], ["Embedding arrays", 1, "Prototype ranking"], [2, "No running stage"]],
-            parts: [
-              part("Prototype API", "scaffold", "The root api/main.py re-exports paperatlas.api.main. Its search route echoes the input; it is not the gateway's research API or hybrid search.",
-                "/api/main.py", "api/main.py", "api/routes/search.py"),
-              part("Prototype ranking", "scaffold", "ConceptRecommender sorts cosine similarities; ConceptRanker is a small neural network. The surrounding ML training and inference files are placeholders, not the active matching pipeline.",
-                "recommender/concept_recommender.py", "ml/models/concept_ranker.py", "ml/training/train_ranker.py"),
-              part("Reserved namespaces", "scaffold", "graph, user, experiments/notebooks and ui are scaffold packages. Empty embedding backends sit beside the live embeddings/text.py; do not classify the whole embeddings package as unused.",
-                "graph/analytics/pagerank.py", "user/interest_model.py", "experiments/notebooks/__init__.py", "ui/__init__.py", "embeddings/faiss_index.py")
-            ],
-            next: "Label the prototype entry point and empty packages before considering removal. Keep live text embeddings and concepts/extraction out of any scaffold cleanup."
-          }
-        ]
+      gateway: {
+        title: "Gateway :8100", summary: "Static host & HTTP proxy",
+        purpose: "One browser origin serves the built web console and proxies two API prefixes. Long-lived event streams go through the same proxy.",
+        paths: [["Page request", 0, "Web console"], ["/api/{service}/…", 1, "Research or lab API", 2, "Browser"]],
+        data: [["Incoming", "Method, encoded path, query and body"], ["Upstream", "/api/lab/triage/7 becomes /triage/7 on lab-api"], ["Returned", "Upstream status, headers and streamed bytes"]],
+        parts: [
+          part("Serve console", "focused", "A built asset is served as a file; a client-side route gets index.html. An unbuilt console returns 503.", "services/gateway.py:78-88"),
+          part("Select upstream", "focused", "The backend map selects an API and the raw subpath preserves encoded characters in paper IDs.", "services/gateway.py:17-32", "services/gateway.py:43-58"),
+          part("Stream response", "focused", "The response body passes through incrementally and the upstream response is closed afterward.", "services/gateway.py:34-63")
+        ],
+        next: "Keep the gateway transport-only. Test encoded paper IDs and unbuffered SSE when changing proxy routing."
+      },
+      research: {
+        title: "Research API :8101", summary: "Catalog endpoints",
+        purpose: "Reading the catalog is synchronous. A request to discover or distill papers returns a job ID rather than holding the connection open.",
+        paths: [["GET /papers", 0, "Return page"], ["POST /distill", 1, "Worker handles job later"]],
+        data: [["Example request", "POST /distill with paper_ids and limit"], ["Queue row", "kind = distill, payload = validated options"], ["Caller receives", "JobQueued with job_id and kind"]],
+        parts: [
+          part("Catalog query", "focused", "Paper and claim routes pass search text, filters and pagination to the shared read functions.", "services/research_api.py:110-118", "services/research_api.py:150-160"),
+          part("Queue command", "focused", "Routes for topic refresh, discover and distill each enqueue a named job and return its ID.", "services/research_api.py:95-108")
+        ],
+        next: "Use the existing queued response for new batch operations so callers can track work without a long-running HTTP request."
+      },
+      lab: {
+        title: "Lab API :8102", summary: "Experiments & gates",
+        purpose: "Project scans, picks and gate decisions enter through this API. Progress streams read durable event rows; the request handler does not run the benchmark.",
+        paths: [["POST triage or gate decision", 0, "Shared service"], ["GET experiment stream", 1, "Send progress; repeat"]],
+        data: [["Stream input", "Experiment ID and last seen event ID"], ["Database", "Events for this experiment after that cursor"], ["Browser", "SSE frames with id, progress event and JSON data"]],
+        parts: [
+          part("Delegate command", "focused", "The HTTP layer forwards validated IDs and options to service functions. Gate transition logic stays in the shared layer.", "services/lab_api.py:160-184", "services/lab_api.py:198-211"),
+          part("Stream new events", "focused", "The API polls event rows by cursor, emits a keep-alive when idle and resumes from Last-Event-ID.", "services/lab_api.py:235-244", "services/common.py:50-83")
+        ],
+        next: "Reuse the existing cursor-based responder for new live views rather than adding another event protocol."
+      },
+      service: {
+        title: "Shared service", summary: "Query the catalog, start scans and record decisions.",
+        purpose: "HTTP handlers, CLI commands and graph nodes call lab/service.py. It is a productive first refactor target: one 1,106-line file owns both research reads and experiment state changes.",
+        paths: [["Read request", 0, "Response"], ["Start scan / pick", 1, "Queued job"], ["Gate decision", 2, "Resume job"]],
+        data: [["Gate 2 input", "Experiment ID, approve decision and optional spec edits"], ["Locked row", "Check awaiting_approval; update spec and status"], ["Same transaction", "Event plus experiment.resume job with gate-tagged payload"]],
+        parts: [
+          part("Read models", "hotspot", "Paper and claim lookups, recommendation joins and experiment summaries all assemble client payloads in the same module as lifecycle commands.",
+            "lab/service.py:139-221", "lab/service.py:336-411", "lab/service.py:731-788"),
+          part("Scan & experiment creation", "review", "Starting a triage and turning picks into experiments are separate operations. Creation also handles bundles, prerequisite ordering and dependent jobs.",
+            "lab/service.py:414-519", "lab/service.py:544-564"),
+          part("Atomic gate transition", "focused", "A row lock serializes competing decisions. Status, event and resume job are written in the same transaction; moving one write independently would break that guarantee.",
+            "lab/service.py:883-892", "lab/service.py:915-980")
+        ],
+        next: "Move the read-only paper and claim queries behind a research-read module first. Keep existing callers stable and leave gate writes together."
+      },
+      worker: {
+        title: "Worker & workflows", summary: "Lease jobs, advance graphs and resume after review.",
+        purpose: "A worker claims a Postgres job and dispatches it by kind. The triage graph ends at a shortlist. The experiment graph checkpoints in agent.* and interrupts for spec approval and the final decision.",
+        paths: [[0, 1, 2, "Gate 1: shortlist"], [0, 1, 3, "Gate 2 / Gate 3"]],
+        data: [["lab.jobs", "Job kind + payload, e.g. triage.run with triage_id"], ["Graph state", "Thread ID and stage outputs checkpointed in agent.*"], ["Visible result", "Shortlist in lab.triage, progress events and job outcome"]],
+        parts: [
+          part("Job lease", "focused", "A transaction claims a runnable job; owner-checked updates prevent an old worker from recording an outcome after losing its lease.",
+            "lab/events.py:131-177"),
+          part("Worker dispatch", "focused", "A handler table maps job kinds to functions. A lease heartbeat is separate from the thread pool that executes them; the supervisor launches this worker alongside the HTTP processes.",
+            "services/worker.py:104-149", "services/worker.py:167-219", "services/supervisor.py:18-42"),
+          part("Triage graph", "focused", "The edges spell out topics, discover, distill, match and shortlist. The last node records awaiting_pick and ends the graph rather than starting a build.",
+            "lab/orchestrator.py:883-927"),
+          part("Experiment graph", "hotspot", "In the 927-line orchestrator, node_judge alone spans 101 lines: it diagnoses results, chooses iterations, can restore a commit, renders a report and attempts a draft PR.",
+            "lab/orchestrator.py:457-557", "lab/orchestrator.py:648-696")
+        ],
+        next: "Extract the choice of which iteration to keep as a pure function. Leave Git changes, status writes and checkpoint transitions in the graph until replay behavior is covered."
+      },
+      discover: {
+        title: "Discover", summary: "Turn seed areas into ranked topics and papers.",
+        purpose: "Configured seed areas drive searches across arXiv, Semantic Scholar, OpenAlex, Hugging Face Papers and USPTO. The result passed to distillation is a set of selected paper IDs.",
+        paths: [["config/r2e.yaml", 0, 1, 2, "Selected IDs + text"], ["Single paper / URL", 3, "Paper store"]],
+        data: [["Search input", "Seed area, topic queries and lookback window"], ["Candidates", "Normalized paper metadata, topic relevance and rank"], ["Distillation input", "Selected paper IDs; available PDF text saved on paper rows"]],
+        parts: [
+          part("Source connectors", "review", "Connectors return common PaperMetadata and share HTTP backoff. The arXiv connector also calls a private feed parser on the older ingestion client, coupling the two paths.",
+            "discovery/sources/base.py:20-86", "discovery/sources/arxiv.py:12-40"),
+          part("Topic selection", "focused", "refresh_topics coordinates separate functions for collecting, embedding, clustering, scoring and labeling candidates. Cluster selection can be examined independently of fetching.",
+            "discovery/topics.py:82-118", "discovery/topics.py:305-347"),
+          part("Paper ranking", "focused", "rank_topic assigns scores and ranks. discover takes the top papers per topic and fetches PDF text only when the row lacks it and a PDF URL exists.",
+            "discovery/ranking.py:87-164"),
+          part("Single-paper ingestion", "review", "concepts/extraction also accepts identifiers, URLs and arXiv queries. These paths repeat the enrich-and-persist sequence around the same PDF parser and PaperStore.",
+            "concepts/extraction/pipeline.py:37-92", "concepts/extraction/pipeline.py:130-150")
+        ],
+        next: "Expose the arXiv feed parser as a shared public function. Exercise it with the same feed fixture from both entry points before changing either connector."
+      },
+      distill: {
+        title: "Distill", summary: "Extract testable claims and connect related ideas.",
+        purpose: "A paper becomes concepts with claim cards: the proposed change, metric, baseline and evidence. A heuristic fallback produces non-testable concepts rather than inventing a measurable gain.",
+        paths: [["Paper text", 0, 1, 2, "Stored claims"], ["Stored claims", 3, "Groups / links"]],
+        data: [["Paper row", "Title, abstract and available raw text"], ["Validated concepts", "Technique, evidence quote, effect, direction and baseline"], ["Stored", "Concept and claim rows with embeddings; claim IDs used for grouping"]],
+        parts: [
+          part("Claim extractor", "review", "LLM failure or empty output can select the heuristic path, but the source property is based on whether a client exists. A fallback result can therefore be stored as LLM-derived.",
+            "distill/extractor.py:101-120", "distill/pipeline.py:83-90"),
+          part("Claim contract", "focused", "Pydantic models define effects and evidence. Parsing validates each concept separately so one malformed item need not invalidate the rest of a paper.",
+            "distill/claims.py:50-85", "distill/extractor.py:156-164"),
+          part("Batch persistence", "review", "The pipeline embeds and saves claims, then schedules optional maps and explanations. It imports a private bulk-run helper from the explainer module.",
+            "distill/pipeline.py:83-150"),
+          part("Groups & concept links", "focused", "Dedup groups similar claims across papers. A separate concept-map pass describes relationships inside one paper; relations.py reads those links for cards and prerequisite chains.",
+            "distill/dedup.py:41-89", "distill/concept_map.py:175-224", "distill/relations.py:60-129")
+        ],
+        next: "Return the actual extraction source with each paper's results. Add a case where a configured model fails and verify that the stored provenance says heuristic."
+      },
+      match: {
+        title: "Match & plan", summary: "Rank feasible claims and draft the experiment spec.",
+        purpose: "A fast technique on the paper's hardware may not help here. Matching combines the target's capabilities and metrics with predicted gain. Planning happens only after a claim is picked.",
+        paths: [["Target lab.yaml", 0, 1], ["Claims + profile", 1, 2, "Gate 1: pick"], ["Picked claim", 3, "Gate 2: approve spec"]],
+        data: [["Candidate", "Claim + project metrics, hardware and optional roofline"], ["Match row", "Score, blockers, testable_here and target metric"], ["After a pick", "Experiment spec: flag, workload, baseline, threshold and guardrails"]],
+        parts: [
+          part("Project profile", "focused", "Reads lab.yaml, Git facts and registered techniques; persists a project embedding. A separate measurement can supply a roofline (where the engine spends time).",
+            "lab/profiler.py:60-110", "lab/profiler.py:155-194"),
+          part("Cost prediction", "review", "predict produces a hardware-aware estimate, not a benchmark. Its category-specific rules occupy a single 118-line function.",
+            "lab/costmodel.py:118-235"),
+          part("Claim matcher", "hotspot", "match_project loads candidates, computes scores and blockers, requests optional model review, upserts matches and may generate explainers in one 137-line function.",
+            "lab/matcher.py:186-322"),
+          part("Spec planner", "review", "The planner picks a metric and workload, builds an optional model prompt, normalizes the answer and enforces thresholds in the same function. protocol.py defines the comparison arms.",
+            "lab/planner.py:229-341", "lab/protocol.py:157-180")
+        ],
+        next: "Separate scoring one claim from loading and saving matches. Pin the order, blockers and target metric on a small set of claims before moving the database loop."
+      },
+      build: {
+        title: "Build & measure", summary: "Run a flagged change against a controlled baseline.",
+        purpose: "The target repository supplies its own install, test and bench_ab commands. PaperAtlas prepares an isolated branch, verifies the change and records measurements; it does not substitute a synthetic benchmark.",
+        paths: [["Approved spec", 0, 1, "Verified flag"], ["Verified flag", 2, 3, "Target A/B harness"], ["Harness JSON", 2, "Run records + logs"]],
+        data: [["Spec + profile", "Flag, arms, workload, rounds and bench_ab template"], ["Target worktree", "Flagged implementation and rendered benchmark command"], ["Run evidence", "Baseline/variant rounds, quality and environment in JSON and lab.runs"]],
+        parts: [
+          part("Experiment workspace", "focused", "workspace.py encapsulates branch and worktree operations. process.py handles cancellation and log capture; safety.py scrubs the environment passed to project commands.",
+            "lab/workspace.py:36-52", "lab/process.py:59-90", "lab/safety.py"),
+          part("Builder & verification", "review", "Copilot and Codex share an adapter boundary. The same 403-line builder file also formats prompts, checks protected paths and verifies that the flag and tests work.",
+            "lab/builder.py:36-108", "lab/builder.py:286-347"),
+          part("Benchmark runner", "review", "Smoke, optional tuning, evaluation and adoption checks share run_benchmark. It assembles arms, records the run, waits for the GPU, executes the harness, validates output and persists completion.",
+            "lab/runner.py:68-183"),
+          part("GPU coordination", "focused", "A Postgres advisory lock serializes benchmark use across workers. A separate check reports background GPU activity so noisy measurements can be interpreted.",
+            "lab/gpu.py:19-39", "lab/gpu.py:56-84")
+        ],
+        next: "Extract benchmark command preparation from run_benchmark so claim and adoption arm selection can be checked without a GPU, database or subprocess."
+      },
+      judge: {
+        title: "Judge & report", summary: "Separate measured effect from interpretation.",
+        purpose: "The claim check compares against the paper baseline when available. A separate adoption check, when needed, compares against project defaults. A verdict is evidence for Gate 3, not permission to merge.",
+        paths: [["Paired A/B results", 0, 1, "Bounded retry or report"], ["Kept run + verdict", 2, "Gate 3: merge / drop"]],
+        data: [["Measurements", "Paired baseline/variant metrics + required quality results"], ["Computed evidence", "Median improvement, bootstrap interval and guardrail failures"], ["Review output", "Stored verdict and HTML report; merge/drop remains a decision"]],
+        parts: [
+          part("Statistical judge", "focused", "evaluate works on result, spec and profile values, not the database. It checks paired deltas, bootstrap intervals and guardrails; missing measurements can yield inconclusive.",
+            "lab/judge.py:102-191"),
+          part("Analyst", "focused", "The analyst explains the measured verdict and may suggest another iteration. Model failure has an explicit rule-based fallback that does not request another build.",
+            "lab/analyst.py:90-119", "lab/analyst.py:145-167"),
+          part("Report renderer", "focused", "Chart helpers and a Jinja template render the kept evidence to HTML. Rendering is distinct from the graph node that records the verdict and asks for a decision.",
+            "lab/report.py:119-179", "lab/report.py:181-242", "lab/templates/report.html")
+        ],
+        next: "Preserve the judge/analyst split. When changing a threshold, use paired fixtures for a gain, a regression and missing quality data; do not change the analyst prompt to alter the verdict."
+      },
+      db: {
+        title: "PostgreSQL", summary: "SQL + pgvector",
+        purpose: "Postgres with pgvector stores research.*, lab.* and the agent.* graph checkpoints. The filesystem holds worktrees, logs, benchmark artifacts, reports and digests; it is not the job queue.",
+        paths: [["Database upgrade", 0, "Schema ready"], ["Ingest / distill", 1, "Commit rows"], ["Catalog query", 2, "Return ranked IDs"]],
+        data: [["Search input", "Query text and a normalized embedding"], ["Candidate sets", "Full-text ranks and pgvector cosine ranks"], ["Read result", "IDs ordered by reciprocal-rank fusion, with both source ranks"]],
+        parts: [
+          part("Schema & migrations", "focused", "SQLAlchemy models describe research and lab rows. Alembic upgrades those schemas, while the graph checkpointer creates its own tables in agent.",
+            "db/schema.py:1-46", "db/migrate.py", "lab/orchestrator.py:59-72"),
+          part("PaperStore", "review", "One store owns ingestion, embeddings and claim replacement. Re-distillation also needs to know about lab experiments to avoid deleting claims on which results depend.",
+            "db/store.py:119-159", "db/store.py:282-321"),
+          part("Hybrid search", "focused", "A single query ranks lexical and vector candidates and combines their ranks. It returns each rank separately, making disagreements easier to inspect.",
+            "db/search.py:31-100")
+        ],
+        next: "Before moving claim persistence, keep a database test that re-distills a paper with a live experiment and proves that its claim and run history survive."
+      },
+      files: {
+        title: "Artifact files", summary: "Local filesystem",
+        purpose: "Worktrees hold target code; the experiment artifact directory holds the physical outputs. Postgres run records point back to the relevant files.",
+        paths: [["Start experiment", 0, "Isolated worktree"], ["Run harness", 1, "Persist result paths"], ["Judge kept run", 2, "HTML report"]],
+        data: [["Experiment ID", "Selects r2e/experiments/<id>/ under the data directory"], ["Harness writes", "Timestamped JSON results and a separate log file"], ["Review artifact", "report.html built from verdict, spec and kept measurements"]],
+        parts: [
+          part("Allocate workspace", "focused", "Per-experiment worktree and artifact directory paths are derived separately from the configured data root.", "lab/workspace.py:23-52"),
+          part("Write run files", "review", "The runner allocates paths, records them in SQL and reads back the results to validate the harness contract. These responsibilities are coupled.", "lab/runner.py:86-126", "lab/runner.py:153-183"),
+          part("Render report", "focused", "The graph passes the selected measurements and verdict to the report renderer, then persists the verdict with its report path.", "lab/orchestrator.py:526-554", "lab/report.py:181-242")
+        ],
+        next: "Keep the mapping from run ID to result and log paths explicit when separating benchmark execution from storage."
+      },
+      feeds: {
+        title: "Research feeds", summary: "Paper & patent sources",
+        purpose: "PaperAtlas uses adapters for arXiv, Semantic Scholar, OpenAlex, Hugging Face Papers and USPTO. The assessment here covers those adapters, not the external services.",
+        paths: [["Configured names", 0, "Enabled connectors"], ["Topic query", 1, 2, "Paper store"]],
+        data: [["Outbound", "Search terms, date range and per-source limit"], ["Inbound", "Provider-specific feed or JSON records"], ["Normalized", "PaperMetadata records upserted to canonical paper IDs"]],
+        parts: [
+          part("Build source list", "focused", "A registry maps configuration names to adapters and rejects unknown names.", "discovery/sources/__init__.py:12-25"),
+          part("Fetch with backoff", "focused", "The shared HTTP layer spaces requests, retries transient failures and logs disabled connectors.", "discovery/sources/base.py:34-86"),
+          part("Normalize records", "review", "Each adapter converts its response into PaperMetadata. The arXiv implementation reaches into another client's private feed parser.", "discovery/sources/arxiv.py:16-40", "discovery/ranking.py:60-73")
+        ],
+        next: "Make the shared arXiv parser public and keep feed-format fixtures independent of HTTP calls."
+      },
+      models: {
+        title: "Model adapters", summary: "Shared embeddings, structured generation and cache.",
+        purpose: "Embeddings support clustering, deduplication, search and matching. The text-generation client is a different dependency: it produces structured content for extraction, planning and explanation.",
+        paths: [["Text", 0, "Normalized vectors"], ["Prompt + schema", 1, "Hit: stored response"], ["Cache miss", 2, "Generated response"]],
+        data: [["Generation input", "Model, system prompt, user prompt and optional schema"], ["Cache key", "Hash of those inputs in research.llm_cache"], ["Result", "Response text from cache or provider; JSON parsed for structured callers"]],
+        parts: [
+          part("Sentence encoder", "focused", "A cached model returns normalized vectors and checks the dimension against the database contract. This is the active embeddings code, not the empty FAISS scaffold.",
+            "embeddings/text.py:16-45"),
+          part("Response cache", "focused", "The LLM client checks its Postgres cache before calling a provider, then stores the result. The settings module supplies model and connection configuration.",
+            "llm/client.py:38-112", "settings.py"),
+          part("Provider boundary", "review", "The HTTP provider requests strict JSON-schema output. The Copilot CLI adapter instead prompts for JSON and parses text; callers cannot assume equivalent schema enforcement.",
+            "llm/client.py:113-133", "llm/client.py:191-241")
+        ],
+        next: "Share fixtures for malformed and incomplete replies across provider adapters. Keep validation at the boundary where generated data becomes a claim or spec."
+      },
+      target: {
+        title: "Target project", summary: "Git repo & A/B harness",
+        purpose: "The target is a separate repository, not a PaperAtlas service. PaperAtlas reads its contract and runs its commands in an experiment worktree. The colors describe the integration code.",
+        paths: [["Register repo", 0, "Project ready for matching"], ["Approved spec", 1, 2, "Return paired measurements"]],
+        data: [["Target contract", "lab.yaml: models, metrics, workloads and commands"], ["Harness invocation", "bench_ab populated with model, flags, workload, rounds and output path"], ["Harness output", "schema_version, rounds, arms, quality and environment"]],
+        parts: [
+          part("Read project contract", "focused", "The profiler checks required keys and adds Git metadata and registered techniques before storing the profile.", "lab/profiler.py:60-110"),
+          part("Create worktree", "focused", "The workspace helper creates or reopens an experiment branch and records its base.", "lab/workspace.py:36-52"),
+          part("Call target harness", "review", "The runner interprets the project's command template and validates its JSON. The project owns measurement; PaperAtlas owns the arm and output contract.", "lab/runner.py:25-60", "lab/runner.py:86-126")
+        ],
+        next: "Exercise a minimal target fixture with one flag, one workload and paired rounds before adding a new harness format."
+      },
+      ops: {
+        title: "Explanations & ops", summary: "Narrate results, batch experiments and schedule scans.",
+        purpose: "These are optional entry points around the main loop. An explanation or digest reads existing evidence; scheduled scans and batch runs reuse the same commands and experiment records.",
+        paths: [["Research rows", 0, "Console explanation"], [1, "Scan then digest"], ["Testable project claims", 2, "Experiment jobs"]],
+        data: [["Digest input", "Project ID and reporting window"], ["Read model", "Current topics, testable claims, recent verdicts and waiting experiments"], ["Published locally", "A dated HTML file under r2e/digests/"]],
+        parts: [
+          part("Explainers", "review", "r2e/explainers.py spans 569 lines: output schemas, diagram cleanup, topic statistics, prompting, persistence and parallel backfill live together.",
+            "r2e/explainers.py:229-260", "r2e/explainers.py:414-472", "r2e/explainers.py:507-569"),
+          part("Weekly schedule & digest", "focused", "The macOS launchd job invokes scan then digest. Installation is opt-in. The digest builder reads recent topics, claims and verdicts rather than rerunning experiments.",
+            "r2e/schedule.py:15-48", "r2e/digest.py:38-85"),
+          part("Batch driver", "review", "run_batch mixes capacity checks, claim selection and experiment creation in one polling loop. Batch mode automatically approves Gate 2; it leaves Gate 3 to a person.",
+            "lab/batch.py:59-124")
+        ],
+        next: "Give bulk explanation scheduling a public helper independent of prompt construction. Distillation and matching could then stop importing the explainer module's private _run_all."
+      },
+      scaffold: {
+        title: "Original scaffold", summary: "Prototype API, ranking models and reserved packages.",
+        purpose: "Do not follow these directories to debug a production recommendation. The running project fits claims with lab/matcher.py; the original search/recommend/graph API is a separate app.",
+        paths: [["uvicorn api.main:app", 0, "Prototype routes"], ["Embedding arrays", 1, "Prototype ranking"], [2, "No running stage"]],
+        data: [["Prototype only", "Query text sent to the original /search/ endpoint"], ["Route function", "Receives query as a string; does not call hybrid search"], ["Response", "JSON echo: {\"query\": \"kv cache\"} for the example input"]],
+        parts: [
+          part("Prototype API", "scaffold", "The root api/main.py re-exports paperatlas.api.main. Its search route echoes the input; it is not the gateway's research API or hybrid search.",
+            "/api/main.py", "api/main.py", "api/routes/search.py"),
+          part("Prototype ranking", "scaffold", "ConceptRecommender sorts cosine similarities; ConceptRanker is a small neural network. The surrounding ML training and inference files are placeholders, not the active matching pipeline.",
+            "recommender/concept_recommender.py", "ml/models/concept_ranker.py", "ml/training/train_ranker.py"),
+          part("Reserved namespaces", "scaffold", "graph, user, experiments/notebooks and ui are scaffold packages. Empty embedding backends sit beside the live embeddings/text.py; do not classify the whole embeddings package as unused.",
+            "graph/analytics/pagerank.py", "user/interest_model.py", "experiments/notebooks/__init__.py", "ui/__init__.py", "embeddings/faiss_index.py")
+        ],
+        next: "Label the prototype entry point and empty packages before considering removal. Keep live text embeddings and concepts/extraction out of any scaffold cleanup."
       }
-    ];
+    };
 
     const $ = (selector, root = document) => root.querySelector(selector);
     const clone = id => $(id).content.firstElementChild.cloneNode(true);
@@ -401,33 +597,52 @@
       link.title = `Open ${path} at ${revision.slice(0, 7)} (new tab)`;
       return link;
     }
-    function openModule(module, laneTitle) {
+    function openModule(module, zone) {
       const dialog = $("#detail");
-      $("#detail-id").textContent = `Level 02 / ${laneTitle}`;
+      $("#detail-id").textContent = `02 / ${zone}`;
       $("#detail-title").textContent = module.title;
       $("#detail-purpose").textContent = module.purpose;
       $("#detail-next").textContent = module.next;
       $("#detail-tone").replaceChildren(badge(el("span", "badge", ""), rating(module.parts)));
-      $("#paths").replaceChildren(...module.paths.map(path => {
-        const row = el("div", "path", "");
-        path.forEach((hop, i) => {
-          if (i) row.append(el("span", "arrow", "→"));
-          const part = typeof hop === "number" ? module.parts[hop] : null;
-          const box = el("span", "hop", part ? part.title : hop);
-          if (part) box.dataset.tone = part.tone;
-          row.append(box);
-        });
-        return row;
-      }));
-      $("#notes").replaceChildren(...module.parts.map(part => {
+      function selectPart(index) {
+        const part = module.parts[index];
         const note = clone("#note-template");
         note.dataset.tone = part.tone;
         badge($(".badge", note), part.tone);
         $("h3", note).textContent = part.title;
         $("p", note).textContent = part.note;
         $("div", note).append(...part.refs.map(source));
-        return note;
+        $("#notes").replaceChildren(note);
+        for (const button of dialog.querySelectorAll("[data-part]")) {
+          button.setAttribute("aria-pressed", String(Number(button.dataset.part) === index));
+        }
+      }
+      $("#paths").replaceChildren(...module.paths.map(path => {
+        const row = el("div", "path", "");
+        path.forEach((hop, i) => {
+          if (i) row.append(el("span", "arrow", "→"));
+          const part = typeof hop === "number" ? module.parts[hop] : null;
+          const box = el(part ? "button" : "span", "hop", part ? part.title : hop);
+          if (part) {
+            box.type = "button";
+            box.dataset.tone = part.tone;
+            box.dataset.part = hop;
+            box.setAttribute("aria-controls", "notes");
+            box.addEventListener("click", () => {
+              selectPart(hop);
+              $("#notes").scrollIntoView({block: "nearest"});
+            });
+          }
+          row.append(box);
+        });
+        return row;
       }));
+      $("#data-flow").replaceChildren(...module.data.map(([label, value]) => {
+        const entry = document.createElement("li");
+        entry.append(el("strong", "", label), value);
+        return entry;
+      }));
+      selectPart(module.paths.flat().find(hop => typeof hop === "number"));
       dialog.showModal();
       dialog.scrollTop = 0;
     }
@@ -435,26 +650,78 @@
     for (const tone of ["focused", "review", "hotspot", "scaffold"]) {
       $("#legend").append(badge(el("span", "badge", ""), tone));
     }
-    lanes.forEach((lane, index) => {
-      const section = clone("#lane-template");
-      $(".lane-number", section).textContent = String(index + 1).padStart(2, "0");
-      $(".lane-heading", section).textContent = lane.title;
-      $(".small", section).textContent = lane.caption;
-      const nodes = $(".nodes", section);
-      nodes.classList.toggle("flow", lane.flow);
-      nodes.style.setProperty("--columns", lane.modules.length);
-      for (const module of lane.modules) {
-        const button = clone("#node-template");
-        button.dataset.tone = rating(module.parts);
-        badge($(".badge", button), button.dataset.tone);
-        $(".node-title", button).textContent = module.title;
-        $(".node-summary", button).textContent = module.summary;
-        button.addEventListener("click", () => openModule(module, lane.title));
-        nodes.append(button);
+    for (const button of document.querySelectorAll("button[data-key]")) {
+      const module = modules[button.dataset.key];
+      button.type = "button";
+      button.className = "node";
+      button.title = module.summary;
+      button.dataset.tone = rating(module.parts);
+      button.setAttribute("aria-haspopup", "dialog");
+      const ns = "http://www.w3.org/2000/svg";
+      const icon = document.createElementNS(ns, "svg");
+      icon.setAttribute("aria-hidden", "true");
+      icon.setAttribute("fill", "none");
+      icon.setAttribute("stroke", "currentColor");
+      icon.setAttribute("stroke-width", "1.7");
+      icon.setAttribute("stroke-linejoin", "round");
+      const use = document.createElementNS(ns, "use");
+      use.setAttribute("href", `#${button.dataset.icon}`);
+      icon.append(use);
+      button.append(icon, el("strong", "", module.title), badge(el("span", "badge", ""), button.dataset.tone));
+      const zone = button.closest("fieldset")?.querySelector("legend")?.textContent || "Outside the running loop";
+      button.addEventListener("click", () => openModule(module, zone));
+    }
+
+    const traces = {
+      scan: {
+        steps: ["console", "gateway", "lab", "service", "db", "worker", "discover", "distill", "match"],
+        result: "The shortlist stops at Gate 1. A scan alone never starts a build."
+      },
+      approval: {
+        steps: ["cli", "service", "db", "worker", "build", "target", "judge", "files"],
+        result: "The CLI approves the spec without HTTP. The worker resumes, benchmarks the target and writes a report for Gate 3."
       }
-      $("#lanes").append(section);
-    });
-    $("#count").textContent = `${lanes.flatMap(lane => lane.modules).length} blocks · select any to inspect`;
+    };
+    function showTrace() {
+      const trace = traces[$("#trace-choice").value];
+      for (const node of document.querySelectorAll(".node[data-step]")) delete node.dataset.step;
+      const caption = $("#trace-route");
+      caption.hidden = !trace;
+      if (!trace) return;
+      const labels = trace.steps.map((key, index) => {
+        $(`[data-key="${key}"]`).dataset.step = index + 1;
+        return `${index + 1}. ${modules[key].title}`;
+      });
+      caption.textContent = `${labels.join(" → ")}. ${trace.result}`;
+    }
+    $("#trace-choice").addEventListener("change", showTrace);
+    showTrace();
+
+    // Route peripheral connections through the two empty gutters in natural CSS pixels.
+    function drawWires() {
+      const svg = $("#wires");
+      const layer = $("g", svg);
+      const frame = svg.getBoundingClientRect();
+      if (!frame.width) return;
+      const rect = key => $(`[data-key="${key}"]`).getBoundingClientRect();
+      const core = $(".core").getBoundingClientRect();
+      const links = [
+        ["console", "gateway", "control", "right", "left", core.left - 16],
+        ["cli", "service", "control", "right", "left", core.left - 28],
+        ["db", "lab", "data", "left", "right", core.right + 16],
+        ["judge", "files", "data", "right", "left", core.right + 28]
+      ];
+      layer.replaceChildren(...links.map(([from, to, kind, start, end, gutter]) => {
+        const a = rect(from), b = rect(to);
+        const y = box => box.top + box.height / 2 - frame.top;
+        const path = document.createElementNS(svg.namespaceURI, "path");
+        path.setAttribute("class", `${kind}-line`);
+        path.setAttribute("d", `M${a[start]-frame.left} ${y(a)} H${gutter-frame.left} V${y(b)} H${b[end]-frame.left}`);
+        return path;
+      }));
+    }
+    new ResizeObserver(drawWires).observe($(".topology"));
+    drawWires();
   </script>
 </body>
 </html>

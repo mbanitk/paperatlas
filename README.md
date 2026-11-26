@@ -33,8 +33,9 @@ flowchart LR
 
 ## Architecture
 
-[Interactive architecture field guide](docs/architecture.html) — open the HTML file locally and select
-a block to see its internal data flow, source references, and suggested refactoring priorities.
+[Interactive architecture field guide](docs/architecture.html) — open the HTML file locally to
+trace a scan or spec approval across clients, services and stores. Select any block for separate
+execution and data-flow diagrams, then select a step for source evidence and refactoring guidance.
 The guide works offline; only its source links need a connection.
 
 | Service | Port | Role |
