@@ -22,7 +22,7 @@ from paperatlas.lab.workspace import (
     diff_stat,
     git,
 )
-from paperatlas.settings import env
+from paperatlas.settings import copilot_cli_flags, env
 
 logger = logging.getLogger(__name__)
 
@@ -66,10 +66,8 @@ class CopilotCliBuilder:
             "--no-auto-update",
             "--share",
             str(log_path.with_suffix(".session.md")),
+            *copilot_cli_flags(env("PAPERATLAS_BUILDER_MODEL")),
         ]
-        model = env("PAPERATLAS_BUILDER_MODEL")
-        if model:
-            command += ["--model", model]
         return run_command(
             command, workdir, log_path, timeout_s=timeout_s, should_cancel=should_cancel, on_progress=on_progress
         )

@@ -153,20 +153,53 @@ def test_gateway_keeps_encoded_path_and_closes_failed_streams(monkeypatch):
     assert closed
 
 
-def test_openai_key_takes_precedence_over_copilot_and_copilot_works_alone(monkeypatch):
+def test_llm_provider_option_selects_openai_copilot_or_an_ordered_fallback(monkeypatch):
     from paperatlas.llm import client as llm
 
     monkeypatch.delenv("PAPERATLAS_LLM_API_KEY", raising=False)
-    monkeypatch.setenv("PAPERATLAS_LLM_PROVIDER", "copilot")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    chain = llm.build_default_llm_client(use_cache=False)
-    assert isinstance(chain, llm.FallbackLLMClient)
-    assert [type(c) for c in chain.clients] == [llm.LLMClient, llm.CopilotCliLLMClient]
+    providers = {
+        "copilot": [llm.CopilotCliLLMClient],
+        "openai": [llm.LLMClient],
+        "openai,copilot": [llm.LLMClient, llm.CopilotCliLLMClient],
+        " Copilot , openai ": [llm.CopilotCliLLMClient, llm.LLMClient],
+    }
+    for value, expected in providers.items():
+        monkeypatch.setenv("PAPERATLAS_LLM_PROVIDER", value)
+        client = llm.build_default_llm_client(use_cache=False)
+        chain = client.clients if isinstance(client, llm.FallbackLLMClient) else [client]
+        assert [type(c) for c in chain] == expected, value
 
-    monkeypatch.delenv("OPENAI_API_KEY")
-    assert isinstance(llm.build_default_llm_client(use_cache=False), llm.CopilotCliLLMClient)
+    monkeypatch.setenv("PAPERATLAS_LLM_PROVIDER", "claude")
+    with pytest.raises(ValueError, match="unknown provider"):
+        llm.build_default_llm_client(use_cache=False)
+
     monkeypatch.delenv("PAPERATLAS_LLM_PROVIDER")
+    assert type(llm.build_default_llm_client(use_cache=False)) is llm.LLMClient
+    monkeypatch.delenv("OPENAI_API_KEY")
     assert llm.build_default_llm_client(use_cache=False) is None
+    monkeypatch.setenv("PAPERATLAS_LLM_PROVIDER", "openai,copilot")
+    assert isinstance(llm.build_default_llm_client(use_cache=False), llm.CopilotCliLLMClient)
+
+
+def test_copilot_model_context_and_effort_reach_both_llm_and_builder_calls(monkeypatch, tmp_path):
+    import subprocess
+
+    from paperatlas.lab import builder
+    from paperatlas.llm.client import CopilotCliLLMClient
+
+    monkeypatch.setenv("PAPERATLAS_COPILOT_CONTEXT", "long_context")
+    monkeypatch.setenv("PAPERATLAS_COPILOT_REASONING_EFFORT", "high")
+    monkeypatch.setenv("PAPERATLAS_BUILDER_MODEL", "claude-opus-5.5")
+    monkeypatch.setattr("shutil.which", lambda name: "/bin/" + name)
+    commands = []
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: commands.append(cmd) or subprocess.CompletedProcess(cmd, 0, "OK", ""))
+    monkeypatch.setattr(builder, "run_command", lambda cmd, *a, **kw: commands.append(cmd))
+
+    CopilotCliLLMClient("claude-opus-5.5").generate("s", "u")
+    builder.CopilotCliBuilder().implement(tmp_path, "p", tmp_path / "build.log", 60, None, None)
+    expected = ["--model", "claude-opus-5.5", "--context", "long_context", "--reasoning-effort", "high"]
+    assert [cmd[-6:] for cmd in commands] == [expected, expected]
 
 
 def test_fallback_client_uses_copilot_when_openai_fails_and_skips_a_rejected_key():

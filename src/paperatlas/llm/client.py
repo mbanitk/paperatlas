@@ -209,9 +209,7 @@ class CopilotCliLLMClient(LLMClient):
             raise LLMError("copilot CLI is not on PATH", unavailable=True)
         prompt = f"{system_prompt}\n\n{user_prompt}{schema_instruction(schema)}"
         command = ["copilot", "-p", prompt, "--available-tools=", "--no-ask-user", "--no-color", "--no-auto-update",
-                   "--no-custom-instructions", "-s"]
-        if self.cli_model:
-            command += ["--model", self.cli_model]
+                   "--no-custom-instructions", "-s", *settings.copilot_cli_flags(self.cli_model)]
         last_error = "no output"
         for attempt in range(self.config.max_retries):
             try:
@@ -303,13 +301,35 @@ def schema_instruction(schema: Optional[tuple]) -> str:
     )
 
 
+LLM_PROVIDERS = ("openai", "copilot")
+
+
+def llm_providers() -> list[str]:
+    """PAPERATLAS_LLM_PROVIDER picks the provider (`openai` or `copilot`), or an ordered fallback list such as
+    `openai,copilot`. Unset means OpenAI when a key is configured, otherwise no LLM."""
+    raw = settings.env("PAPERATLAS_LLM_PROVIDER")
+    if not raw:
+        return ["openai"] if settings.llm_api_key() else []
+    providers = [name.strip().lower() for name in raw.split(",") if name.strip()]
+    unknown = sorted(set(providers) - set(LLM_PROVIDERS))
+    if unknown:
+        raise ValueError(f"PAPERATLAS_LLM_PROVIDER: unknown provider(s) {unknown}; choose from {list(LLM_PROVIDERS)}")
+    return list(dict.fromkeys(providers))
+
+
 def build_default_llm_client(use_cache: bool = True) -> Optional[LLMClient]:
-    """An OpenAI-compatible key takes precedence. PAPERATLAS_LLM_PROVIDER=copilot adds the Copilot CLI:
-    it is used on its own without a key, or as the fallback when an OpenAI request fails."""
     cache = LLMCache() if use_cache else None
     clients: list[LLMClient] = []
-    api_key = settings.llm_api_key()
-    if api_key:
+    for provider in llm_providers():
+        if provider == "copilot":
+            clients.append(
+                CopilotCliLLMClient(settings.env("PAPERATLAS_COPILOT_LLM_MODEL"), settings.llm_timeout(), cache)
+            )
+            continue
+        api_key = settings.llm_api_key()
+        if not api_key:
+            logger.warning("PAPERATLAS_LLM_PROVIDER includes openai but no OPENAI_API_KEY is set; skipping it")
+            continue
         clients.append(
             LLMClient(
                 LLMConfig(
@@ -321,8 +341,6 @@ def build_default_llm_client(use_cache: bool = True) -> Optional[LLMClient]:
                 cache=cache,
             )
         )
-    if (settings.env("PAPERATLAS_LLM_PROVIDER") or "").lower() == "copilot":
-        clients.append(CopilotCliLLMClient(settings.env("PAPERATLAS_COPILOT_LLM_MODEL"), settings.llm_timeout(), cache))
     if not clients:
         return None
     return clients[0] if len(clients) == 1 else FallbackLLMClient(clients)
