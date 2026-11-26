@@ -34,8 +34,9 @@ flowchart LR
 ## Architecture
 
 [Interactive architecture field guide](docs/architecture.html) — open the HTML file locally to
-trace a scan or spec approval across clients, services and stores. Select any block for separate
-execution and data-flow diagrams, then select a step for source evidence and refactoring guidance.
+step through the instructions and data passed during a scan or spec approval. Select any block
+for its own component map, switch between execution and data flow, and select a component for
+source evidence. Moving arrows show direction; motion can be paused and starts off for reduced-motion users.
 The guide works offline; only its source links need a connection.
 
 | Service | Port | Role |
