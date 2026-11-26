@@ -13,6 +13,7 @@ import type { ReactNode } from 'react'
 import { Link } from 'react-router'
 import type { Effort, ExperimentStatus } from '../api/types'
 import { formatAcronyms, formatCI, formatPct, humanize, humanizeMetric } from '../lib/format'
+import { assetBlockerItems, needsSentence } from '../lib/assets'
 import { isCostModelBlocker } from '../lib/roofline'
 import {
   adoptionSemantics,
@@ -23,6 +24,7 @@ import {
   levelSemantics,
   likelihoodSemantics,
   MODE,
+  NEEDS_ASSETS,
   sentenceCase,
   statusSemantics,
   type SemanticInfo,
@@ -261,9 +263,12 @@ export function CategoryChip({ category }: { category: string | null | undefined
 
 export function BlockerBadge({ blocker }: { blocker: string }) {
   // Cost-model blockers carry their reasons in parentheses; the chip shows the verdict, the tooltip the rest.
-  const label = isCostModelBlocker(blocker) ? blocker.replace(/\s*\(.*$/s, '') : blocker
+  // Pre-screen blockers ("needs assets: a; b") show one label; the tooltip lists what's missing.
+  const assets = assetBlockerItems(blocker)
+  const label = assets.length ? NEEDS_ASSETS.label : isCostModelBlocker(blocker) ? blocker.replace(/\s*\(.*$/s, '') : blocker
+  const content = assets.length ? `${needsSentence(assets)} ${NEEDS_ASSETS.description}` : `Blocked on this project: ${blocker}`
   return (
-    <Tooltip content={`Blocked on this project: ${blocker}`} className={CHIP_TARGET}>
+    <Tooltip content={content} className={CHIP_TARGET}>
       <span className={cx('chip max-w-full', TONE_CLASSES.caution)}>
         <AlertIcon size={12} className="shrink-0" />
         <span className="truncate">{label}</span>

@@ -167,6 +167,47 @@ def cmd_recommend(args: argparse.Namespace) -> None:
     _table(rows, [("rank", "#", 3), ("claim_id", "claim", 6), ("score", "score", 6), ("target_metric", "metric", 22), ("claimed_gain_pct", "gain%", 7), ("name", "concept", 48), ("blockers", "blockers", 30)])
 
 
+def cmd_assets(args: argparse.Namespace) -> None:
+    from paperatlas.lab.assets import backfill
+    from paperatlas.lab.profiler import get_project
+    from paperatlas.llm.client import build_default_llm_client
+
+    project = get_project(args.project)
+    llm = None if args.no_llm else build_default_llm_client()
+    if llm is None and not args.no_llm:
+        print("no LLM configured: classifying with keyword rules", flush=True)
+    result = backfill(
+        project.id, llm, force=args.force, every_claim=args.all, dry_run=args.dry_run, reprofile=args.reprofile,
+        workers=args.workers, say=lambda line: print(line, flush=True),
+    )
+    caps = result["capabilities"]
+    assumed = f" (assumed: {', '.join(caps['assumed'])})" if caps["assumed"] else ""
+    print(
+        f"\ncapabilities: {', '.join(f'{k}={caps[k]}' for k in ('architecture', 'draft_models', 'mtp_heads', 'offline_artifacts', 'calibration_data', 'max_context_tokens', 'trained_adapters', 'accelerator'))}{assumed}"
+    )
+    print(
+        f"classified {result['classified']} claims ({result['sources']['llm']} by LLM, {result['sources']['rules']} by rules); "
+        f"{result['needs_assets']} need assets {project.name} doesn't have"
+    )
+    verb = "would become" if args.dry_run else "became"
+    print(
+        f"testable: {result['testable_before']} → {result['testable_after']}; {len(result['newly_needs_assets'])} {verb} "
+        f"'needs assets', {len(result['newly_testable'])} {verb} testable"
+    )
+    if result["by_category"]:
+        print("newly needing assets, by category: " + ", ".join(f"{k} {v}" for k, v in result["by_category"].items()))
+    print("\nexperiments:")
+    rows = [
+        {**row, "prescreen": "needs " + "; ".join(row["missing"]) if row["needs_assets"] else "ok"}
+        for row in result["experiments"]
+    ]
+    _table(rows, [("experiment_id", "#", 4), ("claim_id", "claim", 6), ("status", "status", 17), ("verdict", "verdict", 14), ("prescreen", "pre-screen", 90)])
+    if args.json:
+        with open(args.json, "w", encoding="utf-8") as handle:
+            json.dump(result, handle, indent=2, default=str)
+        print(f"\nreport written to {args.json}")
+
+
 def cmd_scan(args: argparse.Namespace) -> None:
     from paperatlas.lab import service
 
@@ -369,6 +410,21 @@ def build_parser() -> argparse.ArgumentParser:
     recommend.add_argument("--all", action="store_true", help="include blocked claims")
     recommend.set_defaults(func=cmd_recommend)
 
+    assets = r2e_sub.add_parser(
+        "assets",
+        help="pre-screen claims for prerequisites the project lacks (trained drafters, offline artifacts, MoE…): "
+        "classify, mark them 'needs assets' and report the effect",
+    )
+    assets.add_argument("--project", default="inference-lab")
+    assets.add_argument("--reprofile", action="store_true", help="re-read lab.yaml first (its `capabilities`)")
+    assets.add_argument("--all", action="store_true", help="classify every matched claim, not only testable and tested ones")
+    assets.add_argument("--no-llm", action="store_true", help="keyword rules only")
+    assets.add_argument("--force", action="store_true", help="re-classify claims that already have a stored result")
+    assets.add_argument("--dry-run", action="store_true", help="report what would change; matches are not updated")
+    assets.add_argument("--workers", type=int, default=3, help="LLM calls in parallel")
+    assets.add_argument("--json", help="also write the report to this JSON file")
+    assets.set_defaults(func=cmd_assets)
+
     scan = r2e_sub.add_parser("scan", help="topics → discover → distill → match (ends at Gate 1)")
     scan.add_argument("--project", required=True)
     scan.add_argument("--refresh-topics", action="store_true")
@@ -448,7 +504,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="only claims the cost model rates at least this likely to gain here",
     )
     batch.add_argument(
-        "--retest", action="store_true", help="also re-run claims whose experiments predate the last project re-profile"
+        "--retest", action="store_true",
+        help="also re-run claims whose experiments predate the engine's last change (hardware, models or stack in lab.yaml)",
     )
     batch.set_defaults(func=cmd_batch)
 

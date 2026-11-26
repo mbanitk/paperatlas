@@ -92,7 +92,19 @@ def profile_text(profile: dict[str, Any]) -> str:
     )
 
 
+# The parts of lab.yaml that define the engine under test: when they change, earlier experiments ran on an older
+# engine (`r2e batch --retest` re-runs them). Other edits (e.g. `capabilities`) and merges leave it alone.
+ENGINE_KEYS = ("hardware", "models", "stack")
+
+
+def engine_fingerprint(profile: dict[str, Any]) -> str:
+    return json.dumps({key: profile.get(key) for key in ENGINE_KEYS}, sort_keys=True, default=str)
+
+
 def register_project(repo_path: str | Path, name: Optional[str] = None) -> dict[str, Any]:
+    """Read lab.yaml into the project and re-check every claim's prerequisites against its capabilities."""
+    from paperatlas.lab.assets import reassess_project
+
     profile = read_profile(repo_path)
     project_name = name or profile["name"]
     vector = embed_text(profile_text(profile))
@@ -100,16 +112,26 @@ def register_project(repo_path: str | Path, name: Optional[str] = None) -> dict[
         project = session.scalar(select(Project).where(Project.name == project_name)) or Project(
             name=project_name
         )
+        now = datetime.now(UTC)
+        if project.id is None or engine_fingerprint(project.profile or {}) != engine_fingerprint(profile):
+            project.engine_changed_at = now
+        elif project.engine_changed_at is None:
+            project.engine_changed_at = project.profiled_at or now
         project.repo_path = profile["repo"]["path"]
         project.profile = profile
         project.embedding = vector
-        project.profiled_at = datetime.now(UTC)
+        project.profiled_at = now
         session.add(project)
         session.flush()
-        return project_dict(project)
+        project_id = project.id
+    reassess_project(project_id)
+    with session_scope() as session:
+        return project_dict(session.get(Project, project_id))
 
 
 def project_dict(project: Project) -> dict[str, Any]:
+    from paperatlas.lab.assets import capabilities
+
     profile = project.profile or {}
     return {
         "id": project.id,
@@ -124,6 +146,8 @@ def project_dict(project: Project) -> dict[str, Any]:
         "techniques": profile.get("techniques"),
         "repo": profile.get("repo"),
         "profiled_at": project.profiled_at.isoformat() if project.profiled_at else None,
+        "engine_changed_at": project.engine_changed_at.isoformat() if project.engine_changed_at else None,
+        "capabilities": capabilities(profile),
         "roofline": project.roofline,
         "roofline_at": project.roofline_at.isoformat() if project.roofline_at else None,
     }

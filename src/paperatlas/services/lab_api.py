@@ -140,9 +140,16 @@ def recommendations(
     category: Optional[str] = None,
     topic: Optional[str] = None,
     q: Optional[str] = None,
+    include_needs_assets: bool = False,
 ) -> list[dict[str, Any]]:
     _project_or_404(project_id)
-    return service.recommendations(project_id, limit, include_blocked, category, topic, q)
+    return service.recommendations(project_id, limit, include_blocked, category, topic, q, include_needs_assets)
+
+
+@app.get("/projects/{project_id}/assets", tags=["recommendations"])
+def assets(project_id: int) -> dict[str, Any]:
+    """The project's capabilities (lab.yaml) and how many claims need assets it doesn't have."""
+    return service.assets_summary(project_id)
 
 
 @app.post("/projects/{project_id}/claims/{claim_id}/explain", tags=["recommendations"])

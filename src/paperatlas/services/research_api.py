@@ -156,8 +156,9 @@ def get_claims(
     paper_id: Optional[str] = None,
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
+    project_id: Optional[int] = None,
 ) -> dict[str, Any]:
-    return service.list_claims(q, category, topic, testable, paper_id, limit, offset)
+    return service.list_claims(q, category, topic, testable, paper_id, limit, offset, project_id)
 
 
 @app.get("/claims/{claim_id}", tags=["claims"])

@@ -6,10 +6,12 @@ import { Delta, OutcomeBadge, StatusChip } from '../../components/Badges'
 import { ClaimCardDetails } from '../../components/ClaimCard'
 import { ExplainerFootnote, GenerateClaimExplainer, ResultTiles } from '../../components/Explainers'
 import { ClaimExplain, ClaimFacts, claimSentence, ExpectedHere, PaperReports } from '../../components/ClaimStory'
-import { ArrowRightIcon, BookIcon, SparkIcon } from '../../components/Icons'
+import { AlertIcon, ArrowRightIcon, BookIcon, SparkIcon } from '../../components/Icons'
+import { AssetNeedsList } from '../../components/Assets'
 import { ConceptMapGraph } from '../../components/ConceptMap'
 import { RelatedCard } from '../../components/Related'
-import { AnswerBlock, Card, ErrorState, Loading, MathText, PageHeader, PaperLink } from '../../components/ui'
+import { AnswerBlock, Banner, Card, ErrorState, Loading, MathText, PageHeader, PaperLink } from '../../components/ui'
+import { missingAssets, needsSentence } from '../../lib/assets'
 import { expectedMetricLabel, experimentVerb } from '../../lib/claims'
 import { formatCI, formatSigned, humanize, sanitizeText } from '../../lib/format'
 import { adoptionSemantics, claimCheckSemantics, gainSemantics, sentenceCase } from '../../lib/semantics'
@@ -126,6 +128,8 @@ export default function ClaimDetailPage() {
   const explainer = data.explainer
   const paper = data.paper_explainer
   const experimentProject = latest.data?.project ? projects.data?.find((item) => item.id === latest.data!.project.id) : project
+  const match = data.match
+  const missing = match ? missingAssets({ asset_check: match.asset_check, blockers: match.blockers }) : []
 
   return (
     <div className="space-y-6">
@@ -148,6 +152,13 @@ export default function ClaimDetailPage() {
           description={<StatusLine claim={data} />}
         />
         <div className="-mt-2 space-y-3">
+          {missing.length > 0 && (
+            <Banner tone="caution" icon={<AlertIcon className="text-caution-fg" />}>
+              <strong>{needsSentence(missing)}</strong> {project?.name ?? 'This project'} doesn’t have {missing.length === 1 ? 'it' : 'them'}, so an
+              experiment would hang at the smoke test or measure a stand-in without the paper’s benefit. It’s left out of recommendations and the batch
+              until lab.yaml’s <code className="code-inline">capabilities</code> provide {missing.length === 1 ? 'it' : 'them'}.
+            </Banner>
+          )}
           <Answer claim={data} latest={latest.data} project={experimentProject} />
           <ClaimFacts claim={data} explainer={explainer} max={8} />
         </div>
@@ -194,6 +205,13 @@ export default function ClaimDetailPage() {
           </Card>
         </div>
         <div className="min-w-0 space-y-6">
+          {match?.asset_check && (
+            <Card title={`What it needs on ${project?.name ?? 'this project'}`}>
+              <div className="text-sm">
+                <AssetNeedsList check={match.asset_check} project={project?.name} />
+              </div>
+            </Card>
+          )}
           <Card title="Experiments">
             {data.experiments.length === 0 ? (
               <p className="text-sm text-muted">

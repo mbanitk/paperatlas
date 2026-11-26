@@ -22,8 +22,12 @@ flowchart LR
   paper setup, prerequisites (CUDA, multi-GPU, training), effort, risks and a verbatim evidence quote.
   Near-duplicate claims across papers are grouped.
 - **Match & Plan** — claims are scored against the target project's profile (`lab.yaml`): fit,
-  claimed gain, effort, hardware blockers and past verdicts. A planner writes the experiment spec
-  (hypothesis, flag, metric, workload, rounds, success bar, guardrails).
+  claimed gain, effort, hardware blockers and past verdicts. A pre-screen lists what each claim needs
+  (trained draft model or heads, MTP heads, offline-quantized artifacts, calibration data, MoE or other
+  architecture, CUDA kernels, several GPUs, a minimum context, training, trained adapters) and compares it
+  with the project's `capabilities`; claims that need something missing are marked **Needs assets** and
+  left out of recommendations and batches, so no build or GPU time is spent on them. A planner writes the
+  experiment spec (hypothesis, flag, metric, workload, rounds, success bar, guardrails).
 - **Build & Run** — a coding agent (GitHub Copilot CLI by default, Codex supported) implements the
   technique behind a feature flag in a git worktree; tests and a smoke A/B must pass; then an
   interleaved (ABBA) A/B benchmark runs on the eval model. Only one benchmark uses the GPU at a time.
@@ -86,7 +90,10 @@ paperatlas r2e status --filter needs_you
 Without `paperatlas services up`, run jobs with `paperatlas r2e worker` (or add `--inline`).
 Individual stages: `paperatlas r2e topics refresh`, `paperatlas r2e discover`,
 `paperatlas r2e distill`, `paperatlas r2e claims --q "kv cache"`, `paperatlas r2e match`,
-`paperatlas r2e digest --project inference-lab` (weekly HTML digest).
+`paperatlas r2e digest --project inference-lab` (weekly HTML digest),
+`paperatlas r2e assets --project inference-lab [--reprofile] [--dry-run]` (pre-screen the matched claims for
+missing assets and report which would be held back; classifications are stored per claim text, so only new or
+changed claims cost an LLM call).
 
 ## Target project contract
 
@@ -97,6 +104,24 @@ A target project describes itself in a `lab.yaml` at its root: `hardware` (e.g. 
 write a JSON file with interleaved per-round metrics per arm, quality results and environment info
 (see `paperatlas.lab.runner.validate_results`). Each research technique is a feature flag that is
 off by default.
+
+`capabilities` declares the assets claims can rely on (missing keys default to the conservative value shown):
+
+```yaml
+capabilities:
+  architecture: dense            # dense | moe (default: inferred from models.eval)
+  draft_models: [draft]          # model profiles usable as speculative drafters ([])
+  mtp_heads: false
+  offline_artifacts: []          # e.g. [awq_calibration, hqq_checkpoint]
+  calibration_data: false
+  max_context_tokens: 32768
+  trained_adapters: []           # EAGLE, Medusa, MemOnce…
+  accelerator: apple-gpu-mlx     # default: inferred from hardware
+```
+
+Re-profiling (`paperatlas r2e project profile <name>` or the console's Re-profile) re-checks every claim against
+it without LLM calls. Only changes to `hardware`, `models` or `stack` count as a new engine for
+`r2e batch --retest`.
 
 ## Configuration
 

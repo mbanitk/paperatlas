@@ -20,7 +20,8 @@ def alembic_config(url: Optional[str] = None) -> Config:
     return config
 
 
-def upgrade(url: Optional[str] = None, revision: str = "head") -> None:
+def upgrade(url: Optional[str] = None, revision: str = "heads") -> None:
+    """Upgrade to every head: feature branches may each add a migration from the same parent."""
     command.upgrade(alembic_config(url), revision)
 
 

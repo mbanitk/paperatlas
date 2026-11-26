@@ -136,6 +136,28 @@ def _explainers_for(session, claim_ids: list[int], project_id: Optional[int] = N
     return {claim_id: explainer for claim_id, explainer in session.execute(query.order_by(Match.explained_at)).all()}
 
 
+def _match_summaries(session, claim_ids: list[int], project_id: Optional[int]) -> dict[int, dict[str, Any]]:
+    """Whether each claim is testable on the project, its blockers and the pre-screen (what it needs)."""
+    from paperatlas.lab.assets import public_check
+
+    if not project_id or not claim_ids:
+        return {}
+    rows = session.execute(
+        select(Match.claim_id, Match.testable_here, Match.blockers, Match.asset_check).where(
+            Match.project_id == project_id, Match.claim_id.in_(claim_ids)
+        )
+    ).all()
+    return {
+        claim_id: {
+            "project_id": project_id,
+            "testable_here": testable,
+            "blockers": list(blockers or []),
+            "asset_check": public_check(check),
+        }
+        for claim_id, testable, blockers, check in rows
+    }
+
+
 def get_claim(claim_id: int, project_id: Optional[int] = None) -> dict[str, Any]:
     with session_scope() as session:
         row = session.execute(
@@ -147,6 +169,7 @@ def get_claim(claim_id: int, project_id: Optional[int] = None) -> dict[str, Any]
         if not row:
             raise ServiceError(f"claim {claim_id} not found", 404)
         data = claim_dict(*row)
+        data["match"] = _match_summaries(session, [claim_id], project_id).get(claim_id)
         data["explainer"] = _explainers_for(session, [claim_id], project_id).get(claim_id)
         data["related"] = related_for_claims([claim_id], project_id).get(claim_id)
         data["paper_explainer"] = row[2].explainer
@@ -178,6 +201,7 @@ def list_claims(
     paper_id: Optional[str] = None,
     limit: int = 50,
     offset: int = 0,
+    project_id: Optional[int] = None,
 ) -> dict[str, Any]:
     if q:
         from paperatlas.db.search import hybrid_search
@@ -208,9 +232,12 @@ def list_claims(
         items = [claim_dict(*row) for row in rows]
         explainers = _explainers_for(session, [item["id"] for item in items])
         related = related_for_claims([item["id"] for item in items])
+        matches = _match_summaries(session, [item["id"] for item in items], project_id)
         for item in items:
             item["explainer"] = explainers.get(item["id"])
             item["related"] = related.get(item["id"])
+            if project_id:
+                item["match"] = matches.get(item["id"])
     if q:
         items.sort(key=lambda item: scores.get(item["id"], 0), reverse=True)
         for item in items:
@@ -340,7 +367,12 @@ def recommendations(
     category: Optional[str] = None,
     topic: Optional[str] = None,
     q: Optional[str] = None,
+    include_needs_assets: bool = False,
 ) -> list[dict[str, Any]]:
+    """Ranked matches: testable ones; with `include_needs_assets`, also claims held back only because they need
+    assets the project lacks, ranked where they would be with the assets; with `include_blocked`, every claim."""
+    from paperatlas.lab.assets import public_check
+
     search_ids = None
     if q:
         from paperatlas.db.search import hybrid_search
@@ -361,7 +393,11 @@ def recommendations(
             .outerjoin(latest_experiment, latest_experiment.c.claim_id == Claim.id)
             .where(Match.project_id == project_id)
         )
-        if not include_blocked:
+        order = Match.score.desc()
+        if include_needs_assets and not include_blocked:
+            query = query.where(Match.testable_here.is_(True) | _held_back_for_assets())
+            order = func.coalesce(Match.asset_check["base_score"].as_float(), Match.score).desc()
+        elif not include_blocked:
             query = query.where(Match.testable_here.is_(True))
         if category:
             query = query.where(Claim.category == category)
@@ -373,7 +409,7 @@ def recommendations(
                     select(PaperTopic.paper_id).join(Topic, Topic.id == PaperTopic.topic_id).where(Topic.slug == topic)
                 )
             )
-        rows = session.execute(query.order_by(Match.score.desc()).limit(limit)).all()
+        rows = session.execute(query.order_by(order, Match.score.desc()).limit(limit)).all()
         experiment_ids = [row[4] for row in rows if row[4]]
         statuses = dict(
             session.execute(select(Experiment.id, Experiment.status).where(Experiment.id.in_(experiment_ids))).all()
@@ -401,6 +437,7 @@ def recommendations(
                 target_metric=match.target_metric,
                 rationale=match.rationale,
                 prediction=match.prediction,
+                asset_check=public_check(match.asset_check),
                 explainer=match.explainer,
                 topics=topics_by_paper.get(paper.paper_id, []),
                 experiment_id=experiment_id,
@@ -409,6 +446,51 @@ def recommendations(
             )
             items.append(item)
         return items
+
+
+def _held_back_for_assets():
+    """Matches whose one blocker is the pre-screen's: testable once the project has the assets (claims without a
+    benchmark metric would still be blocked)."""
+    return (
+        (Match.asset_check["status"].astext == "needs_assets")
+        & (func.cardinality(Match.blockers) == 1)
+        & Match.target_metric.is_not(None)
+    )
+
+
+def assets_summary(project_id: int) -> dict[str, Any]:
+    """The project's capabilities and how many matched claims need assets it doesn't have, by category."""
+    from paperatlas.lab.assets import capabilities
+
+    with session_scope() as session:
+        project = session.get(Project, project_id)
+        if project is None:
+            raise ServiceError(f"project {project_id} not found", 404)
+        rows = session.execute(
+            select(Match.testable_here, Match.asset_check).where(Match.project_id == project_id)
+        ).all()
+        held_back = session.scalar(
+            select(func.count()).where(Match.project_id == project_id, _held_back_for_assets())
+        )
+        caps = capabilities(project.profile or {})
+    by_category: dict[str, int] = {}
+    needs_assets = 0
+    for _, check in rows:
+        if (check or {}).get("status") != "needs_assets":
+            continue
+        needs_assets += 1
+        for category in dict.fromkeys(item.get("category") for item in check.get("missing") or []):
+            by_category[category or "other"] = by_category.get(category or "other", 0) + 1
+    return {
+        "project_id": project_id,
+        "capabilities": caps,
+        "matched": len(rows),
+        "testable": sum(1 for testable, _ in rows if testable),
+        "checked": sum(1 for _, check in rows if check),
+        "needs_assets": needs_assets,
+        "held_back": held_back,
+        "by_category": dict(sorted(by_category.items(), key=lambda item: -item[1])),
+    }
 
 
 def _steps_for(project_id: int, claim_ids: list[int], mode: str) -> list[dict[str, Any]]:

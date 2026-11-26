@@ -642,3 +642,72 @@ def test_rerun_reuses_the_spec_at_gate_2_or_replans_with_the_previous_result(lab
     assert "re-runs experiment" in service.rerun_feedback(third)
     drain()
     assert service.get_experiment(third)["spec"]["hypothesis"] != "edited hypothesis"
+
+
+def test_prescreen_holds_back_claims_needing_assets_until_the_project_declares_them(db, demo_repo):
+    import re
+
+    import yaml
+
+    from paperatlas.db.engine import session_scope
+    from paperatlas.db.schema import Project
+    from paperatlas.lab import batch
+    from paperatlas.tests.conftest import FakeLLM as Fake
+
+    PaperStore().upsert(PaperMetadata(title="Drafting", abstract="We draft tokens. " * 30, arxiv_id="2401.00003", source="arxiv"))
+    distill = Fake({"paper_distillation": {"paper_summary": "s", "concepts": [
+        concept("Draft tokens using n-gram prompt lookup", value=20, unit="%"),
+        concept("Verify drafts proposed by a trained EAGLE-3 head", value=30, unit="%"),
+    ]}})
+    DistillPipeline(extractor=ClaimExtractor(distill)).run(limit=5)
+    project_id = register_project(demo_repo)["id"]
+
+    def needs(user):
+        items = []
+        for block in user.split("claim_id=")[1:]:
+            eagle = "EAGLE" in block
+            items.append({"claim_id": int(re.match(r"\d+", block).group()), "needs": [
+                {"category": "draft_model", "key": "eagle3", "label": "a trained EAGLE-3 draft head", "essential": True, "why": "EAGLE-3"}
+            ] if eagle else []})
+        return {"items": items}
+
+    llm = Fake({"claim_needs": needs, "claim_review": {"items": []}})
+    match_project(project_id, llm=llm)
+    by_name = {item["technique"][:9]: item for item in service.recommendations(project_id, include_blocked=True)}
+    eagle, ngram = by_name["Verify dr"], by_name["Draft tok"]
+    assert ngram["testable_here"] and ngram["asset_check"]["status"] == "ok"
+    assert not eagle["testable_here"] and eagle["blockers"] == ["needs assets: a trained EAGLE-3 draft head"]
+    assert [item["claim_id"] for item in service.recommendations(project_id)] == [ngram["claim_id"]]
+    assert {item["claim_id"] for item in service.recommendations(project_id, include_needs_assets=True)} == {
+        ngram["claim_id"], eagle["claim_id"]
+    }
+    assert batch.pending_claims(project_id) == [ngram["claim_id"]]
+    with pytest.raises(service.ServiceError, match="needs assets"):
+        service.create_experiments(project_id, [eagle["claim_id"]])
+    assert service.get_claim(eagle["claim_id"], project_id)["match"]["asset_check"]["missing"][0]["key"] == "eagle3"
+
+    match_project(project_id, llm=llm)  # unchanged claims are not classified again
+    assert llm.calls.count("claim_needs") == 1
+
+    service.create_experiments(project_id, [ngram["claim_id"]])
+    with session_scope() as session:
+        engine_changed_at = session.get(Project, project_id).engine_changed_at
+
+    # Declaring the asset in lab.yaml and re-profiling unblocks the claim without an LLM call, and does not count as
+    # an engine change: `--retest` still treats the n-gram experiment as current.
+    profile = yaml.safe_load((demo_repo / "lab.yaml").read_text())
+    profile["capabilities"] = {"trained_adapters": ["EAGLE-3"]}
+    (demo_repo / "lab.yaml").write_text(yaml.safe_dump(profile))
+    register_project(demo_repo)
+    unblocked = service.recommendations(project_id, include_blocked=True)
+    eagle_now = next(item for item in unblocked if item["claim_id"] == eagle["claim_id"])
+    assert eagle_now["testable_here"] and eagle_now["blockers"] == [] and eagle_now["score"] > eagle["score"]
+    assert llm.calls.count("claim_needs") == 1
+    with session_scope() as session:
+        assert session.get(Project, project_id).engine_changed_at == engine_changed_at
+    assert batch.pending_claims(project_id, current_engine_only=True) == [eagle["claim_id"]]
+
+    profile["models"]["eval"]["id"] = "bigger"
+    (demo_repo / "lab.yaml").write_text(yaml.safe_dump(profile))
+    register_project(demo_repo)
+    assert set(batch.pending_claims(project_id, current_engine_only=True)) == {eagle["claim_id"], ngram["claim_id"]}

@@ -29,14 +29,18 @@ LIKELIHOOD_ORDER = ("likely", "marginal", "unknown", "unlikely")
 
 
 def pending_claims(project_id: int, current_engine_only: bool = False, min_likelihood: str = "unknown") -> list[int]:
-    """Testable claims without an experiment, best first. With `current_engine_only`, experiments created before the
-    project was last profiled (i.e. on an older engine) don't count, so their claims are tested again."""
+    """Testable claims without an experiment, best first; claims that need assets the project doesn't have are not
+    testable (see lab/assets.py). With `current_engine_only`, experiments created before the project's engine last
+    changed (hardware, models or stack in lab.yaml) don't count, so their claims are tested again."""
     with session_scope() as session:
         query = select(Experiment.claim_id).where(Experiment.project_id == project_id)
         if current_engine_only:
-            profiled_at = session.scalar(select(Project.profiled_at).where(Project.id == project_id))
-            if profiled_at is not None:
-                query = query.where(Experiment.created_at >= profiled_at)
+            row = session.execute(
+                select(Project.engine_changed_at, Project.profiled_at).where(Project.id == project_id)
+            ).first()
+            engine_changed_at = (row.engine_changed_at or row.profiled_at) if row else None
+            if engine_changed_at is not None:
+                query = query.where(Experiment.created_at >= engine_changed_at)
         tried = set(session.scalars(query).all())
         rows = session.execute(
             select(Match.claim_id, Match.prediction)

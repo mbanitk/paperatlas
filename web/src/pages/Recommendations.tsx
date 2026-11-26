@@ -2,10 +2,11 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router'
 import { ApiError } from '../api/client'
-import { keys, useCategories, useCreateExperiments, useProjects, useRecommendations, useStartTriage, useTopics, useTriage, useTriageList } from '../api/queries'
+import { keys, useCategories, useCreateExperiments, useProjectAssets, useProjects, useRecommendations, useStartTriage, useTopics, useTriage, useTriageList } from '../api/queries'
 import { mergeEvents, useEventStream } from '../api/sse'
 import type { ExperimentMode, LabEvent, Project, Recommendation, TriageOptions, TriageStatus, TriageSummary } from '../api/types'
 import { api } from '../api/client'
+import { AssetNeedsList, NeedsAssetsNote } from '../components/Assets'
 import { BlockerBadge, LiveDot, MetricName, StatusChip, Tag } from '../components/Badges'
 import { ClaimedEffect } from '../components/ClaimCard'
 import { ClaimEyebrow, ClaimSummary } from '../components/ClaimStory'
@@ -35,6 +36,7 @@ import {
   errorMessage,
   useDebounced,
 } from '../components/ui'
+import { blockedOnlyByAssets, missingAssets } from '../lib/assets'
 import { experimentVerb, gateOneAnswer, matchScoreExplanation } from '../lib/claims'
 import { formatAcronyms, humanize, pluralize, sanitizeText } from '../lib/format'
 import { LIKELIHOOD_INFO, LIKELIHOODS, likelihoodOf, sortByPrediction } from '../lib/roofline'
@@ -251,6 +253,7 @@ function RecommendationCard({ item, selected, maxReached, onToggle, shortlisted,
   project?: Project
 }) {
   const blocked = !item.testable_here || item.blockers.length > 0
+  const missing = missingAssets(item)
   const checkboxId = `pick-${item.claim_id}`
   const experimentId = `${checkboxId}-experiment`
   const reasonId = `${checkboxId}-reason`
@@ -300,6 +303,7 @@ function RecommendationCard({ item, selected, maxReached, onToggle, shortlisted,
         </>
       }
       note={item.rationale ? `Why here: ${sanitizeText(item.rationale)}` : undefined}
+      notice={missing.length > 0 && <NeedsAssetsNote missing={missing} project={project?.name} />}
       footer={
         <>
           <span className="hidden items-center sm:inline-flex">
@@ -325,6 +329,12 @@ function RecommendationCard({ item, selected, maxReached, onToggle, shortlisted,
       }
       evidence={
         <>
+          {item.asset_check && (
+            <section aria-label="What it needs">
+              <h4 className="mb-1 text-sm font-semibold text-fg">What it needs</h4>
+              <AssetNeedsList check={item.asset_check} project={project?.name} />
+            </section>
+          )}
           {item.rationale && (
             <section aria-label="Why it suits this project">
               <h4 className="mb-1 text-sm font-semibold text-fg">Why it suits {project?.name ?? 'this project'}</h4>
@@ -498,6 +508,7 @@ export default function Recommendations() {
   const topic = params.get('topic') ?? ''
   const category = params.get('category') ?? ''
   const includeBlocked = params.get('blocked') === '1'
+  const includeAssets = params.get('assets') === '1'
   const predicted = params.get('pred') ?? ''
   const sortByPredicted = params.get('sort') === 'predicted'
   const [search, setSearch] = useState(params.get('q') ?? '')
@@ -522,7 +533,16 @@ export default function Recommendations() {
     if ((params.get('q') ?? '') !== q) setParam('q', q || null)
   }, [q, params, setParam])
 
-  const recs = useRecommendations(projectId, { limit: 60, include_blocked: includeBlocked || undefined, topic: topic || undefined, category: category || undefined, q: q || undefined })
+  const recs = useRecommendations(projectId, {
+    // Held-back claims are interleaved with the testable ones: fetch enough that every testable claim is still listed.
+    limit: includeAssets && !includeBlocked ? 200 : 60,
+    include_blocked: includeBlocked || undefined,
+    include_needs_assets: (includeAssets && !includeBlocked) || undefined,
+    topic: topic || undefined,
+    category: category || undefined,
+    q: q || undefined,
+  })
+  const assets = useProjectAssets(projectId)
   const triageList = useTriageList(projectId)
   const requestedSummary: TriageSummary | undefined = requested.data && {
     id: requested.data.id,
@@ -573,6 +593,7 @@ export default function Recommendations() {
   // Selections never carry over to another project (they would be submitted with this project's id).
   const picks = [...selected.values()].filter((item) => item.project_id === projectId)
   const blockedPicks = picks.filter((item) => !item.testable_here || item.blockers.length > 0)
+  const assetOnlyPicks = blockedPicks.filter((item) => blockedOnlyByAssets(item))
   const hasPrerequisites = picks.some((item) => (item.related?.prerequisites?.length ?? 0) > 0)
   const effectiveMode: ExperimentMode = hasPrerequisites ? mode : 'single'
 
@@ -608,19 +629,22 @@ export default function Recommendations() {
   const [limit, setLimit] = useState(PAGE)
   useEffect(() => {
     setLimit(PAGE)
-  }, [projectId, q, topic, category, includeBlocked, predicted, sortByPredicted])
+  }, [projectId, q, topic, category, includeBlocked, includeAssets, predicted, sortByPredicted])
   const topicName = topics.data?.find((item) => item.slug === topic)?.name
   const activeFilters: { key: string; label: string }[] = [
     topic ? { key: 'topic', label: `Topic: ${formatAcronyms(topicName ?? topic)}` } : null,
     category ? { key: 'category', label: `Category: ${sentenceCase(formatAcronyms(humanize(category)))}` } : null,
     predicted ? { key: 'pred', label: `Expected: ${LIKELIHOOD_INFO[likelihoodOf({ likelihood: predicted, predicted_gain_pct: null })].label}` } : null,
+    includeAssets && !includeBlocked ? { key: 'assets', label: 'Including needs assets' } : null,
     includeBlocked ? { key: 'blocked', label: 'Including blocked' } : null,
     sortByPredicted ? { key: 'sort', label: 'Sorted by expected gain' } : null,
   ].filter((item): item is { key: string; label: string } => !!item)
   const chip = project?.hardware?.chip ? String(project.hardware.chip) : null
-  const likelyCount = (recs.data ?? []).filter((item) => likelihoodOf(item.prediction) === 'likely').length
+  // The headline counts claims testable here, also when blocked or needs-assets ones are listed.
+  const testable = (recs.data ?? []).filter((item) => item.testable_here)
+  const likelyCount = testable.filter((item) => likelihoodOf(item.prediction) === 'likely').length
   const answer = recs.data
-    ? gateOneAnswer({ total: recs.data.length, likely: likelyCount, project: project?.name, chip, estimated: !!project?.roofline || likelyCount > 0 })
+    ? gateOneAnswer({ total: testable.length, likely: likelyCount, project: project?.name, chip, estimated: !!project?.roofline || likelyCount > 0 })
     : null
 
   if (projects.isLoading) return <Loading label="Loading projects…" />
@@ -795,6 +819,15 @@ export default function Recommendations() {
               </select>
             </div>
             <div className="pb-1">
+              <Checkbox
+                id="rec-assets"
+                checked={includeAssets || includeBlocked}
+                disabled={includeBlocked}
+                onChange={(checked) => setParam('assets', checked ? '1' : null)}
+                label="Include needs assets"
+              />
+            </div>
+            <div className="pb-1">
               <Checkbox id="rec-blocked" checked={includeBlocked} onChange={(checked) => setParam('blocked', checked ? '1' : null)} label="Include blocked" />
             </div>
           </div>
@@ -841,6 +874,21 @@ export default function Recommendations() {
             {recs.isFetching && ' · updating…'}
             <span> · pick 1–2 (up to {MAX_PICK})</span>
           </p>
+          {!includeAssets && !includeBlocked && (assets.data?.held_back ?? 0) > 0 && (
+            <p className="mb-2 text-xs text-muted">
+              {pluralize(assets.data!.held_back, 'claim')} left out: {assets.data!.held_back === 1 ? 'it needs' : 'they need'} assets{' '}
+              {project?.name ?? 'this project'} doesn’t have (trained drafters, offline artifacts, an MoE model…).{' '}
+              <button type="button" className="inline-flex min-h-6 items-center font-medium text-info-fg hover:underline" onClick={() => setParam('assets', '1')}>
+                Show them
+              </button>
+            </p>
+          )}
+          {includeAssets && !includeBlocked && (assets.data?.held_back ?? 0) > 0 && (
+            <p className="mb-2 text-xs text-muted">
+              Claims marked “Needs assets” are ranked where they would be if {project?.name ?? 'this project'} had them; testing one now would likely
+              hang at the smoke test or measure a stand-in.
+            </p>
+          )}
           {!shown.length && (
             <EmptyState
               title={`No claims with “${LIKELIHOOD_INFO[likelihoodOf({ likelihood: predicted, predicted_gain_pct: null })].label}”`}
@@ -946,6 +994,7 @@ export default function Recommendations() {
                   ))}
                 </div>
               )}
+              <NeedsAssetsNote missing={missingAssets(item)} project={project?.name} className="mt-1" />
             </li>
           ))}
         </ul>
@@ -958,7 +1007,11 @@ export default function Recommendations() {
               checked={force}
               onChange={setForce}
               label={`Start anyway: ${pluralize(blockedPicks.length, 'claim')} ${blockedPicks.length === 1 ? 'is' : 'are'} blocked on this project`}
-              description="The matcher thinks these can’t be tested here, so the experiment will probably fail."
+              description={
+                assetOnlyPicks.length === blockedPicks.length
+                  ? `${assetOnlyPicks.length === 1 ? 'It needs' : 'They need'} assets ${project?.name ?? 'this project'} doesn’t have. Experiments like this have hung at the smoke test or measured a stand-in without the paper’s benefit. Add the assets to lab.yaml’s capabilities and re-profile instead, if you can.`
+                  : 'The matcher thinks these can’t be tested here, so the experiment will probably fail.'
+              }
             />
           </div>
         )}

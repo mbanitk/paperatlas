@@ -11,6 +11,16 @@ from sqlalchemy import func, select
 
 from paperatlas.db.engine import session_scope
 from paperatlas.db.schema import Claim, Concept, Experiment, Match, PaperTopic, Project, Topic, Verdict
+from paperatlas.lab.assets import (
+    BLOCKED_SCORE_FACTOR,
+    NO_METRIC_BLOCKER,
+    asset_blocker,
+    capabilities,
+    check_needs,
+    classify,
+    is_asset_blocker,
+    stored_needs,
+)
 from paperatlas.lab.costmodel import blocker as costmodel_blocker
 from paperatlas.lab.costmodel import predict, score_factor
 from paperatlas.lab.events import Reporter
@@ -174,13 +184,36 @@ def _keep_previous_review(project_id: int, scored: list[dict[str, Any]]) -> None
             match = previous.get(item["claim"].id)
             if match is None:
                 continue
-            rule_based = set(item["blockers"]) | {"no matching benchmark metric"}
+            rule_based = set(item["blockers"]) | {NO_METRIC_BLOCKER}
             item["blockers"] += [
-                b for b in match.blockers or [] if b not in rule_based and not b.startswith(("cost model:", "a "))
+                b
+                for b in match.blockers or []
+                if b not in rule_based and not b.startswith(("cost model:", "a ")) and not is_asset_blocker(b)
             ]
             item["rationale"] = match.rationale
             item["target_metric"] = match.target_metric or item["target_metric"]
         session.expunge_all()
+
+
+def _prescreen(
+    scored: list[dict[str, Any]], profile: dict[str, Any], llm: Optional[LLMClient], report: Optional[Reporter]
+) -> int:
+    """Check each claim's prerequisites against the project's capabilities (before the LLM review, so claims that
+    need assets don't use review slots). Claims without other blockers are classified (cached per claim text);
+    already-blocked ones reuse a stored classification when there is one. Returns how many need assets."""
+    open_claims = [item["claim"] for item in scored if not item["blockers"]]
+    say = (lambda message: report("match", message, None)) if report else None
+    needs = classify(open_claims, llm, say=say)
+    open_ids = {claim.id for claim in open_claims}
+    needs.update(stored_needs(item["claim"] for item in scored if item["claim"].id not in open_ids))
+    caps = capabilities(profile)
+    count = 0
+    for item in scored:
+        item["asset_check"] = check_needs(needs.get(item["claim"].id), caps)
+        if item["asset_check"] and item["asset_check"]["missing"]:
+            item["blockers"].append(asset_blocker(item["asset_check"]["missing"]))
+            count += 1
+    return count
 
 
 def match_project(
@@ -258,6 +291,7 @@ def match_project(
         )
 
     llm = llm if llm is not None else (build_default_llm_client() if use_llm else None)
+    needs_assets = _prescreen(scored, profile, llm, report)
     candidates = sorted((s for s in scored if not s["blockers"]), key=lambda s: s["score"], reverse=True)
     if llm and candidates:
         review = _llm_review(llm, profile, [s["claim"] for s in candidates[:llm_review_top]], metrics)
@@ -278,9 +312,11 @@ def match_project(
                 item["blockers"].append(verdict["blocker"] or "not feasible in this project")
     for item in scored:
         if not item["target_metric"] and not item["blockers"]:
-            item["blockers"].append("no matching benchmark metric")
+            item["blockers"].append(NO_METRIC_BLOCKER)
+        if item["asset_check"] is not None:
+            item["asset_check"]["base_score"] = item["score"]
         if item["blockers"]:
-            item["score"] = round(item["score"] * 0.05, 5)
+            item["score"] = round(item["score"] * BLOCKED_SCORE_FACTOR, 5)
 
     with session_scope() as session:
         for item in scored:
@@ -297,10 +333,15 @@ def match_project(
             match.target_metric = item["target_metric"]
             match.rationale = item["rationale"] or match.rationale
             match.prediction = item["prediction"]
+            match.asset_check = item["asset_check"]
             session.add(match)
     testable = sum(1 for item in scored if not item["blockers"])
     if report:
-        report("match", f"Matched {len(scored)} claims: {testable} testable on this project", {"testable": testable})
+        report(
+            "match",
+            f"Matched {len(scored)} claims: {testable} testable on this project, {needs_assets} need assets it doesn't have",
+            {"testable": testable, "needs_assets": needs_assets},
+        )
     if llm and explain_top:
         from paperatlas.r2e.explainers import _run_all, explain_claim
 
