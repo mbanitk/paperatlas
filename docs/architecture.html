@@ -36,7 +36,7 @@
     .board { --wire: #61819b; --blue: #195e91; --paper: #fbfdff; background: var(--paper); border: 1px solid #b5c6d1; border-radius: .8rem; }
     .board figcaption, .map-footer { padding: .65rem 1rem; }
     .board figcaption { border-bottom: 1px solid #d6e0e7; }
-    main.wrap:has(.topology:not([hidden])) { width: min(100%, 102rem); }
+    main.wrap { width: min(100%, 102rem); }
     .topology { position: relative; padding: 1.35rem; display: grid; align-items: center;
       grid-template-columns: minmax(0,1fr) minmax(0,3.7fr) minmax(0,1fr); column-gap: clamp(2.5rem, 5vw, 6rem);
       background: radial-gradient(#dce6ec .65px, transparent .65px) 0 0 / 14px 14px; }
@@ -79,22 +79,14 @@
     .node svg { grid-row: span 2; width: 1.4rem; height: 1.4rem; color: var(--blue); }
     .node strong { font-size: .88rem; line-height: 1.2; }
     .node .badge { font-size: .67rem; }
-    .node[data-step] { outline: 2px solid var(--blue); outline-offset: 1px; }
-    .node[data-step]::after { content: attr(data-step); position: absolute; top: -.4rem; right: -.28rem; min-width: 1.12rem;
-      padding: 0 .18rem; border-radius: .25rem; color: white; background: var(--blue); font: bold .75rem/1.12rem ui-monospace, monospace; text-align: center; }
-    .node[data-step]:focus-visible { outline: 3px solid #2534c5; outline-offset: 4px; }
     .node:hover { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
     .packet { fill: none; stroke-width: 2.6; stroke-linecap: round; stroke-dasharray: 5 95; animation: travel 4s linear infinite; }
     .packet.control { stroke: #164f85; }
     .packet.data { stroke: #22674d; }
     @keyframes travel { to { stroke-dashoffset: -100; } }
     body:not(.flowing) .packet { display: none; }
-    .motion-toggle, .trace-step { font: inherit; background: white; color: #244f70; border: 1px solid #adbfca; border-radius: .35rem; padding: .2rem .5rem; font-size: .85rem; }
+    .motion-toggle { font: inherit; background: white; color: #244f70; border: 1px solid #adbfca; border-radius: .35rem; padding: .2rem .5rem; font-size: .85rem; }
     .motion-toggle[aria-pressed="true"] { background: #eaf2f5; }
-    .trace-step:disabled { color: #788990; cursor: default; }
-    #trace-route { background: #edf4f9; padding: .65rem 1rem; }
-    #trace-route:not([hidden]) { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; }
-    #trace-instruction { flex: 1 1 17rem; }
     #handoffs { padding: .35rem 1rem .65rem; }
     #handoffs ol { padding-left: 1.3rem; }
     .map-footer { border-top: 1px solid #d6e0e7; }
@@ -130,7 +122,6 @@
     .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
     #detail-paths p { margin: .3rem 0 0; }
     .example { font: inherit; padding: .25rem .4rem; border: 1px solid #aabdca; border-radius: .35rem; background: white; color: var(--ink); }
-    #trace-route { color: #28516a; font-size: .85rem; }
     .note h3 { font-size: 1rem; }
     .ref { font-size: .76rem; overflow-wrap: anywhere; }
     .next { border-top: 1px solid var(--rule); }
@@ -159,8 +150,6 @@
     .lane-wire.data .shaft { stroke-dasharray: 5 3; }
     .lane-wire .packet { stroke-dasharray: 4 32; animation: short-flow 2.5s linear infinite; }
     @keyframes short-flow { to { stroke-dashoffset: -36; } }
-    button.lane-wire:hover, button.lane-wire[aria-pressed=true] { background: #e4eef4; }
-    .lane-info:not(:empty) { margin-top: .35rem; padding: .5rem .65rem; background: #edf4f8; border-radius: .25rem; }
     .lane-label { margin-top: .45rem; font: 600 .72rem/1.35 ui-monospace, monospace; color: #486475; }
     .handoff-lane .node[aria-pressed=true] { border-color: var(--accent); box-shadow: inset 3px 0 var(--accent); }
     .jump { font-size: .86rem; font-weight: 650; }
@@ -250,7 +239,7 @@
       <div class="grid gap-3">
         <p class="kicker">Engineering field guide / System context</p>
         <h1>PaperAtlas architecture</h1>
-        <p class="small">Select a block to explore its internals. In connection lanes, select an arrow to read what passes between two components.</p>
+        <p class="small">Select a module on the system map to explore its execution and data flow.</p>
         <a class="jump" href="#agent-workflow">Explore the agentic workflow: plan, build, measure and decide ↓</a>
       </div>
     </header>
@@ -259,27 +248,13 @@
       <figcaption class="flex flex-wrap items-center justify-between gap-2">
         <div class="flex flex-wrap items-center gap-3">
           <h2 id="map-title" class="kicker">01 / System context diagram</h2>
-          <select id="trace-choice" class="example" aria-label="Diagram layout or guided trace">
-            <option value="lanes">Connection lanes</option>
-            <option value="all">System map · all connections</option>
-            <option value="scan">Trace: start a scan</option>
-            <option value="approval">Trace: approve a spec</option>
-          </select>
+          <strong>System map · all connections</strong>
           <button type="button" class="motion-toggle" aria-label="Animate flow"></button>
         </div>
         <div id="legend" aria-label="Code maintenance priorities" class="flex flex-wrap gap-2"></div>
       </figcaption>
-      <div id="trace-route" hidden>
-        <button id="prev-step" class="trace-step" aria-label="Previous handoff">←</button>
-        <button id="next-step" class="trace-step" aria-label="Next handoff">→</button>
-        <span id="trace-instruction" aria-live="polite"></span>
-      </div>
-      <div id="system-lanes" class="lane-sheet">
-        <p class="small">Each lane is a separate path. A repeated block is the same component, not another service.</p>
-        <div class="lane-groups"></div>
-      </div>
-      <p id="map-caption" hidden><strong>Start at the web console or CLI.</strong> Blue arrows carry calls; green dashed arrows carry data. Hover or keyboard-focus a module to highlight its connections. Select it to inspect its internals.</p>
-      <div class="topology" hidden>
+      <p id="map-caption"><strong>Start at the web console or CLI.</strong> Blue arrows carry calls; green dashed arrows carry data. Hover or keyboard-focus a module to highlight its connections. Select it to inspect its internals.</p>
+      <div class="topology">
         <fieldset class="zone outer"><legend>Clients</legend>
           <div class="endpoints grid gap-2">
             <button data-key="console" data-icon="screen"></button>
@@ -341,14 +316,14 @@
         <span class="kicker">Outside the running loop</span><code class="small">uvicorn api.main:app →</code><button data-key="scaffold" data-icon="cube"></button>
         <span class="flex items-center gap-2 small"><i class="key-line"></i>Execution call</span>
         <span class="flex items-center gap-2 small"><i class="key-line data"></i>Data transfer</span>
-        <span class="line-key map-only small"><svg aria-hidden="true"><use href="#branch-key"/></svg>Connected branch</span>
-        <span class="line-key map-only small"><svg aria-hidden="true"><use href="#cross-key"/></svg>Crossing only</span>
+        <span class="line-key small"><svg aria-hidden="true"><use href="#branch-key"/></svg>Connected branch</span>
+        <span class="line-key small"><svg aria-hidden="true"><use href="#cross-key"/></svg>Crossing only</span>
       </div>
       <details id="handoffs" class="small"><summary>Triggers and handoffs for every connection</summary><ol></ol></details>
       <noscript><p class="p-4">Enable JavaScript to explore the interactive map. No network connection or PaperAtlas services are required.</p></noscript>
     </figure>
     <details class="small mt-1"><summary>How to read the map and colors</summary>
-      <p>Connection lanes repeat blocks so each handoff has a straight arrow. Choose the system map to see each module once. A filled dot on a routed wire is a real branch; a gap means one wire passes underneath another without connecting. Moving dashes show direction, not live traffic. Block colors describe PaperAtlas code, not an external provider: Focused means one clear job; Review marks a seam to improve; Hotspot means responsibilities change together; Scaffold sits outside the live loop. A block takes its highest component priority. These judgments do not imply AI authorship.</p>
+      <p>The system map shows each module once. A filled dot on a routed wire is a real branch; a gap means one wire passes underneath another without connecting. Moving dashes show direction, not live traffic. Block colors describe PaperAtlas code, not an external provider: Focused means one clear job; Review marks a seam to improve; Hotspot means responsibilities change together; Scaffold sits outside the live loop. A block takes its highest component priority. These judgments do not imply AI authorship.</p>
     </details>
     <aside class="trace mt-4 grid gap-1 p-4">
       <strong>Trace one request: start a project scan</strong>
@@ -759,22 +734,13 @@
       return icon;
     }
 
-    function laneWire(kind, label, onSelect) {
-      const wire = el(onSelect ? "button" : "span", `lane-wire ${kind}`, "");
+    function laneWire(kind, label) {
+      const wire = el("span", `lane-wire ${kind}`, "");
       const svg = svgElement("svg", {viewBox: "0 0 36 16", "aria-hidden": "true"});
       svg.append(svgElement("path", {d: "M1 8H30", class: "shaft", fill: "none"}),
         svgElement("path", {d: "M1 8H30", class: `packet ${kind}`}),
         svgElement("path", {d: "M28 3L36 8 28 13Z", fill: "currentColor"}));
-      wire.append(svg);
-      if (onSelect) {
-        wire.type = "button";
-        wire.title = label;
-        wire.setAttribute("aria-label", label);
-        wire.setAttribute("aria-pressed", "false");
-        wire.onclick = () => onSelect(wire);
-      } else {
-        wire.append(el("span", "sr-only", label));
-      }
+      wire.append(svg, el("span", "sr-only", label));
       return wire;
     }
     function lane(stops, wires) {
@@ -897,7 +863,7 @@
         redrawDetail();
       }
       $("[name=lens][value=execution]").checked = true;
-      $("#detail-layout").value = $("#trace-choice").value === "lanes" ? "lanes" : "map";
+      $("#detail-layout").value = "map";
       $("#detail-layout").onchange = renderLens;
       $(".lens").onchange = renderLens;
       dialog.onclick = event => {
@@ -916,8 +882,9 @@
     for (const tone of ["focused", "review", "hotspot", "scaffold"]) {
       $("#legend").append(badge(el("span", "badge", ""), tone));
     }
-    const modulePlacements = new Map();
-    function bindModule(button, key, zone, icon) {
+    for (const button of document.querySelectorAll("button[data-key]")) {
+      const {key, icon} = button.dataset;
+      const zone = button.closest("fieldset")?.querySelector("legend")?.textContent || "Outside the running loop";
       const module = modules[key];
       button.type = "button";
       button.className = "node";
@@ -926,13 +893,6 @@
       button.setAttribute("aria-haspopup", "dialog");
       button.append(glyph(icon), el("strong", "", module.title), badge(el("span", "badge", ""), button.dataset.tone));
       button.addEventListener("click", () => openModule(key, zone, icon));
-      return button;
-    }
-    for (const button of document.querySelectorAll("button[data-key]")) {
-      const {key, icon} = button.dataset;
-      const zone = button.closest("fieldset")?.querySelector("legend")?.textContent || "Outside the running loop";
-      modulePlacements.set(key, {zone, icon});
-      bindModule(button, key, zone, icon);
     }
 
     const call = (from, to, text) => ({from, to, text, kind: "control"});
@@ -961,49 +921,7 @@
       ops: call("cli", "ops", "An explicit digest, schedule or batch CLI command starts the corresponding operator tool outside the interactive scan."),
       events: transfer("db", "lab", "During an SSE request the lab API reads event rows newer than the client's cursor.")
     };
-    const traces = {
-      scan: ["scan", "labRoute", "start", "queueScan", "leaseScan", "find", "claim", "rank"],
-      approval: ["approve", "queueResume", "leaseResume", "run", "bench", "results", "assess", "report"]
-    };
     const names = h => `${modules[h.from].title} → ${modules[h.to].title}`;
-    // Repeat a component at a route boundary instead of drawing a return wire across another route.
-    const laneGroups = [
-      ["Clients & APIs", "Requests and commands", {"Start a scan": ["scan", "labRoute", "start"], "Read the catalog": ["catalog", "read"], "Approve a spec": ["approve"], "Run operator tools": ["ops"]}],
-      ["Jobs & progress", "Postgres-backed coordination", {"Queue a scan · triage.run": ["queueScan", "leaseScan"], "Resume a gate · experiment.resume": ["queueResume", "leaseResume"], "Read new events": ["events"]}],
-      ["Research scan", "Stops at the shortlist", {"Find and rank claims": ["find", "claim", "rank"], "Fetch source material": ["ingest"], "Extract structured claims": ["extract"]}],
-      ["Experiment", "Runs after spec approval", {"Run, judge and report": ["run", "assess", "report"], "Benchmark round trip": ["bench", "results"]}]
-    ];
-    for (const [i, [title, subtitle, routes]] of laneGroups.entries()) {
-      const group = el("details", "lane-group", "");
-      group.open = true;
-      const heading = el("summary", "", `0${i+1} / ${title}`);
-      heading.append(el("small", "", subtitle));
-      group.append(heading);
-      for (const [name, route] of Object.entries(routes)) {
-        const info = el("p", "lane-info small", "");
-        info.setAttribute("aria-live", "polite");
-        const steps = route.map(id => handoffs[id]);
-        const stops = [steps[0].from, ...steps.map(step => step.to)].map(key => {
-          const {zone, icon} = modulePlacements.get(key);
-          const button = bindModule(document.createElement("button"), key, zone, icon);
-          button.dataset.module = key;
-          return button;
-        });
-        const wires = steps.map((step, j) => {
-          const label = `${step.kind === "data" ? "Data transfer" : "Execution call"}: ${names(step)}`;
-          const connector = laneWire(step.kind, label, button => {
-            const wasOpen = button.getAttribute("aria-pressed") === "true";
-            for (const sibling of wires) sibling.setAttribute("aria-pressed", "false");
-            button.setAttribute("aria-pressed", String(!wasOpen));
-            info.textContent = wasOpen ? "" : `${names(step)} — ${step.text}`;
-          });
-          connector.dataset.handoff = route[j];
-          return connector;
-        });
-        group.append(el("p", "lane-label", name), lane(stops, wires), info);
-      }
-      $("#system-lanes .lane-groups").append(group);
-    }
 
     const stage = (role, title, input, action, output, ...refs) => ({role, title, input, action, output, refs});
     const agentStages = {
@@ -1317,40 +1235,14 @@
       node.addEventListener("focus", updateEmphasis);
       node.addEventListener("blur", () => requestAnimationFrame(updateEmphasis));
     }
-    let traceStep = 0;
+    const links = Object.values(handoffs).filter((h, i, all) =>
+      !all.slice(0,i).some(other => other.from === h.from && other.to === h.to && other.kind === h.kind));
     function drawWires() {
-      if ($(".topology").hidden) return;
-      const trace = traces[$("#trace-choice").value];
-      const active = trace && handoffs[trace[traceStep]];
-      const links = active ? [active] : Object.values(handoffs).filter((h, i, all) =>
-        !all.slice(0,i).some(other => other.from === h.from && other.to === h.to && other.kind === h.kind));
       drawConnections($("#wires"), mapNodes, links, document.querySelectorAll(".topology legend, .tier h3, .boundary-note, .gate-label, .drop"));
       updateEmphasis();
     }
-    function showTrace() {
-      const choice = $("#trace-choice").value;
-      const trace = traces[choice], lanes = choice === "lanes";
-      $("#system-lanes").hidden = !lanes;
-      $(".topology").hidden = lanes;
-      $("#map-caption").hidden = lanes;
-      for (const key of document.querySelectorAll("main .map-only")) key.hidden = lanes;
-      for (const n of mapNodes.values()) delete n.dataset.step;
-      $("#trace-route").hidden = !trace;
-      if (trace) {
-        const h = handoffs[trace[traceStep]];
-        mapNodes.get(h.from).dataset.step = "From";
-        mapNodes.get(h.to).dataset.step = "To";
-        $("#trace-instruction").textContent = `${traceStep+1}/${trace.length} · ${names(h)} — ${h.text}`;
-        $("#prev-step").disabled = traceStep === 0;
-        $("#next-step").disabled = traceStep === trace.length-1;
-      }
-      drawWires();
-    }
-    $("#trace-choice").onchange = () => { traceStep = 0; showTrace(); };
-    $("#prev-step").onclick = () => { traceStep--; showTrace(); };
-    $("#next-step").onclick = () => { traceStep++; showTrace(); };
-    new ResizeObserver(drawWires).observe($(".topology"));
-    showTrace();
+    new ResizeObserver(drawWires).observe(topology);
+    drawWires();
   </script>
 </body>
 </html>
