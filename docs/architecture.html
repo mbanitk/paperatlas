@@ -36,8 +36,15 @@
     .board { --wire: #61819b; --blue: #195e91; --paper: #fbfdff; background: var(--paper); border: 1px solid #b5c6d1; border-radius: .8rem; }
     .board figcaption, .map-footer { padding: .65rem 1rem; }
     .board figcaption { border-bottom: 1px solid #d6e0e7; }
-    .topology { position: relative; padding: 1rem; display: grid; align-items: center; grid-template-columns: minmax(0,1fr) 3.6rem minmax(0,3.7fr) 3.6rem minmax(0,1fr);
-      background-image: radial-gradient(#dce6ec .8px, transparent .8px); background-size: 12px 12px; }
+    .topology { position: relative; display: grid; gap: 1.5rem; padding: 1rem; background: #fff; }
+    .topology fieldset { min-inline-size: 0; margin: 0; padding: .9rem 1.4rem 1.3rem; border: 1px solid #d5e0e7; border-radius: .45rem; background: #f8fafc; }
+    .topology legend { padding: 0 .45rem; color: #33576d; font: 650 .78rem/1.4 ui-monospace, monospace; }
+    .network-band { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 2rem 2.3rem; }
+    .network-requests { grid-template-areas: "ops cli research service db" "console gateway lab . worker"; }
+    .network-stages { grid-template-areas: "match distill discover build target" ". models feeds judge files"; }
+    .topology .node { min-height: 3.2rem; }
+    .topology .node strong { min-width: 0; overflow-wrap: anywhere; }
+    #map-caption { padding: .55rem 1rem; color: #385467; border-bottom: 1px solid #d6e0e7; font-size: .85rem; }
     #wires { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
     .control-line, .data-line { fill: none; stroke-width: 1.6; }
     .control-line { stroke: #326e9f; marker-end: url(#control-head); }
@@ -53,13 +60,6 @@
     .zone legend { padding: 0 .35rem; font-size: .84rem; font-weight: 700; color: #385467; }
     .core { border: 2px dashed #4782ae; background: #f1f7fb; }
     .core legend { font-size: 1.13rem; color: var(--blue); }
-    .tier + .tier { margin-top: 1.05rem; padding-top: .75rem; border-top: 1px solid #cfdee8; }
-    .tier h3 { margin-bottom: .65rem; font: 650 .72rem/1.3 ui-monospace, monospace; color: #486475; }
-    .ingress { display: grid; align-items: center; grid-template-columns: minmax(0,1fr) 1.6rem minmax(0,1.5fr); }
-    .triplet, .sequence { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 1.35rem; }
-    .topology .core { padding-inline: 1.1rem; }
-    .tier [data-key="build"] { grid-column: 2; }
-    .gate-label { font: .69rem/1.3 ui-monospace, monospace; color: #486475; padding: .4rem 0; }
     .node, .note { background: var(--wash); border: 1px solid var(--line); border-radius: .4rem; }
     .node { position: relative; display: grid; grid-template-columns: auto 1fr; align-content: center; align-items: center; column-gap: .5rem;
       width: 100%; min-height: 2.75rem; padding: .4rem .55rem; text-align: left; }
@@ -71,12 +71,6 @@
       padding: 0 .18rem; border-radius: .25rem; color: white; background: var(--blue); font: bold .75rem/1.12rem ui-monospace, monospace; text-align: center; }
     .node[data-step]:focus-visible { outline: 3px solid #2534c5; outline-offset: 4px; }
     .node:hover { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
-    .outer .node { grid-template-columns: 1fr; justify-items: center; text-align: center; gap: .15rem; }
-    .outer .node svg { grid-row: auto; width: 2rem; height: 2rem; }
-    .boundary-note { font-size: .75rem; line-height: 1.35; color: var(--muted); }
-    .wire { visibility: hidden; font: .7rem ui-monospace, monospace; color: #385467; }
-    .integrations { grid-column: 3; }
-    .drop { margin: 0 auto; width: fit-content; display: flex; align-items: center; height: 2.2rem; gap: .45rem; font: .7rem ui-monospace, monospace; color: #385467; }
     .packet { fill: none; stroke-width: 2.6; stroke-linecap: round; stroke-dasharray: 5 95; animation: travel 4s linear infinite; }
     .packet.control { stroke: #164f85; }
     .packet.data { stroke: #22674d; }
@@ -127,32 +121,84 @@
     .note h3 { font-size: 1rem; }
     .ref { font-size: .76rem; overflow-wrap: anywhere; }
     .next { border-top: 1px solid var(--rule); }
+    [hidden] { display: none !important; }
+    .lane-sheet { padding: .8rem; background: #f2f6f8; }
+    .lane-sheet > p { margin-bottom: .65rem; }
+    .lane-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 35rem), 1fr)); gap: .7rem; align-items: start; }
+    .lane-group { min-width: 0; container-type: inline-size; padding: .7rem; background: #fff; border: 1px solid #c6d4dd; border-radius: .45rem; }
+    .lane-group summary { cursor: pointer; color: #244f70; font-weight: 700; }
+    .lane-group summary small { margin-left: .45rem; font-weight: 400; color: var(--muted); }
+    .handoff-lane { display: flex; align-items: stretch; padding: .55rem 0; }
+    .handoff-lane + .handoff-lane { border-top: 1px solid #e4eaed; }
+    .handoff-lane > .node, .handoff-lane > .port { flex: 1 1 0; min-width: 0; width: auto; }
+    .handoff-lane .node { grid-template-columns: auto 1fr; gap: .15rem .35rem; align-content: start; padding: .45rem; }
+    .handoff-lane .node svg { grid-area: 1 / 1; width: 1rem; height: 1rem; }
+    .handoff-lane .node .badge { grid-area: 1 / 2; }
+    .handoff-lane .node strong { grid-area: 2 / 1 / 3 / -1; font-size: .86rem; overflow-wrap: anywhere; }
+    .handoff-lane .node small { grid-column: 1 / -1; overflow-wrap: anywhere; font: .7rem ui-monospace, monospace; }
+    .handoff-lane .port { grid-template-columns: 1fr; align-content: center; }
+    .handoff-lane .port svg { display: none; }
+    .lane-wire { flex: none; align-self: center; display: grid; place-items: center; width: 2.6rem; min-height: 2.4rem;
+      padding: 0; color: #326e9f; background: transparent; border: 0; border-radius: .25rem; }
+    .lane-wire.data { color: #33745a; }
+    .lane-wire svg { width: 2.5rem; height: 1rem; display: block; overflow: visible; }
+    .lane-wire .shaft { stroke: currentColor; stroke-width: 2; }
+    .lane-wire.data .shaft { stroke-dasharray: 5 3; }
+    .lane-wire .packet { stroke-dasharray: 4 32; animation: short-flow 2.5s linear infinite; }
+    @keyframes short-flow { to { stroke-dashoffset: -36; } }
+    button.lane-wire:hover, button.lane-wire[aria-pressed=true] { background: #e4eef4; }
+    .lane-info:not(:empty) { margin-top: .35rem; padding: .5rem .65rem; background: #edf4f8; border-radius: .25rem; }
+    .lane-label { margin-top: .45rem; font: 600 .72rem/1.35 ui-monospace, monospace; color: #486475; }
+    .handoff-lane .node[aria-pressed=true] { border-color: var(--accent); box-shadow: inset 3px 0 var(--accent); }
+    .jump { font-size: .86rem; font-weight: 650; }
+    #agent-workflow { scroll-margin-top: .7rem; }
+    .agent-stage { flex: 1 1 0; min-width: 0; display: grid; align-content: start; gap: .2rem; text-align: left;
+      padding: .5rem; border: 1px solid #b9c8d4; border-radius: .4rem; background: #f7fafc; overflow-wrap: anywhere; }
+    .agent-stage small { font: 650 .68rem ui-monospace, monospace; color: #42596b; }
+    .agent-stage strong { font-size: .88rem; }
+    .agent-stage[aria-pressed=true] { border-color: #275b7b; box-shadow: inset 3px 0 #275b7b; }
+    #agent-notes { border-top: 1px solid #c6d4dd; }
+    #agent-notes dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(13rem, 100%), 1fr)); gap: 1rem; margin: .45rem 0; }
+    #agent-notes dt { font-size: .75rem; font-weight: 700; color: var(--muted); }
+    #agent-notes dd { margin: .15rem 0 0; font-size: .9rem; }
+    @container (max-width: 47rem) {
+      .handoff-lane.long { flex-direction: column; }
+      .handoff-lane.long .lane-wire { min-height: 1.7rem; }
+      .handoff-lane.long .lane-wire svg { transform: rotate(90deg); width: 1.7rem; }
+    }
+    @container (max-width: 30rem) {
+      .handoff-lane.multi { flex-direction: column; }
+      .handoff-lane.multi .lane-wire { min-height: 1.7rem; }
+      .handoff-lane.multi .lane-wire svg { transform: rotate(90deg); width: 1.7rem; }
+    }
+    @container (max-width: 16rem) {
+      .handoff-lane .node { grid-template-columns: 1fr; }
+      .handoff-lane .node svg { display: none; }
+      .handoff-lane .node .badge { grid-area: 1 / 1; }
+    }
     @media (max-width: 64rem) {
-      .topology { grid-template-columns: minmax(0,1fr) 2.3rem minmax(0,3.6fr) 2.3rem minmax(0,1fr); padding: .65rem; }
+      .topology { padding: .75rem; }
       .zone { padding: .5rem; }
       .node { padding: .35rem; column-gap: .3rem; }
     }
-    @media (min-width: 47rem) and (max-width: 55rem) {
-      .tier .triplet .node { grid-template-columns: 1fr; }
-      .tier .triplet .node svg { grid-row: auto; }
+    @media (max-width: 58rem) {
+      .network-band { grid-template-columns: repeat(3,minmax(0,1fr)); gap: 1.6rem 1.4rem; }
+      .network-requests { grid-template-areas: "console research gateway" "cli service lab" "ops db worker"; }
+      .network-stages { grid-template-areas: "match distill discover" ". models feeds" "files judge build" ". . target"; }
     }
     @media (max-width: 47rem) {
-      .topology { grid-template-columns: minmax(0,1fr); padding-inline: 1.7rem; row-gap: .75rem; }
-      .outer .endpoints { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(6rem,100%),1fr)); }
-      .boundary-note { margin-top: .25rem; }
-      .wire { display: none; }
-      .integrations { grid-column: 1; grid-row: 4; }
       .map-footer { align-items: flex-start; }
       .detail-map { grid-template-columns: minmax(0,1fr); gap: .65rem; padding: .65rem 1.65rem; }
       .detail-map .zone { padding-inline: 1.65rem; }
     }
     @media (max-width: 35rem) {
-      .triplet, .ingress { grid-template-columns: 1fr; }
-      .ingress { gap: 1rem; }
-      .ingress .fork { display: none; }
-      .sequence { grid-template-columns: 1fr; gap: 1.15rem; }
-      .tier [data-key="build"] { grid-column: auto; }
-      .integrations .triplet { grid-template-columns: 1fr; }
+      .topology { padding: .6rem; }
+      .topology fieldset { padding: .8rem .9rem 1rem; }
+      .network-band { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 1.4rem; }
+      .network-requests { grid-template-areas: "console gateway" "research lab" "ops service" "cli db" ". worker"; }
+      .network-stages { grid-template-areas: "distill discover" "models feeds" "match judge" "files build" ". target"; }
+      .topology .node { grid-template-columns: 1fr; }
+      .topology .node svg { grid-row: auto; width: 1.05rem; height: 1.05rem; }
     }
   </style>
 </head>
@@ -176,6 +222,8 @@
       <symbol id="repo" viewBox="0 0 24 24"><circle cx="7" cy="5" r="2"/><circle cx="7" cy="19" r="2"/><circle cx="18" cy="6" r="2"/><path d="M7 7v10m0-2c0-5 11-1 11-7"/></symbol>
       <symbol id="branch-key" viewBox="0 0 26 16"><path d="M1 11h24M13 11V1" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="13" cy="11" r="3" fill="currentColor"/></symbol>
       <symbol id="cross-key" viewBox="0 0 26 16"><path d="M1 8h8m8 0h8M13 1v14" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
+      <marker id="control-head" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5" markerHeight="5" orient="auto"><path d="M0 0 8 4 0 8z" fill="#326e9f"/></marker>
+      <marker id="data-head" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5" markerHeight="5" orient="auto"><path d="M0 0 8 4 0 8z" fill="#477968"/></marker>
     </defs>
   </svg>
   <header class="mast">
@@ -189,7 +237,8 @@
       <div class="grid gap-3">
         <p class="kicker">Engineering field guide / System context</p>
         <h1>PaperAtlas architecture</h1>
-        <p class="small">Select a block to explore its internals, or choose a trace and step through the handoffs. Moving dots show direction, not live activity.</p>
+        <p class="small">Select a block to explore its internals. In connection lanes, select an arrow to read what passes between two components.</p>
+        <a class="jump" href="#agent-workflow">Explore the agentic workflow: plan, build, measure and decide ↓</a>
       </div>
     </header>
 
@@ -197,8 +246,9 @@
       <figcaption class="flex flex-wrap items-center justify-between gap-2">
         <div class="flex flex-wrap items-center gap-3">
           <h2 id="map-title" class="kicker">01 / System context diagram</h2>
-          <select id="trace-choice" class="example" aria-label="Highlight an example execution path">
-            <option value="all">All connections</option>
+          <select id="trace-choice" class="example" aria-label="Diagram layout or guided trace">
+            <option value="lanes">Connection lanes</option>
+            <option value="all">System map · all connections</option>
             <option value="scan">Trace: start a scan</option>
             <option value="approval">Trace: approve a spec</option>
           </select>
@@ -211,89 +261,71 @@
         <button id="next-step" class="trace-step" aria-label="Next handoff">→</button>
         <span id="trace-instruction" aria-live="polite"></span>
       </div>
-      <div class="topology">
-        <fieldset class="zone outer"><legend>Clients</legend>
-          <div class="endpoints grid gap-2">
+      <div id="system-lanes" class="lane-sheet">
+        <p class="small">Each lane is a separate path. A repeated block is the same component, not another service.</p>
+        <div class="lane-groups"></div>
+      </div>
+      <p id="map-caption" hidden><strong>Start at the web console or CLI.</strong> Blue arrows carry calls; green dashed arrows carry data. The worker starts a scan or resumes an approved experiment. A shortlist is not permission to build.</p>
+      <div class="topology" hidden>
+        <fieldset><legend>01 / Entry points, services &amp; job dispatch</legend>
+          <div class="network-band network-requests">
             <button data-key="console" data-icon="screen"></button>
             <button data-key="cli" data-icon="terminal"></button>
+            <button data-key="gateway" data-icon="routing"></button>
+            <button data-key="research" data-icon="server"></button>
+            <button data-key="lab" data-icon="server"></button>
+            <button data-key="ops" data-icon="terminal"></button>
+            <button data-key="service" data-icon="cube"></button>
+            <button data-key="db" data-icon="db"></button>
+            <button data-key="worker" data-icon="worker"></button>
           </div>
-          <p class="boundary-note mt-1">Start here: click in the console or run a CLI command. CLI → Python services, no HTTP.</p>
         </fieldset>
-        <div class="wire">↓ Client calls</div>
-        <fieldset class="zone core"><legend>PaperAtlas application</legend>
-          <section class="tier"><h3>01 / HTTP entry points</h3>
-            <div class="ingress">
-              <button data-key="gateway" data-icon="routing"></button><span class="fork" aria-hidden="true"></span>
-              <div class="grid gap-2">
-                <button data-key="research" data-icon="server"></button>
-                <button data-key="lab" data-icon="server"></button>
-              </div>
-            </div>
-          </section>
-          <section class="tier"><h3>02 / Commands, queued work &amp; operator tools</h3>
-            <div class="triplet">
-              <button data-key="ops" data-icon="terminal"></button>
-              <button data-key="worker" data-icon="worker"></button>
-              <button data-key="service" data-icon="cube"></button>
-            </div>
-          </section>
-          <section class="tier"><h3>03 / Workflow stages · called by the worker</h3>
-            <div class="sequence">
+        <fieldset><legend>02 / Research, experiment execution &amp; integrations</legend>
+          <div class="network-band network-stages">
               <button data-key="discover" data-icon="book"></button>
               <button data-key="distill" data-icon="filter"></button>
               <button data-key="match" data-icon="compare"></button>
-            </div>
-            <p class="gate-label">Pick claim (Gate 1) → approve plan (Gate 2) ↓</p>
-            <div class="sequence">
               <button data-key="build" data-icon="worker"></button>
               <button data-key="judge" data-icon="chart"></button>
-            </div>
-            <p class="gate-label">After the verdict: merge or drop (Gate 3).</p>
-          </section>
-        </fieldset>
-        <div class="wire">Application ↔ persistence</div>
-        <fieldset class="zone outer"><legend>Persistence</legend>
-          <div class="endpoints grid gap-2">
-            <button data-key="db" data-icon="db"></button>
             <button data-key="files" data-icon="folder"></button>
+            <button data-key="feeds" data-icon="book"></button>
+            <button data-key="models" data-icon="model"></button>
+            <button data-key="target" data-icon="repo"></button>
           </div>
-          <p class="boundary-note mt-1">Query results → lab API<br>Kept report → local files</p>
         </fieldset>
-        <div class="integrations">
-          <div class="drop">via PaperAtlas adapters</div>
-          <fieldset class="zone outer"><legend>Integration boundaries</legend>
-            <div class="triplet">
-              <button data-key="feeds" data-icon="book"></button>
-              <button data-key="models" data-icon="model"></button>
-              <button data-key="target" data-icon="repo"></button>
-            </div>
-          </fieldset>
-        </div>
-        <svg id="wires" aria-hidden="true">
-          <defs>
-            <marker id="control-head" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5" markerHeight="5" orient="auto"><path d="M0 0 8 4 0 8z" fill="#326e9f"/></marker>
-            <marker id="data-head" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5" markerHeight="5" orient="auto"><path d="M0 0 8 4 0 8z" fill="#477968"/></marker>
-          </defs>
-          <g></g>
-        </svg>
+        <svg id="wires" aria-hidden="true"><g></g></svg>
       </div>
       <div class="map-footer flex flex-wrap items-center gap-3">
         <span class="kicker">Outside the running loop</span><code class="small">uvicorn api.main:app →</code><button data-key="scaffold" data-icon="cube"></button>
         <span class="flex items-center gap-2 small"><i class="key-line"></i>Execution call</span>
         <span class="flex items-center gap-2 small"><i class="key-line data"></i>Data transfer</span>
-        <span class="line-key small"><svg aria-hidden="true"><use href="#branch-key"/></svg>Connected branch</span>
-        <span class="line-key small"><svg aria-hidden="true"><use href="#cross-key"/></svg>Crossing only</span>
+        <span class="line-key map-only small"><svg aria-hidden="true"><use href="#branch-key"/></svg>Connected branch</span>
+        <span class="line-key map-only small"><svg aria-hidden="true"><use href="#cross-key"/></svg>Crossing only</span>
       </div>
       <details id="handoffs" class="small"><summary>Triggers and handoffs for every connection</summary><ol></ol></details>
       <noscript><p class="p-4">Enable JavaScript to explore the interactive map. No network connection or PaperAtlas services are required.</p></noscript>
     </figure>
     <details class="small mt-1"><summary>How to read the map and colors</summary>
-      <p>Dashed outlines mark ownership boundaries, not network hops. A filled dot is a real branch from one source. A gap means one wire passes underneath another without connecting. Moving dashes show direction, not junctions. Arrows show representative calls and payload transfers, not every dependency. Each block color describes PaperAtlas code, not an external provider. Focused means one clear job; Review marks a specific seam to improve; Hotspot means several responsibilities change together; Scaffold sits outside the live loop. A block takes its highest component priority. These judgments do not imply AI authorship.</p>
+      <p>Connection lanes repeat blocks so each handoff has a straight arrow. Choose the system map to see each module once. A filled dot on a routed wire is a real branch; a gap means one wire passes underneath another without connecting. Moving dashes show direction, not live traffic. Block colors describe PaperAtlas code, not an external provider: Focused means one clear job; Review marks a seam to improve; Hotspot means responsibilities change together; Scaffold sits outside the live loop. A block takes its highest component priority. These judgments do not imply AI authorship.</p>
     </details>
     <aside class="trace mt-4 grid gap-1 p-4">
       <strong>Trace one request: start a project scan</strong>
       <p>The console posts to <code>/api/lab/projects/{id}/triage</code>. The gateway forwards to lab-api; the shared service creates a triage and queues <code>triage.run</code>. A worker discovers, distills and matches. The console reads progress as server-sent events. The result is a shortlist, not an automatic build.</p>
     </aside>
+    <figure id="agent-workflow" class="board mt-4" aria-labelledby="agent-title" tabindex="-1">
+      <figcaption class="flex flex-wrap items-center justify-between gap-2">
+        <div><p class="kicker">Agentic workflow / interactive run</p><h2 id="agent-title">Who decides, who acts, who checks?</h2></div>
+        <button type="button" class="motion-toggle" aria-label="Animate flow"></button>
+        <a class="jump" href="#map-title">System overview ↑</a>
+      </figcaption>
+      <div class="lane-sheet">
+        <p class="small">LangGraph runs the workflow. Language models propose claims, specs and diagnoses; the coding agent edits the target worktree. The target harness measures the change, and a person decides whether to keep it. Labels here identify roles, not code quality. Select a stage for its inputs, outputs and source.</p>
+        <div id="agent-lanes" class="lane-groups"></div>
+        <details id="agent-feedback" class="lane-group mt-4"><summary>Feedback paths <small>When the workflow goes back instead of forward</small></summary></details>
+      </div>
+      <section id="agent-notes" class="p-4" aria-label="Selected workflow stage" aria-live="polite"></section>
+      <div class="map-footer small"><strong>Pause and resume.</strong> The worker advances the experiment graph to an interrupt or the end. Postgres holds the graph checkpoint; a gate decision queues a gate-tagged resume job. The experiment row carries the status shown in the console. <span id="state-source"></span></div>
+    </figure>
   </main>
 
   <dialog id="detail" aria-labelledby="detail-title">
@@ -306,17 +338,22 @@
         <div id="detail-tone"></div>
         <h2 class="detail-title" id="detail-title"></h2>
         <p id="detail-purpose" class="lede"></p>
+        <a id="agent-jump" class="jump" href="#agent-workflow" hidden>See this stage in the agentic workflow →</a>
       </header>
       <figure class="board">
         <figcaption class="flex flex-wrap items-center justify-between gap-2">
           <strong class="kicker">Component diagram</strong>
+          <select id="detail-layout" class="example" aria-label="Component diagram layout">
+            <option value="lanes">Connection lanes</option><option value="map">Component map</option>
+          </select>
           <button type="button" class="motion-toggle" aria-label="Animate flow"></button>
           <fieldset class="lens"><legend class="sr-only">Diagram view</legend>
             <label><input class="sr-only" type="radio" name="lens" value="execution" checked>Execution flow</label>
             <label><input class="sr-only" type="radio" name="lens" value="data">Data flow</label>
           </fieldset>
         </figcaption>
-        <div id="detail-map" class="detail-map">
+        <div id="detail-lanes" class="lane-sheet"><div class="lane-group"></div></div>
+        <div id="detail-map" class="detail-map" hidden>
           <fieldset class="zone"><legend id="left-title"></legend><div id="inputs" class="map-stack"></div></fieldset>
           <fieldset class="zone core"><legend id="inside-title"></legend><div id="components" class="map-stack"></div></fieldset>
           <fieldset class="zone"><legend id="right-title"></legend><div id="outputs" class="map-stack"></div></fieldset>
@@ -324,8 +361,8 @@
         </div>
         <div class="map-footer grid gap-1">
           <div class="flex flex-wrap items-center gap-2 small"><i id="detail-line" class="key-line" aria-hidden="true"></i><span id="flow-caption"></span>
-            <span class="line-key"><svg aria-hidden="true"><use href="#branch-key"/></svg>Branch</span>
-            <span class="line-key"><svg aria-hidden="true"><use href="#cross-key"/></svg>Not connected</span>
+            <span class="line-key map-only"><svg aria-hidden="true"><use href="#branch-key"/></svg>Branch</span>
+            <span class="line-key map-only"><svg aria-hidden="true"><use href="#cross-key"/></svg>Not connected</span>
           </div>
           <details id="detail-paths" class="small"><summary>Read connections as text</summary><div></div></details>
           <details id="neighbors" class="small"><summary>What triggers this block, and what happens next?</summary><ul></ul></details>
@@ -680,6 +717,34 @@
       return icon;
     }
 
+    function laneWire(kind, label, onSelect) {
+      const wire = el(onSelect ? "button" : "span", `lane-wire ${kind}`, "");
+      const svg = svgElement("svg", {viewBox: "0 0 36 16", "aria-hidden": "true"});
+      svg.append(svgElement("path", {d: "M1 8H30", class: "shaft", fill: "none"}),
+        svgElement("path", {d: "M1 8H30", class: `packet ${kind}`}),
+        svgElement("path", {d: "M28 3L36 8 28 13Z", fill: "currentColor"}));
+      wire.append(svg);
+      if (onSelect) {
+        wire.type = "button";
+        wire.title = label;
+        wire.setAttribute("aria-label", label);
+        wire.setAttribute("aria-pressed", "false");
+        wire.onclick = () => onSelect(wire);
+      } else {
+        wire.append(el("span", "sr-only", label));
+      }
+      return wire;
+    }
+    function lane(stops, wires) {
+      const row = el("div", "handoff-lane", "");
+      row.classList.toggle("multi", stops.length > 2);
+      row.classList.toggle("long", stops.length > 4);
+      stops.forEach((stop, i) => {
+        if (i) row.append(wires[i-1]);
+        row.append(stop);
+      });
+      return row;
+    }
     let redrawDetail = () => {};
     function openModule(key, zone, moduleIcon) {
       const module = modules[key];
@@ -687,6 +752,8 @@
       $("#detail-id").textContent = `02 / ${zone}`;
       $("#detail-title").textContent = module.title;
       $("#detail-purpose").textContent = module.purpose;
+      $("#agent-jump").hidden = !["worker", "distill", "match", "build", "judge", "models"].includes(key);
+      $("#agent-jump").onclick = () => dialog.close();
       $("#detail-next").textContent = module.next;
       $("#detail-tone").replaceChildren(badge(el("span", "badge", ""), rating(module.parts)));
       const entry = {
@@ -716,7 +783,13 @@
       }
       function renderLens() {
         const data = $("[name=lens]:checked").value === "data";
+        const lanes = $("#detail-layout").value === "lanes";
         const map = $("#detail-map");
+        map.hidden = lanes;
+        $("#detail-lanes").hidden = !lanes;
+        for (const key of dialog.querySelectorAll(".map-only")) key.hidden = lanes;
+        const sheet = $("#detail-lanes .lane-group");
+        sheet.replaceChildren();
         map.dataset.mode = data ? "data" : "execution";
         $("#inside-title").textContent = module.title;
         $("#left-title").textContent = data ? "Input payload" : "Entry points";
@@ -732,7 +805,7 @@
             box.append(glyph(icon), el("strong", "", label));
             if (description) box.append(el("small", "", description));
             nodes.set(id, box);
-            $(parent).append(box);
+            if (!lanes) $(parent).append(box);
           }
           return id;
         }
@@ -745,11 +818,7 @@
           button.setAttribute("aria-controls", "notes");
           button.append(glyph(moduleIcon), el("strong", "", part.title),
             badge(el("span", "badge", ""), part.tone), el("small", "", part.refs[0].split(":")[0].split("/").pop()));
-          button.addEventListener("click", () => {
-            selectPart(index);
-            $("#notes").scrollIntoView({block: "nearest"});
-          });
-          $("#components").append(button);
+          if (!lanes) $("#components").append(button);
           nodes.set(index, button);
         }
         const routes = data ? [[module.data[0][0], ...module.via, module.data[2][0]]] : module.paths;
@@ -768,16 +837,33 @@
             const from = ids[i];
             if (!links.some(link => link.from === from && link.to === to)) links.push({from, to, kind: data ? "data" : "control"});
           });
+          if (lanes) sheet.append(lane(ids.map(id => nodes.get(id).cloneNode(true)),
+            ids.slice(1).map(() => laneWire(data ? "data" : "control", data ? "Data to" : "Then"))));
           $("#detail-paths div").append(el("p", "", ids.map(id => $("strong", nodes.get(id)).textContent).join(" → ")));
+        }
+        if (lanes) {
+          for (const index of interior) {
+            if (!routes.some(route => route.includes(index))) {
+              sheet.append(el("p", "small", "Not executed on these paths:"), lane([nodes.get(index)], []));
+            }
+          }
         }
         selectPart(interior.find(hop => typeof hop === "number"));
         redrawDetail = () => {
-          if (dialog.open) drawConnections($("#detail-wires"), nodes, links, map.querySelectorAll("legend"));
+          if (dialog.open && !map.hidden) drawConnections($("#detail-wires"), nodes, links, map.querySelectorAll("legend"));
         };
         redrawDetail();
       }
       $("[name=lens][value=execution]").checked = true;
+      $("#detail-layout").value = $("#trace-choice").value === "lanes" ? "lanes" : "map";
+      $("#detail-layout").onchange = renderLens;
       $(".lens").onchange = renderLens;
+      dialog.onclick = event => {
+        const button = event.target.closest("button[data-part]");
+        if (!button) return;
+        selectPart(Number(button.dataset.part));
+        $("#notes").scrollIntoView({block: "nearest"});
+      };
       $("#detail-paths").open = false;
       dialog.showModal();
       renderLens();
@@ -788,16 +874,24 @@
     for (const tone of ["focused", "review", "hotspot", "scaffold"]) {
       $("#legend").append(badge(el("span", "badge", ""), tone));
     }
-    for (const button of document.querySelectorAll("button[data-key]")) {
-      const module = modules[button.dataset.key];
+    const modulePlacements = new Map();
+    function bindModule(button, key, zone, icon) {
+      const module = modules[key];
       button.type = "button";
       button.className = "node";
       button.title = module.summary;
       button.dataset.tone = rating(module.parts);
       button.setAttribute("aria-haspopup", "dialog");
-      button.append(glyph(button.dataset.icon), el("strong", "", module.title), badge(el("span", "badge", ""), button.dataset.tone));
+      button.append(glyph(icon), el("strong", "", module.title), badge(el("span", "badge", ""), button.dataset.tone));
+      button.addEventListener("click", () => openModule(key, zone, icon));
+      return button;
+    }
+    for (const button of document.querySelectorAll("button[data-key]")) {
+      const {key, icon} = button.dataset;
+      if (button.closest(".network-band")) button.style.gridArea = key;
       const zone = button.closest("fieldset")?.querySelector("legend")?.textContent || "Outside the running loop";
-      button.addEventListener("click", () => openModule(button.dataset.key, zone, button.dataset.icon));
+      modulePlacements.set(key, {zone, icon});
+      bindModule(button, key, zone, icon);
     }
 
     const call = (from, to, text) => ({from, to, text, kind: "control"});
@@ -831,6 +925,137 @@
       approval: ["approve", "queueResume", "leaseResume", "run", "bench", "results", "assess", "report"]
     };
     const names = h => `${modules[h.from].title} → ${modules[h.to].title}`;
+    // Repeat a component at a route boundary instead of drawing a return wire across another route.
+    const laneGroups = [
+      ["Clients & APIs", "Requests and commands", {"Start a scan": ["scan", "labRoute", "start"], "Read the catalog": ["catalog", "read"], "Approve a spec": ["approve"], "Run operator tools": ["ops"]}],
+      ["Jobs & progress", "Postgres-backed coordination", {"Queue a scan · triage.run": ["queueScan", "leaseScan"], "Resume a gate · experiment.resume": ["queueResume", "leaseResume"], "Read new events": ["events"]}],
+      ["Research scan", "Stops at the shortlist", {"Find and rank claims": ["find", "claim", "rank"], "Fetch source material": ["ingest"], "Extract structured claims": ["extract"]}],
+      ["Experiment", "Runs after spec approval", {"Run, judge and report": ["run", "assess", "report"], "Benchmark round trip": ["bench", "results"]}]
+    ];
+    for (const [i, [title, subtitle, routes]] of laneGroups.entries()) {
+      const group = el("details", "lane-group", "");
+      group.open = true;
+      const heading = el("summary", "", `0${i+1} / ${title}`);
+      heading.append(el("small", "", subtitle));
+      group.append(heading);
+      for (const [name, route] of Object.entries(routes)) {
+        const info = el("p", "lane-info small", "");
+        info.setAttribute("aria-live", "polite");
+        const steps = route.map(id => handoffs[id]);
+        const stops = [steps[0].from, ...steps.map(step => step.to)].map(key => {
+          const {zone, icon} = modulePlacements.get(key);
+          const button = bindModule(document.createElement("button"), key, zone, icon);
+          button.dataset.module = key;
+          return button;
+        });
+        const wires = steps.map((step, j) => {
+          const label = `${step.kind === "data" ? "Data transfer" : "Execution call"}: ${names(step)}`;
+          const connector = laneWire(step.kind, label, button => {
+            const wasOpen = button.getAttribute("aria-pressed") === "true";
+            for (const sibling of wires) sibling.setAttribute("aria-pressed", "false");
+            button.setAttribute("aria-pressed", String(!wasOpen));
+            info.textContent = wasOpen ? "" : `${names(step)} — ${step.text}`;
+          });
+          connector.dataset.handoff = route[j];
+          return connector;
+        });
+        group.append(el("p", "lane-label", name), lane(stops, wires), info);
+      }
+      $("#system-lanes .lane-groups").append(group);
+    }
+
+    const stage = (role, title, input, action, output, ...refs) => ({role, title, input, action, output, refs});
+    const agentStages = {
+      extract: stage("Model-assisted", "Extract claims", "Paper text, title and abstract.",
+        "Request structured concepts with evidence. If extraction falls back to heuristics, the resulting concepts are marked non-testable.",
+        "Validated claim cards stored for matching.", "distill/extractor.py:101-150", "distill/pipeline.py:83-112"),
+      match: stage("Scoring + optional LLM", "Match to project", "Claim cards, project profile, metrics and past verdicts.",
+        "Score fit and blockers; optionally review top candidates with the model. The triage graph ends after recording its shortlist.",
+        "Ranked candidates in awaiting_pick, not a running experiment.", "lab/matcher.py:186-322", "lab/orchestrator.py:883-911"),
+      pick: stage("Human · Gate 1", "Pick a claim", "Shortlist and project context.",
+        "Choose what to test. The pick creates experiment records; the scan alone cannot authorize a build.",
+        "An experiment ready for planning (or waiting for prerequisites).", "lab/service.py:449-519"),
+      plan: stage("Model-assisted", "Draft the spec", "Picked claim, project profile, metric, prior feedback and any prerequisite flags.",
+        "Start with a template; optionally ask a model to refine it. Validate and normalize the spec against the target's constraints.",
+        "Proposed flag, comparison arms, workload, success threshold and guardrails.", "lab/planner.py:229-341", "lab/orchestrator.py:194-228"),
+      spec: stage("Human · Gate 2", "Review the spec", "Proposed experiment spec.",
+        "Approve to build, revise with feedback to replan, or reject to stop. Explicit batch mode can approve Gate 2 automatically.",
+        "A gate-tagged decision, not a model-issued approval.", "lab/orchestrator.py:259-288", "lab/batch.py:59-72"),
+      build: stage("Coding agent", "Implement the flag", "Approved spec, target worktree, project contract and any repair feedback.",
+        "The builder invokes Copilot CLI (or Codex) to edit the target project behind a feature flag. PaperAtlas records the changes and invokes verification.",
+        "A candidate implementation on the experiment branch.", "lab/builder.py:52-106", "lab/builder.py:365-390"),
+      verify: stage("Runtime", "Verify the build", "Candidate diff and the target's declared commands.",
+        "Check for changes and protected paths; run the flag registry and tests when configured. Failures go back to the builder, with three attempts by default.",
+        "A verified build, or a failed experiment when attempts are exhausted.", "lab/builder.py:326-357", "lab/builder.py:374-403"),
+      measure: stage("Target harness", "Measure A/B", "Verified flag, fixed workload, baseline and variant settings.",
+        "Run a smoke check, tune if configured, then run the claim check and a separate adoption check if needed. GPU-bound benchmark work takes the shared lock.",
+        "Paired measurements, quality results and environment data.", "lab/orchestrator.py:326-397", "lab/runner.py:117-183"),
+      judge: stage("Statistical code", "Compute verdict", "Paired rounds, the approved success threshold and quality guardrails.",
+        "Compute improvement and confidence intervals, then apply structural and quality checks. A language model does not decide the verdict.",
+        "A measured verdict and reasons; insufficient evidence may be inconclusive.", "lab/judge.py:102-191"),
+      analyst: stage("Model-assisted", "Diagnose the result", "Measured verdict, tuning history, fidelity notes and the paper's claim.",
+        "Explain discrepancies and suggest concrete next changes. Without a model, or on a provider failure, the rule-based diagnosis requests no further iteration.",
+        "Diagnosis, evidence, worth_iterating and next_changes.", "lab/analyst.py:90-118", "lab/analyst.py:145-167"),
+      budget: stage("LangGraph policy", "Retry or finish", "Diagnosis, proposed changes, iteration history and the spec's max_iterations.",
+        "Return to build only for an actionable retry within the iteration budget. This measured-results loop is separate from fixing a build that failed verification.",
+        "Feedback for a new build, or the retained measurements for reporting.", "lab/orchestrator.py:487-529", "lab/planner.py:78-84"),
+      report: stage("Runtime", "Publish evidence", "Kept iteration, spec, measurements, verdict and analysis.",
+        "Render the report, persist the verdict and mark the experiment awaiting_decision. A draft PR may be attempted; it is not a merge.",
+        "Reviewable HTML and a pending Gate 3 decision.", "lab/orchestrator.py:526-557"),
+      decide: stage("Human · Gate 3", "Merge or drop", "Experiment report and retained branch.",
+        "Choose whether the project should adopt the change. A positive verdict does not grant permission to merge.",
+        "Explicit merge or drop decision.", "lab/orchestrator.py:591-598", "lab/service.py:965-980"),
+      finish: stage("Runtime", "Finalize", "Gate 3 decision, branch, worktree and experiment record.",
+        "Merge the retained branch or drop it and remove the worktree. A drop keeps the recorded experiment results.",
+        "Final status and an update for dependent experiments.", "lab/orchestrator.py:612-646")
+    };
+    function inspectStage(id) {
+      const s = agentStages[id], note = $("#agent-notes"), fields = document.createElement("dl");
+      for (const [label, text] of [["Input", s.input], ["Action", s.action], ["Output", s.output]]) {
+        const field = document.createElement("div");
+        field.append(el("dt", "", label), el("dd", "", text));
+        fields.append(field);
+      }
+      const refs = el("div", "flex flex-wrap gap-2", "");
+      refs.append(...s.refs.map(source));
+      note.replaceChildren(el("p", "kicker", s.role), el("h3", "", s.title), fields, refs);
+      for (const button of document.querySelectorAll("[data-agent-stage]")) button.setAttribute("aria-pressed", String(button.dataset.agentStage === id));
+    }
+    function agentLane(container, caption, ids, kinds) {
+      const stops = ids.map(id => {
+        const s = agentStages[id], button = el("button", "agent-stage", "");
+        button.type = "button";
+        button.dataset.agentStage = id;
+        button.setAttribute("aria-controls", "agent-notes");
+        button.append(el("small", "", s.role), el("strong", "", s.title));
+        button.onclick = () => {
+          inspectStage(id);
+          $("#agent-notes").scrollIntoView({block: "nearest"});
+        };
+        return button;
+      });
+      container.append(el("p", "lane-label", caption), lane(stops, kinds.map(k => laneWire(k, k === "data" ? "Evidence to" : "Then"))));
+    }
+    const phases = [
+      ["01 / Choose an experiment", [["Triage ends with a human pick", ["extract", "match", "pick"], ["data", "data"]]]],
+      ["02 / Agree on the test", [["A spec is a proposal, not permission to build", ["pick", "plan", "spec"], ["control", "data"]]]],
+      ["03 / Change code and measure", [["Only an approved spec reaches the builder", ["spec", "build", "verify", "measure"], ["control", "control", "control"]]]],
+      ["04 / Interpret and decide", [
+        ["Use evidence to decide whether to iterate", ["measure", "judge", "analyst", "budget"], ["data", "data", "control"]],
+        ["When iteration ends, a person decides adoption", ["budget", "report", "decide", "finish"], ["control", "data", "control"]]
+      ]]
+    ];
+    for (const [title, rows] of phases) {
+      const group = el("section", "lane-group", "");
+      group.append(el("h3", "", title));
+      for (const row of rows) agentLane(group, ...row);
+      $("#agent-lanes").append(group);
+    }
+    agentLane($("#agent-feedback"), "Revise with a comment → draft again. Reject → stop.", ["spec", "plan"], ["control"]);
+    agentLane($("#agent-feedback"), "Build verification failed and attempts remain", ["verify", "build"], ["data"]);
+    agentLane($("#agent-feedback"), "Fixable diagnosis, next changes and iteration budget remaining", ["budget", "build"], ["control"]);
+    $("#state-source").append(source("lab/orchestrator.py:717-742"), " · ", source("lab/service.py:915-936"));
+    inspectStage("build");
     for (const h of Object.values(handoffs)) {
       const li = document.createElement("li");
       li.append(el("strong", "", names(h)), ` — ${h.text}`);
@@ -1012,14 +1237,20 @@
     const mapNodes = new Map([...document.querySelectorAll(".topology [data-key]")].map(n => [n.dataset.key, n]));
     let traceStep = 0;
     function drawWires() {
+      if ($(".topology").hidden) return;
       const trace = traces[$("#trace-choice").value];
       const active = trace && handoffs[trace[traceStep]];
       const links = active ? [active] : Object.values(handoffs).filter((h, i, all) =>
         !all.slice(0,i).some(other => other.from === h.from && other.to === h.to && other.kind === h.kind));
-      drawConnections($("#wires"), mapNodes, links, document.querySelectorAll(".topology legend, .topology h3, .boundary-note, .gate-label, .drop"));
+      drawConnections($("#wires"), mapNodes, links, document.querySelectorAll(".topology legend"));
     }
     function showTrace() {
-      const trace = traces[$("#trace-choice").value];
+      const choice = $("#trace-choice").value;
+      const trace = traces[choice], lanes = choice === "lanes";
+      $("#system-lanes").hidden = !lanes;
+      $(".topology").hidden = lanes;
+      $("#map-caption").hidden = lanes;
+      for (const key of document.querySelectorAll("main .map-only")) key.hidden = lanes;
       for (const n of mapNodes.values()) delete n.dataset.step;
       $("#trace-route").hidden = !trace;
       if (trace) {

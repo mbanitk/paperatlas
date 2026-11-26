@@ -57,6 +57,20 @@ function inspect(svg) {
   return { paths: paths.length, crossings, dots: dots.length }
 }
 
+function inspectLanes(root) {
+  for (const lane of root.querySelectorAll('.handoff-lane')) {
+    if (!lane.getClientRects().length) continue
+    const vertical = getComputedStyle(lane).flexDirection === 'column'
+    for (const wire of lane.querySelectorAll('.lane-wire')) {
+      const from = wire.previousElementSibling.getBoundingClientRect()
+      const to = wire.nextElementSibling.getBoundingClientRect()
+      const line = wire.querySelector('svg').getBoundingClientRect()
+      if (vertical ? from.bottom > line.top + 1 || line.bottom > to.top + 1
+        : from.right > line.left + 1 || line.right > to.left + 1) throw Error('Arrow outside its lane')
+    }
+  }
+}
+
 try {
   const page = await browser.newPage({ offline: true, reducedMotion: 'reduce' })
   const errors = []
@@ -65,11 +79,28 @@ try {
   for (const width of [1440, 838, 600, 390, 320]) {
     await page.setViewportSize({ width, height: 900 })
     await page.goto(url)
+    const choice = page.locator('#trace-choice')
+    assert.equal(await choice.inputValue(), 'lanes')
+    await page.locator('#system-lanes').evaluate(inspectLanes)
+    const shown = await page.locator('#system-lanes [data-handoff]').evaluateAll(nodes => nodes.map(n => n.dataset.handoff).sort())
+    assert.deepEqual(shown, await page.evaluate(() => Object.keys(handoffs).sort()))
+    const arrow = page.locator('[data-handoff="leaseScan"]')
+    await arrow.click()
+    assert.equal(await arrow.getAttribute('aria-pressed'), 'true')
+    assert.match(await page.locator('#system-lanes .lane-info:not(:empty)').innerText(), /polls and claims/)
+    await page.locator('[data-module="worker"]').first().click()
+    assert.equal(await page.locator('#detail-layout').inputValue(), 'lanes')
+    await page.locator('#detail-lanes').evaluate(inspectLanes)
+    await page.keyboard.press('Escape')
+    await page.locator('#agent-feedback summary').click()
+    await page.locator('#agent-workflow').evaluate(inspectLanes)
+    await page.locator('#agent-feedback [data-agent-stage="budget"]').click()
+    assert.match(await page.locator('#agent-notes').innerText(), /iteration budget/)
+    await choice.selectOption('all')
     const overview = await page.locator('#wires').evaluate(inspect)
     const expected = await page.evaluate(() => new Set(Object.values(handoffs).map(h => JSON.stringify([h.from, h.to, h.kind]))).size)
     assert.equal(overview.paths, expected, 'Missing overview handoff')
-    assert.ok(overview.crossings && overview.dots, 'Exercise both crossing and branch notation')
-    const choice = page.locator('#trace-choice')
+    assert.equal(overview.crossings, 0, 'The all-connections layout should not need crossing gaps at these widths')
     await choice.selectOption('scan')
     assert.deepEqual(await page.locator('#wires').evaluate(inspect), { paths: 1, crossings: 0, dots: 0 })
     await choice.selectOption('all')
