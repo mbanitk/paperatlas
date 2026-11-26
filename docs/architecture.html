@@ -36,14 +36,21 @@
     .board { --wire: #61819b; --blue: #195e91; --paper: #fbfdff; background: var(--paper); border: 1px solid #b5c6d1; border-radius: .8rem; }
     .board figcaption, .map-footer { padding: .65rem 1rem; }
     .board figcaption { border-bottom: 1px solid #d6e0e7; }
-    .topology { position: relative; display: grid; gap: 1.5rem; padding: 1rem; background: #fff; }
-    .topology fieldset { min-inline-size: 0; margin: 0; padding: .9rem 1.4rem 1.3rem; border: 1px solid #d5e0e7; border-radius: .45rem; background: #f8fafc; }
-    .topology legend { padding: 0 .45rem; color: #33576d; font: 650 .78rem/1.4 ui-monospace, monospace; }
-    .network-band { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 2rem 2.3rem; }
-    .network-requests { grid-template-areas: "ops cli research service db" "console gateway lab . worker"; }
-    .network-stages { grid-template-areas: "match distill discover build target" ". models feeds judge files"; }
-    .topology .node { min-height: 3.2rem; }
-    .topology .node strong { min-width: 0; overflow-wrap: anywhere; }
+    .topology { position: relative; padding: 1rem; display: grid; align-items: center;
+      grid-template-columns: minmax(0,1fr) minmax(0,3.7fr) minmax(0,1fr); column-gap: 3.6rem;
+      background: radial-gradient(#dce6ec .8px, transparent .8px) 0 0 / 12px 12px; }
+    .topology .core { padding-inline: 1.1rem; }
+    .tier + .tier { margin-top: 1.05rem; padding-top: .75rem; border-top: 1px solid #cfdee8; }
+    .tier h3 { margin-bottom: .65rem; font: 650 .72rem/1.3 ui-monospace, monospace; color: #486475; }
+    .ingress { display: grid; align-items: center; grid-template-columns: minmax(0,1fr) minmax(0,1.5fr); gap: 1.6rem; }
+    .triplet, .sequence { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 1.35rem; }
+    .tier [data-key="build"] { grid-column: 2; }
+    .gate-label { font: .69rem/1.3 ui-monospace, monospace; color: #486475; padding: .4rem 0; }
+    .outer .node { grid-template-columns: 1fr; justify-items: center; text-align: center; gap: .15rem; }
+    .outer .node svg { grid-row: auto; width: 2rem; height: 2rem; }
+    .boundary-note { font-size: .75rem; line-height: 1.35; color: var(--muted); }
+    .integrations { grid-column: 2; }
+    .drop { margin: 0 auto; width: fit-content; display: flex; align-items: center; height: 2.2rem; font: .7rem ui-monospace, monospace; color: #385467; }
     #map-caption { padding: .55rem 1rem; color: #385467; border-bottom: 1px solid #d6e0e7; font-size: .85rem; }
     #wires { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
     .control-line, .data-line { fill: none; stroke-width: 1.6; }
@@ -177,28 +184,25 @@
       .handoff-lane .node .badge { grid-area: 1 / 1; }
     }
     @media (max-width: 64rem) {
-      .topology { padding: .75rem; }
+      .topology { grid-template-columns: minmax(0,1fr) minmax(0,3.6fr) minmax(0,1fr); column-gap: 2.3rem; padding: .65rem; }
       .zone { padding: .5rem; }
       .node { padding: .35rem; column-gap: .3rem; }
     }
-    @media (max-width: 58rem) {
-      .network-band { grid-template-columns: repeat(3,minmax(0,1fr)); gap: 1.6rem 1.4rem; }
-      .network-requests { grid-template-areas: "console research gateway" "cli service lab" "ops db worker"; }
-      .network-stages { grid-template-areas: "match distill discover" ". models feeds" "files judge build" ". . target"; }
+    @media (min-width: 47rem) and (max-width: 55rem) {
+      .tier .triplet .node { grid-template-columns: 1fr; }
+      .tier .triplet .node svg { grid-row: auto; }
     }
     @media (max-width: 47rem) {
+      .topology { grid-template-columns: minmax(0,1fr); padding-inline: 1.7rem; row-gap: .75rem; }
+      .outer .endpoints { grid-template-columns: repeat(auto-fit, minmax(min(6rem,100%),1fr)); }
+      .integrations { grid-column: 1; }
       .map-footer { align-items: flex-start; }
       .detail-map { grid-template-columns: minmax(0,1fr); gap: .65rem; padding: .65rem 1.65rem; }
       .detail-map .zone { padding-inline: 1.65rem; }
     }
     @media (max-width: 35rem) {
-      .topology { padding: .6rem; }
-      .topology fieldset { padding: .8rem .9rem 1rem; }
-      .network-band { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 1.4rem; }
-      .network-requests { grid-template-areas: "console gateway" "research lab" "ops service" "cli db" ". worker"; }
-      .network-stages { grid-template-areas: "distill discover" "models feeds" "match judge" "files build" ". target"; }
-      .topology .node { grid-template-columns: 1fr; }
-      .topology .node svg { grid-row: auto; width: 1.05rem; height: 1.05rem; }
+      .triplet, .ingress, .sequence { grid-template-columns: 1fr; gap: 1.15rem; }
+      .tier [data-key="build"] { grid-column: auto; }
     }
   </style>
 </head>
@@ -267,32 +271,61 @@
       </div>
       <p id="map-caption" hidden><strong>Start at the web console or CLI.</strong> Blue arrows carry calls; green dashed arrows carry data. The worker starts a scan or resumes an approved experiment. A shortlist is not permission to build.</p>
       <div class="topology" hidden>
-        <fieldset><legend>01 / Entry points, services &amp; job dispatch</legend>
-          <div class="network-band network-requests">
+        <fieldset class="zone outer"><legend>Clients</legend>
+          <div class="endpoints grid gap-2">
             <button data-key="console" data-icon="screen"></button>
             <button data-key="cli" data-icon="terminal"></button>
-            <button data-key="gateway" data-icon="routing"></button>
-            <button data-key="research" data-icon="server"></button>
-            <button data-key="lab" data-icon="server"></button>
-            <button data-key="ops" data-icon="terminal"></button>
-            <button data-key="service" data-icon="cube"></button>
-            <button data-key="db" data-icon="db"></button>
-            <button data-key="worker" data-icon="worker"></button>
           </div>
+          <p class="boundary-note mt-1">Web → gateway (HTTP)<br>CLI → Python services (no HTTP)</p>
         </fieldset>
-        <fieldset><legend>02 / Research, experiment execution &amp; integrations</legend>
-          <div class="network-band network-stages">
+        <fieldset class="zone core"><legend>PaperAtlas application</legend>
+          <section class="tier"><h3>01 / HTTP entry points</h3>
+            <div class="ingress">
+              <button data-key="gateway" data-icon="routing"></button>
+              <div class="grid gap-2">
+                <button data-key="research" data-icon="server"></button>
+                <button data-key="lab" data-icon="server"></button>
+              </div>
+            </div>
+          </section>
+          <section class="tier"><h3>02 / Commands, queued work &amp; operator tools</h3>
+            <div class="triplet">
+              <button data-key="ops" data-icon="terminal"></button>
+              <button data-key="worker" data-icon="worker"></button>
+              <button data-key="service" data-icon="cube"></button>
+            </div>
+          </section>
+          <section class="tier"><h3>03 / Workflow stages · called by the worker</h3>
+            <div class="sequence">
               <button data-key="discover" data-icon="book"></button>
               <button data-key="distill" data-icon="filter"></button>
               <button data-key="match" data-icon="compare"></button>
+            </div>
+            <p class="gate-label">Pick claim (Gate 1) → approve plan (Gate 2) ↓</p>
+            <div class="sequence">
               <button data-key="build" data-icon="worker"></button>
               <button data-key="judge" data-icon="chart"></button>
-            <button data-key="files" data-icon="folder"></button>
-            <button data-key="feeds" data-icon="book"></button>
-            <button data-key="models" data-icon="model"></button>
-            <button data-key="target" data-icon="repo"></button>
-          </div>
+            </div>
+            <p class="gate-label">After the verdict: merge or drop (Gate 3).</p>
+          </section>
         </fieldset>
+        <fieldset class="zone outer"><legend>Persistence</legend>
+          <div class="endpoints grid gap-2">
+            <button data-key="db" data-icon="db"></button>
+            <button data-key="files" data-icon="folder"></button>
+          </div>
+          <p class="boundary-note mt-1">Query results → lab API<br>Kept report → local files</p>
+        </fieldset>
+        <div class="integrations">
+          <div class="drop">via PaperAtlas adapters</div>
+          <fieldset class="zone outer"><legend>Integration boundaries</legend>
+            <div class="triplet">
+              <button data-key="feeds" data-icon="book"></button>
+              <button data-key="models" data-icon="model"></button>
+              <button data-key="target" data-icon="repo"></button>
+            </div>
+          </fieldset>
+        </div>
         <svg id="wires" aria-hidden="true"><g></g></svg>
       </div>
       <div class="map-footer flex flex-wrap items-center gap-3">
@@ -888,7 +921,6 @@
     }
     for (const button of document.querySelectorAll("button[data-key]")) {
       const {key, icon} = button.dataset;
-      if (button.closest(".network-band")) button.style.gridArea = key;
       const zone = button.closest("fieldset")?.querySelector("legend")?.textContent || "Outside the running loop";
       modulePlacements.set(key, {zone, icon});
       bindModule(button, key, zone, icon);
@@ -1242,7 +1274,7 @@
       const active = trace && handoffs[trace[traceStep]];
       const links = active ? [active] : Object.values(handoffs).filter((h, i, all) =>
         !all.slice(0,i).some(other => other.from === h.from && other.to === h.to && other.kind === h.kind));
-      drawConnections($("#wires"), mapNodes, links, document.querySelectorAll(".topology legend"));
+      drawConnections($("#wires"), mapNodes, links, document.querySelectorAll(".topology legend, .tier h3, .boundary-note, .gate-label, .drop"));
     }
     function showTrace() {
       const choice = $("#trace-choice").value;

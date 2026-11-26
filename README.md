@@ -35,7 +35,7 @@ flowchart LR
 
 [Interactive architecture field guide](docs/architecture.html) — open the HTML file locally.
 Connection lanes show calls and data transfers with straight arrows; **System map · all connections**
-shows each module once. Select a block to inspect its execution and data flow, or step through
+groups modules into clients, the PaperAtlas application, persistence and integrations. Select a block to inspect its execution and data flow, or step through
 a scan or approval. The [agentic workflow diagram](docs/architecture.html#agent-workflow) separates
 model proposals, coding-agent changes, measured verdicts and human decisions, including retry paths.
 A filled dot on a routed wire marks a connected branch; a gap means two lines cross without connecting.

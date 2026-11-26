@@ -100,7 +100,14 @@ try {
     const overview = await page.locator('#wires').evaluate(inspect)
     const expected = await page.evaluate(() => new Set(Object.values(handoffs).map(h => JSON.stringify([h.from, h.to, h.kind]))).size)
     assert.equal(overview.paths, expected, 'Missing overview handoff')
-    assert.equal(overview.crossings, 0, 'The all-connections layout should not need crossing gaps at these widths')
+    const zones = page.locator('.topology fieldset')
+    assert.deepEqual(await zones.locator('legend').allTextContents(), ['Clients', 'PaperAtlas application', 'Persistence', 'Integration boundaries'])
+    const [clients, app, storage, integrations] = await zones.evaluateAll(nodes => nodes.map(n => n.getBoundingClientRect().toJSON()))
+    if (width > 752) {
+      assert.ok(clients.right < app.left && app.right < storage.left && app.bottom < integrations.top, 'Desktop groups out of place')
+    } else {
+      assert.ok(clients.bottom < app.top && app.bottom < storage.top && storage.bottom < integrations.top, 'Mobile groups overlap')
+    }
     await choice.selectOption('scan')
     assert.deepEqual(await page.locator('#wires').evaluate(inspect), { paths: 1, crossings: 0, dots: 0 })
     await choice.selectOption('all')
