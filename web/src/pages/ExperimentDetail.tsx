@@ -16,7 +16,7 @@ import { ClaimDeepDive, ClaimHeadline, ClaimOverview } from '../components/Claim
 import { RelatedStrip } from '../components/Related'
 import { PredictionPanel } from '../components/Prediction'
 import { Stepper } from '../components/Stepper'
-import { floatingMiddleware } from '../components/Tooltip'
+import { floatingMiddleware, useExclusiveOpen } from '../components/Tooltip'
 import { useToast } from '../components/Toast'
 import {
   AnswerBlock,
@@ -399,6 +399,7 @@ function MoreMenu({ experiment, onSelect }: { experiment: Experiment; onSelect: 
     whileElementsMounted: autoUpdate,
     middleware: floatingMiddleware(arrowRef, 300),
   })
+  useExclusiveOpen(open, () => setOpen(false), { sticky: true, reference: () => refs.domReference.current, floating: () => refs.floating.current })
   const { getReferenceProps, getFloatingProps } = useInteractions([useClick(context), useDismiss(context), useRole(context, { role: 'menu' })])
   const rerunnable = canRerun(experiment.status)
   const cancellable = canCancel(experiment.status)

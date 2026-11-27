@@ -21,7 +21,7 @@ import { JobStatus } from '../components/JobStatus'
 import { RooflineCard, RooflineSummary } from '../components/Roofline'
 import { DataTable } from '../components/Table'
 import { useToast } from '../components/Toast'
-import { floatingMiddleware } from '../components/Tooltip'
+import { floatingMiddleware, useExclusiveOpen } from '../components/Tooltip'
 import {
   Button,
   Card,
@@ -81,6 +81,7 @@ function ActionsMenu({ items, label = 'Actions' }: { items: MenuItem[]; label?: 
     whileElementsMounted: autoUpdate,
     middleware: floatingMiddleware(arrowRef, 320),
   })
+  useExclusiveOpen(open, () => setOpen(false), { sticky: true, reference: () => refs.domReference.current, floating: () => refs.floating.current })
   const { getReferenceProps, getFloatingProps, getItemProps } = useInteractions([
     useClick(context),
     useDismiss(context),
