@@ -77,6 +77,11 @@ paperatlas services up        # http://127.0.0.1:8100
 
 For frontend development run `npm run dev` in `web/` (Vite proxies `/api` to the gateway).
 
+If the machine restarts or the app is closed mid-experiment, the next `paperatlas services up` resumes the
+interrupted work from its last completed step: jobs that failed while the previous worker was shutting down
+(within `PAPERATLAS_SHUTDOWN_WINDOW_S`, default 120 s) and experiments left without a job are re-queued.
+Failures from before the shutdown stay failed. A `paperatlas r2e batch` run has to be started again.
+
 ## Command line
 
 The CLI uses the same service layer and job queue as the console, so either can approve a gate.

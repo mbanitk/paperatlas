@@ -63,7 +63,7 @@ def db(database_url, tmp_path, monkeypatch):
         connection.execute(
             text(
                 "TRUNCATE research.papers, research.topics, research.claim_groups, lab.projects, "
-                "research.llm_cache, lab.jobs, lab.events RESTART IDENTITY CASCADE"
+                "research.llm_cache, lab.jobs, lab.events, lab.workers RESTART IDENTITY CASCADE"
             )
         )
     return database_url
