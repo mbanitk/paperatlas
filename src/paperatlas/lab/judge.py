@@ -201,6 +201,10 @@ def mechanism_table(results: dict[str, Any], spec: dict[str, Any]) -> dict[str, 
         data = mechanism.get(name) or {}
         return ((data.get("techniques") or {}).get(flag) or {}), int(data.get("tokens") or 0)
 
+    def rounds(name: str) -> Optional[int]:
+        value = (mechanism.get(name) or {}).get("rounds")
+        return int(value) if isinstance(value, (int, float)) else None
+
     (base, base_tokens), (var, var_tokens) = arm("baseline"), arm("variant")
     names = list(expected) + sorted((set(base) | set(var)) - set(expected))
     rows = []
@@ -229,6 +233,7 @@ def mechanism_table(results: dict[str, Any], spec: dict[str, Any]) -> dict[str, 
         "missing": missing,
         "measured": bool(expected) and not missing,
         "tokens": {"baseline": base_tokens, "variant": var_tokens},
+        "rounds": {"baseline": rounds("baseline"), "variant": rounds("variant")},
     }
 
 

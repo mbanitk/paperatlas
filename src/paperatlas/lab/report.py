@@ -226,7 +226,7 @@ def rerender_report(experiment_id: int) -> Optional[Path]:
             adopt = None
     verdict = judge(results, spec, context["profile"], adopt)
     stored = service.get_experiment(experiment_id).get("verdict_detail") or {}
-    for key in ("analysis", "iteration", "iterations", "tuning"):
+    for key in ("analysis", "iteration", "iterations", "tuning", "code_effect"):
         if stored.get("details", {}).get(key) is not None:
             verdict[key] = stored["details"][key]
     return render_report(

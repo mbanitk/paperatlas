@@ -32,6 +32,8 @@ export const keys = {
   experiments: (params: { project_id?: number; status?: string }) => ['experiments', params] as const,
   experiment: (id: number) => ['experiment', id] as const,
   experimentLog: (id: number) => ['experiment', id, 'log'] as const,
+  experimentChanges: (id: number, iteration: number | undefined, patch: boolean, version = '') =>
+    ['experiment', id, 'changes', iteration ?? 'measured', patch, version] as const,
   activity: (limit: number) => ['activity', limit] as const,
   jobs: (limit: number, status?: string) => ['jobs', limit, status ?? 'all'] as const,
   topics: (archived: boolean) => ['topics', archived] as const,
@@ -150,6 +152,21 @@ export const useExperiment = (id: number) =>
 
 export const useExperimentLog = (id: number, enabled = true) =>
   useQuery({ queryKey: keys.experimentLog(id), queryFn: () => api.lab.log(id), enabled })
+
+/**
+ * The code an experiment changed. `patch: false` is the cheap file list; the diffs load when a file is opened.
+ * `version` (e.g. the saved diff's commit and the status) refetches when the experiment's code moves on.
+ */
+export const useExperimentChanges = (
+  id: number,
+  options: { iteration?: number; patch?: boolean; enabled?: boolean; live?: boolean; version?: string } = {},
+) =>
+  useQuery({
+    queryKey: keys.experimentChanges(id, options.iteration, options.patch ?? true, options.version),
+    queryFn: ({ signal }) => api.lab.changes(id, { iteration: options.iteration, patch: options.patch ?? true }, signal),
+    enabled: (options.enabled ?? true) && Number.isFinite(id) && id > 0,
+    staleTime: options.live ? 15_000 : 5 * 60_000,
+  })
 
 export const useActivity = (limit = 50) =>
   useQuery({

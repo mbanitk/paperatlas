@@ -56,6 +56,15 @@
     {% if v.analysis.next_changes %}<div class="muted">Next step: {{ v.analysis.next_changes }}</div>{% endif %}
   </div>{% endif %}
 
+  {% if v.code_effect %}<div class="card">
+    <div class="muted">Why this result · from the code change to the numbers{% if v.code_effect.model %} · {{ v.code_effect.model }}{% endif %}</div>
+    <div><b>{{ v.code_effect.headline }}</b></div>
+    {% if v.code_effect.change_summary %}<div>The change: {{ v.code_effect.change_summary }}</div>{% endif %}
+    {% if v.code_effect.links %}<ol>{% for link in v.code_effect.links %}<li>{{ link.code }} <span class="muted">→</span> {{ link.effect }}</li>{% endfor %}</ol>{% endif %}
+    {% if v.code_effect.why %}<div>{{ v.code_effect.why }}</div>{% endif %}
+    {% for note in v.code_effect.notes %}<div class="muted">Note: {{ note.text if note.text is defined else note }}</div>{% endfor %}
+  </div>{% endif %}
+
   {% if v.adoption %}<div class="grid">
     <div class="card">
       <div class="muted">Adoption check · vs {{ project.name }} default on {{ v.adoption.workload.name if v.adoption.workload else spec.workload }}</div>
@@ -143,11 +152,19 @@
   </dl>
 
   <h2>Build</h2>
+  {% set cc = build.code_changes %}
   <dl>
     <dt>Coding agent</dt><dd>{{ build.builder }} · {{ build.attempts|length }} attempt(s)</dd>
-    <dt>Files</dt><dd>{{ build.files|join(', ') }}</dd>
+    {% if cc %}<dt>Code changes</dt><dd>{{ cc.summary }} <span class="muted">(iteration {{ cc.iteration }}: {{ cc.files_changed }} files, +{{ cc.additions }} −{{ cc.deletions }}; {{ (cc.base or '')[:10] }}..{{ (cc.head or '')[:10] }})</span></dd>
+    {% else %}<dt>Files</dt><dd>{{ build.files|join(', ') }}</dd>{% endif %}
   </dl>
-  <pre>{{ build.diff_stat }}</pre>
+  {% if cc and cc.files %}<table>
+    <tr><th>File</th><th>Status</th><th>Added</th><th>Removed</th></tr>
+    {% for f in cc.files %}<tr><td><code>{{ f.path }}</code></td><td>{{ f.status }}</td>
+      <td>{{ '+%d'|format(f.additions) if f.additions is not none else 'binary' }}</td><td>{{ '−%d'|format(f.deletions) if f.deletions is not none else '' }}</td></tr>{% endfor %}
+  </table>
+  <p class="muted">The full diff is saved next to this report in {{ cc.patch_file }}.</p>
+  {% else %}<pre>{{ build.diff_stat }}</pre>{% endif %}
 
   <h2>Environment</h2>
   <pre>{{ env_json }}</pre>
