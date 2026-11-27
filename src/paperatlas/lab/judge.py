@@ -46,6 +46,62 @@ def paired_deltas(results: dict[str, Any], metric: str, direction: str) -> list[
     return [d for d in deltas if d is not None and np.isfinite(d)]
 
 
+# Minimum gap, in percentage points, between the arms' first-to-last-round change on the same server instance.
+DRIFT_GAP_PCT = 15.0
+
+
+def _server_segments(results: dict[str, Any], metric: str) -> list[tuple[str, list[float]]]:
+    """Consecutive rounds of one arm, in run order: the rounds one server instance served (the bench starts a
+    server per arm switch). Each segment is (arm, metric values)."""
+    rounds = sorted(results.get("rounds") or [], key=lambda r: r.get("round", 0))
+    segments: list[tuple[str, list[float]]] = []
+    for r in rounds:
+        value = (r.get("metrics") or {}).get(metric)
+        if not _finite(value):
+            continue
+        if segments and segments[-1][0] == r.get("arm"):
+            segments[-1][1].append(float(value))
+        else:
+            segments.append((r.get("arm"), [float(value)]))
+    return segments
+
+
+def server_drift(results: dict[str, Any], metric: str, direction: str) -> Optional[dict[str, Any]]:
+    """The variant gets steadily better (or worse) the more rounds the same server instance has served, while the
+    baseline doesn't: e.g. it learns from the benchmark's repeated prompts or warms a cache. Then the measured
+    difference reflects repetition, not what fresh requests would see. None when there's no such pattern."""
+    changes: dict[str, list[float]] = {"baseline": [], "variant": []}
+    for arm, values in _server_segments(results, metric):
+        if arm in changes and len(values) >= 2 and values[0] > 0:
+            change = improvement_pct(values[0], values[-1], direction)
+            if change is not None and np.isfinite(change):
+                changes[arm].append(change)
+    variant, baseline = changes["variant"], changes["baseline"]
+    if len(variant) < 2:
+        return None
+    variant_median = float(np.median(variant))
+    baseline_median = float(np.median(baseline)) if baseline else 0.0
+    consistent = all(c > 0 for c in variant) or all(c < 0 for c in variant)
+    if not consistent or abs(variant_median - baseline_median) < DRIFT_GAP_PCT:
+        return None
+    return {
+        "metric": metric,
+        "variant_change_pct": round(variant_median, 1),
+        "baseline_change_pct": round(baseline_median, 1),
+        "servers": len(variant),
+    }
+
+
+def drift_warning(drift: dict[str, Any]) -> str:
+    trend = "better" if drift["variant_change_pct"] > 0 else "worse"
+    return (
+        f"{drift['metric']} got {trend} the longer the same server ran: {drift['variant_change_pct']:+.1f}% from the "
+        f"first to the last round on each of {drift['servers']} variant servers (baseline {drift['baseline_change_pct']:+.1f}%). "
+        "The technique may be reusing the benchmark's repeated prompts or warm state, so the measured difference may "
+        "not hold for fresh requests."
+    )
+
+
 def arm_problems(results: dict[str, Any], spec: dict[str, Any]) -> list[str]:
     """Structural problems that make the paired comparison unreliable (unequal or missing rounds)."""
     n_base, n_var = len(_arm(results, "baseline")), len(_arm(results, "variant"))
@@ -169,9 +225,13 @@ def evaluate(results: dict[str, Any], spec: dict[str, Any], profile: dict[str, A
         else:
             verdict, reason = "partial", f"{primary} improved {median:+.1f}%, below target {target:.1f}%"
 
+    drift = None if structural else server_drift(results, primary, directions.get(primary, "higher_is_better"))
+
     return {
         "verdict": verdict,
         "reason": reason,
+        "validity_warnings": [drift_warning(drift)] if drift else [],
+        "server_drift": drift,
         "primary_metric": primary,
         "median_delta_pct": median,
         "ci_low_pct": low,
@@ -262,6 +322,8 @@ def judge(
             "ci_high_pct": adopt["ci_high_pct"],
             "quality_ok": adopt["quality_ok"],
             "quality_problems": adopt["quality_problems"],
+            "validity_warnings": adopt["validity_warnings"],
+            "server_drift": adopt["server_drift"],
             "workload": adopt_results.get("workload"),
             "per_metric": adopt["per_metric"],
             "mechanism": mechanism_table(adopt_results, spec),

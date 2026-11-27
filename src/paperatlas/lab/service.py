@@ -843,6 +843,9 @@ def experiment_summary(experiment: Experiment, claim: Claim, concept: Concept, p
         "median_delta_pct": verdict.median_delta_pct if verdict else None,
         "adoption_verdict": adoption.get("verdict"),
         "adoption_median_delta_pct": adoption.get("median_delta_pct"),
+        "validity_warning": bool(
+            verdict and ((verdict.details or {}).get("validity_warnings") or adoption.get("validity_warnings"))
+        ),
         "created_at": _iso(experiment.created_at),
         "updated_at": _iso(experiment.updated_at),
     }
@@ -1432,3 +1435,47 @@ def recent_activity(limit: int = 50) -> list[dict[str, Any]]:
 
 def dump(value: Any) -> str:
     return json.dumps(value, default=str)
+
+
+def recheck_validity(experiment_ids: Optional[list[int]] = None) -> list[dict[str, Any]]:
+    """Recompute the judge's validity warnings (e.g. results drifting with rounds on the same server) for stored
+    verdicts from their saved benchmark results, without re-running anything. Returns the experiments that have one."""
+    from paperatlas.lab.judge import drift_warning, metric_directions, server_drift
+
+    flagged = []
+    with session_scope() as session:
+        query = select(Verdict, Experiment).join(Experiment, Experiment.id == Verdict.experiment_id)
+        if experiment_ids:
+            query = query.where(Verdict.experiment_id.in_(experiment_ids))
+        profiles: dict[int, dict] = {}
+        for verdict, experiment in session.execute(query).all():
+            if experiment.project_id not in profiles:
+                project = session.get(Project, experiment.project_id)
+                profiles[experiment.project_id] = (project.profile if project else None) or {}
+            directions = metric_directions(profiles[experiment.project_id])
+            direction = directions.get(verdict.primary_metric, "higher_is_better")
+            details = dict(verdict.details or {})
+            runs = {
+                kind: session.scalars(
+                    select(Run).where(Run.experiment_id == experiment.id, Run.kind == kind, Run.status == "done")
+                    .order_by(Run.id.desc()).limit(1)
+                ).first()
+                for kind in ("eval", "adopt")
+            }
+            changed = False
+            for kind, target in (("eval", details), ("adopt", details.get("adoption"))):
+                run = runs.get(kind)
+                if run is None or not isinstance(target, dict) or not run.results:
+                    continue
+                drift = server_drift(run.results, verdict.primary_metric, direction)
+                target["server_drift"] = drift
+                target["validity_warnings"] = [drift_warning(drift)] if drift else []
+                changed = True
+            if changed:
+                if isinstance(details.get("adoption"), dict):
+                    details["adoption"] = dict(details["adoption"])
+                verdict.details = details
+                warnings = details.get("validity_warnings", []) + ((details.get("adoption") or {}).get("validity_warnings") or [])
+                if warnings:
+                    flagged.append({"experiment_id": experiment.id, "warnings": warnings})
+    return flagged

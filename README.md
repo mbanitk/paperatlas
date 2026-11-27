@@ -30,7 +30,8 @@ flowchart LR
   experiment spec (hypothesis, flag, metric, workload, rounds, success bar, guardrails).
 - **Build & Run** — a coding agent (GitHub Copilot CLI by default, Codex supported) implements the
   technique behind a feature flag in a git worktree; tests and a smoke A/B must pass; then an
-  interleaved (ABBA) A/B benchmark runs on the eval model. Only one benchmark uses the GPU at a time.
+  interleaved (ABBA) A/B benchmark runs on the eval model. Only one benchmark uses the GPU at a time, and waiting
+  experiments get it first-come, first-served.
 - **Validate** — paired deltas, bootstrap 95% CI and quality guardrails give a verdict:
   `reproduced`, `partial`, `not_reproduced` or `regression`, with an HTML report (and a draft PR if
   the target repo has a GitHub remote).
@@ -130,6 +131,9 @@ changed claims cost an LLM call).
 `paperatlas r2e changes [IDS…]` saves the diffs of experiments judged before diffs were saved (from
 their branch or worktree, per iteration while the commits exist) and explains their results; add
 `--no-llm` for rule-based text, `--force` to redo. Experiments the worker is building are skipped.
+`paperatlas r2e validity [IDS…]` rechecks judged experiments for results that drift with the rounds one server
+instance has served (e.g. a technique reusing the benchmark's repeated prompts); such experiments get a warning
+at Gate 3 and no "Merge" recommendation.
 
 ## Target project contract
 

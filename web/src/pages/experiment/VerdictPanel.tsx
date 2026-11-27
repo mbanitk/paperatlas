@@ -9,7 +9,7 @@ import { ExternalIcon, FileIcon, GateIcon, MergeIcon, XIcon } from '../../compon
 import { PredictedLine } from '../../components/Prediction'
 import { TableScroll } from '../../components/Table'
 import { useToast } from '../../components/Toast'
-import { Button, Card, Chip, cx, DefinitionList, Disclosure, errorMessage, Field } from '../../components/ui'
+import { Banner, Button, Card, Chip, cx, DefinitionList, Disclosure, errorMessage, Field } from '../../components/ui'
 import { displayValue, formatCI, formatNumber, formatWorkload, humanize } from '../../lib/format'
 import { claimTarget, currentIteration, protocolOf, recommendDecision, type DecisionRecommendation } from '../../lib/protocol'
 import { predictionMatchesMetric } from '../../lib/roofline'
@@ -255,6 +255,14 @@ export function DecisionSummary({ experiment, verdict }: { experiment: Experimen
                   )}
                   {recommendation.reason}
                 </p>
+                {recommendation.warnings.length > 0 && (
+                  <div className="mt-3 max-w-3xl">
+                    <Banner tone="caution">
+                      <strong className="font-semibold">Check before trusting this result.</strong>{' '}
+                      {recommendation.warnings.join(' ')}
+                    </Banner>
+                  </div>
+                )}
                 {gateOpen && (
                   <div className="mt-3 space-y-1.5 sm:hidden">
                     {buttons}

@@ -135,6 +135,17 @@ describe('helpers', () => {
 })
 
 describe('recommendDecision', () => {
+  it('does not recommend merging a gain the judge doubts', () => {
+    const adoption = { verdict: 'worth_adopting', median_delta_pct: 63.2, quality_ok: true, quality_problems: [], validity_warnings: ['drifted on the same server'] }
+    const rec = recommendDecision({ verdict: 'reproduced', median_delta_pct: 70.1, quality_ok: true, details: { adoption } })
+    expect(rec.action).toBe('your_call')
+    expect(rec.warnings).toEqual(['drifted on the same server'])
+    expect(recommendDecision({ verdict: 'reproduced', median_delta_pct: 70.1, quality_ok: true, details: { adoption: { ...adoption, validity_warnings: [] } } }).action).toBe('merge')
+    const row = { verdict: 'reproduced' as const, median_delta_pct: 70.1, claimed_gain_pct: null, adoption_verdict: 'worth_adopting', adoption_median_delta_pct: 63.2 }
+    expect(recommendForSummary(row)?.action).toBe('merge')
+    expect(recommendForSummary({ ...row, validity_warning: true })?.action).toBe('your_call')
+  })
+
   const CLAIMS = ['reproduced', 'partial', 'not_reproduced', 'regression', 'inconclusive']
   const ADOPTIONS = ['worth_adopting', 'small_gain', 'not_reproduced', 'regression', 'inconclusive']
   const verdict = (claim: string, adoption: string | null, quality: { claim?: boolean; adoption?: boolean } = {}) => ({
