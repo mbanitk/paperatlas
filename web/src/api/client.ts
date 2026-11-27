@@ -2,7 +2,9 @@ import type {
   ClaimDetail,
   Claim,
   Experiment,
+  ExperimentChanges,
   ExperimentLog,
+  ExperimentSearchResult,
   ExperimentSpec,
   ExperimentSummary,
   Job,
@@ -146,6 +148,22 @@ export interface ClaimParams {
   offset?: number
 }
 
+/** Filters of `GET /lab/experiments/search`; list values are comma-separated. */
+export interface ExperimentSearchParams {
+  project_id?: number
+  scope?: 'needs_you' | 'active' | 'all'
+  q?: string
+  status?: string
+  verdict?: string
+  adoption?: string
+  category?: string
+  change?: 'gain' | 'loss'
+  min_change?: number
+  change_of?: 'claim' | 'adoption'
+  limit?: number
+  offset?: number
+}
+
 export const api = {
   services: (signal?: AbortSignal) => get<ServicesHealth>('/services', signal),
 
@@ -194,6 +212,8 @@ export const api = {
     createExperiments: (body: PickBody) => post<Experiment[]>('/lab/experiments', body),
     experiments: (params: { project_id?: number; status?: string } = {}, signal?: AbortSignal) =>
       get<ExperimentSummary[]>(`/lab/experiments${buildQuery(params)}`, signal),
+    searchExperiments: (params: ExperimentSearchParams = {}, signal?: AbortSignal) =>
+      get<ExperimentSearchResult>(`/lab/experiments/search${buildQuery({ ...params })}`, signal),
     experiment: (id: number, signal?: AbortSignal) => get<Experiment>(`/lab/experiments/${id}`, signal),
     editSpec: (id: number, overrides: Record<string, unknown>) =>
       patch<ExperimentSpec>(`/lab/experiments/${id}/spec`, { overrides }),
@@ -204,6 +224,8 @@ export const api = {
     rerun: (id: number, body: RerunBody) => post<Experiment>(`/lab/experiments/${id}/rerun`, body),
     events: (id: number, after = 0) => get<LabEvent[]>(`/lab/experiments/${id}/events${buildQuery({ after })}`),
     log: (id: number) => get<ExperimentLog>(`/lab/experiments/${id}/log`),
+    changes: (id: number, params: { iteration?: number; patch?: boolean } = {}, signal?: AbortSignal) =>
+      get<ExperimentChanges>(`/lab/experiments/${id}/changes${buildQuery({ iteration: params.iteration, patch: params.patch ?? true })}`, signal),
     reportUrl: (id: number) => `${API_BASE}/lab/experiments/${id}/report`,
     activity: (limit = 50) => get<LabEvent[]>(`/lab/activity${buildQuery({ limit })}`),
     jobs: (limit = 50, status?: string) => get<Job[]>(`/lab/jobs${buildQuery({ limit, status })}`),

@@ -418,6 +418,131 @@ def test_worker_shutdown_requeues_the_job(db, monkeypatch):
         assert (job.status, job.locked_by, job.payload.get("resumed")) == ("queued", None, True)
 
 
+def test_restart_requeues_only_jobs_that_failed_in_the_shutdown(db):
+    from datetime import UTC, datetime, timedelta
+
+    from paperatlas.db.engine import session_scope
+    from paperatlas.db.schema import Job, Worker
+    from paperatlas.lab.recovery import resume_interrupted
+
+    now = datetime.now(UTC)
+    with session_scope() as session:
+        session.add_all([Worker(id="gone:1", last_seen_at=now - timedelta(seconds=10), stopped_at=now), Worker(id="alive:2", last_seen_at=now)])
+        jobs = [
+            Job(kind="distill", status="failed", locked_by="gone:1", attempts=1, finished_at=now - timedelta(seconds=20), error="shutting down"),
+            Job(kind="explain", status="failed", locked_by="gone:1", attempts=1, finished_at=now - timedelta(hours=1), error="real bug"),
+            Job(kind="discover", status="failed", locked_by="alive:2", attempts=1, finished_at=now - timedelta(seconds=5), error="real bug"),
+            Job(kind="match", status="failed", locked_by="gone:1", attempts=1, finished_at=now - timedelta(seconds=10),
+                error="smoke: smoke benchmark failed (exit 124):\n[timeout after 1800s]"),
+        ]
+        session.add_all(jobs)
+        session.flush()
+        ids = [job.id for job in jobs]
+
+    assert resume_interrupted("me:3")["jobs"] == [ids[0]]
+    assert resume_interrupted("me:3")["jobs"] == []  # each shutdown is recovered once
+    with session_scope() as session:
+        states = [(job.status, job.payload.get("resumed"), job.error) for job in (session.get(Job, i) for i in ids)]
+    assert states[:3] == [("queued", True, None), ("failed", None, "real bug"), ("failed", None, "real bug")]
+    assert states[3][0] == "failed"  # timed out just before the shutdown: a real failure
+
+
+def test_daily_scan_runs_only_the_scan_job(db, demo_repo, monkeypatch):
+    from paperatlas.db.engine import session_scope
+    from paperatlas.db.schema import Job, Triage
+    from paperatlas.lab.events import enqueue
+    from paperatlas.r2e import daily
+    from paperatlas.services import worker
+    from sqlalchemy import update
+
+    orchestrator.setup_checkpointer()
+    project_id = register_project(demo_repo)["id"]
+    other = enqueue("distill", {})
+
+    def fake_triage(payload, job):
+        with session_scope() as session:
+            session.execute(update(Triage).where(Triage.id == payload["triage_id"]).values(status="awaiting_pick"))
+        return {}
+
+    monkeypatch.setitem(worker.HANDLERS, "triage.run", fake_triage)
+    assert daily.scan(project_id, None, 5, print) == "awaiting_pick"
+    with session_scope() as session:
+        assert session.get(Job, other).status == "queued"  # left for the worker
+
+
+def test_daily_run_starts_services_and_a_batch_only_when_needed(db, monkeypatch):
+    from datetime import UTC, datetime
+
+    from paperatlas.db.engine import session_scope
+    from paperatlas.db.schema import Worker
+    from paperatlas.lab import batch
+    from paperatlas.r2e import daily
+
+    spawned = []
+    monkeypatch.setattr(daily, "_spawn", lambda args, log: spawned.append(args) or 4242)
+    monkeypatch.setattr(batch, "pending_claims", lambda *args, **kwargs: [7, 8])
+    assert daily.ensure_services(print, wait_s=0) == "started"
+    with session_scope() as session:
+        session.add(Worker(id="live:1", last_seen_at=datetime.now(UTC)))
+    assert daily.ensure_services(print) == "running"
+
+    with batch.batch_lock(1) as held:
+        said = []
+        assert held and batch.run_batch(1, say=said.append) == [] and "already running" in said[0]
+        assert daily.ensure_batch("lab", 1, 3, "marginal", print) == "running"
+    assert daily.ensure_batch("lab", 1, 3, "marginal", print) == "started"
+    monkeypatch.setattr(batch, "pending_claims", lambda *args, **kwargs: [])
+    assert daily.ensure_batch("lab", 1, 3, "marginal", print) == "idle"
+    batch_args = ["r2e", "batch", "--project", "lab", "--retest", "--parallel", "3", "--min-likelihood", "marginal"]
+    assert spawned == [["services", "up"], batch_args]
+
+
+def test_restart_resumes_experiments_interrupted_by_a_shutdown(lab, monkeypatch):
+    from datetime import UTC, datetime, timedelta
+
+    from paperatlas.db.engine import session_scope
+    from paperatlas.db.schema import Event, Experiment, Job, Worker
+    from paperatlas.lab.events import WORKER_ID
+    from paperatlas.lab.recovery import resume_interrupted
+    from sqlalchemy import select, update
+
+    real_build = orchestrator.build_experiment
+
+    def killed_build(*args, **kwargs):
+        raise RuntimeError("chat completion failed: HTTP 404: generation thread died")
+
+    monkeypatch.setattr(orchestrator, "build_experiment", killed_build)
+    claim_id = service.recommendations(lab["project"]["id"])[0]["claim_id"]
+    experiment_id = service.create_experiments(lab["project"]["id"], [claim_id])[0]["id"]
+    drain()
+    service.decide_spec(experiment_id, "approve")
+    drain()
+    assert service.experiment_status(experiment_id) == "failed"
+
+    # The worker died right after; the next one has the same id (same pid after a reboot).
+    with session_scope() as session:
+        session.add(Worker(id=WORKER_ID, last_seen_at=datetime.now(UTC)))
+    monkeypatch.setattr(orchestrator, "build_experiment", real_build)
+    assert resume_interrupted(WORKER_ID)["experiments"] == [experiment_id]
+    assert service.experiment_status(experiment_id) == "queued"
+    drain()
+    assert service.experiment_status(experiment_id) == "awaiting_decision"
+    assert lab["calls"]["build"] == 1 and len(lab["calls"]["bench"]) >= 2
+
+    # An experiment still in progress whose job failed outside the graph has nothing driving it: it gets resumed too.
+    rerun_id = service.rerun_experiment(experiment_id)["id"]
+    long_ago = datetime.now(UTC) - timedelta(hours=2)
+    with session_scope() as session:
+        session.execute(update(Job).where(Job.experiment_id == rerun_id).values(status="failed", attempts=1, finished_at=long_ago))
+        session.execute(update(Experiment).where(Experiment.id == rerun_id).values(updated_at=long_ago))
+    assert resume_interrupted(WORKER_ID)["experiments"] == [rerun_id]
+    drain()
+    assert service.experiment_status(rerun_id) in ("awaiting_approval", "awaiting_decision")
+    with session_scope() as session:
+        messages = session.scalars(select(Event.message).where(Event.stage == "recover", Event.experiment_id == experiment_id)).all()
+    assert any("Interrupted by a shutdown" in message for message in messages)
+
+
 def test_cancel_during_planning_is_not_overwritten(lab, monkeypatch):
     from paperatlas.db.engine import session_scope
     from paperatlas.db.schema import Experiment

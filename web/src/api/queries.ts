@@ -1,5 +1,5 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, type ClaimParams, type PaperParams, type RecommendationParams } from './client'
+import { api, type ClaimParams, type ExperimentSearchParams, type PaperParams, type RecommendationParams } from './client'
 import type {
   Claim,
   ClaimDetail,
@@ -31,8 +31,11 @@ export const keys = {
   triageList: (projectId?: number) => ['triage', 'list', projectId ?? 'all'] as const,
   triage: (id: number) => ['triage', id] as const,
   experiments: (params: { project_id?: number; status?: string }) => ['experiments', params] as const,
+  experimentSearch: (params: ExperimentSearchParams) => ['experiments', 'search', params] as const,
   experiment: (id: number) => ['experiment', id] as const,
   experimentLog: (id: number) => ['experiment', id, 'log'] as const,
+  experimentChanges: (id: number, iteration: number | undefined, patch: boolean, version = '') =>
+    ['experiment', id, 'changes', iteration ?? 'measured', patch, version] as const,
   activity: (limit: number) => ['activity', limit] as const,
   jobs: (limit: number, status?: string) => ['jobs', limit, status ?? 'all'] as const,
   topics: (archived: boolean) => ['topics', archived] as const,
@@ -142,6 +145,15 @@ export const useExperiments = (params: { project_id?: number; status?: string })
     placeholderData: keepPreviousData,
   })
 
+/** Filtered page of experiments with facet counts; keeps the previous page on screen while filters change. */
+export const useExperimentSearch = (params: ExperimentSearchParams) =>
+  useQuery({
+    queryKey: keys.experimentSearch(params),
+    queryFn: ({ signal }) => api.lab.searchExperiments(params, signal),
+    refetchInterval: 30_000,
+    placeholderData: keepPreviousData,
+  })
+
 export const useExperiment = (id: number) =>
   useQuery({
     queryKey: keys.experiment(id),
@@ -155,6 +167,21 @@ export const useExperiment = (id: number) =>
 
 export const useExperimentLog = (id: number, enabled = true) =>
   useQuery({ queryKey: keys.experimentLog(id), queryFn: () => api.lab.log(id), enabled })
+
+/**
+ * The code an experiment changed. `patch: false` is the cheap file list; the diffs load when a file is opened.
+ * `version` (e.g. the saved diff's commit and the status) refetches when the experiment's code moves on.
+ */
+export const useExperimentChanges = (
+  id: number,
+  options: { iteration?: number; patch?: boolean; enabled?: boolean; live?: boolean; version?: string } = {},
+) =>
+  useQuery({
+    queryKey: keys.experimentChanges(id, options.iteration, options.patch ?? true, options.version),
+    queryFn: ({ signal }) => api.lab.changes(id, { iteration: options.iteration, patch: options.patch ?? true }, signal),
+    enabled: (options.enabled ?? true) && Number.isFinite(id) && id > 0,
+    staleTime: options.live ? 15_000 : 5 * 60_000,
+  })
 
 export const useActivity = (limit = 50) =>
   useQuery({

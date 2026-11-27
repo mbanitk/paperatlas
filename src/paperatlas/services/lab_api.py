@@ -197,6 +197,43 @@ def list_experiments(
     return service.list_experiments(project_id, status)
 
 
+def _values(values: Optional[list[str]]) -> list[str]:
+    """Repeated (`?status=a&status=b`) or comma-separated (`?status=a,b`) values."""
+    return [part.strip() for value in values or [] for part in value.split(",") if part.strip()]
+
+
+@app.get("/experiments/search", tags=["experiments"])
+def search_experiments(
+    project_id: Optional[int] = None,
+    scope: Literal["all", "needs_you", "active"] = Query("all", description="list tab: needs_you (a gate waits for you), active or all"),
+    q: Optional[str] = Query(None, max_length=200, description="words in the title, technique, paper or flag; #12 = experiment or claim 12"),
+    status: Optional[list[str]] = Query(None, description="experiment statuses, e.g. building,failed,merged"),
+    verdict: Optional[list[str]] = Query(None, description="claim check outcomes: reproduced, partial, not_reproduced, regression, inconclusive"),
+    adoption: Optional[list[str]] = Query(None, description="adoption check outcomes: worth_adopting, small_gain, not_reproduced, regression, inconclusive"),
+    category: Optional[list[str]] = Query(None, description="technique categories, e.g. kv_cache,quantization"),
+    change: Optional[Literal["gain", "loss"]] = Query(None, description="measured change: gains (> 0) or losses (< 0) only"),
+    min_change: Optional[float] = Query(None, ge=0, le=100_000, description="minimum size of the measured change in %: at least +x% / −x% with `change`, x% either way without"),
+    change_of: Literal["claim", "adoption"] = Query("claim", description="the measured change of the claim check (median_delta_pct) or of the adoption check"),
+    limit: int = Query(50, ge=1, le=service.MAX_PAGE),
+    offset: int = Query(0, ge=0),
+) -> dict[str, Any]:
+    """Experiments matching every filter (newest first, one page), the total, and per-filter counts (facets)."""
+    return service.search_experiments(
+        project_id,
+        scope,
+        q,
+        statuses=_values(status),
+        verdicts=_values(verdict),
+        adoption=_values(adoption),
+        categories=_values(category),
+        change=change,
+        min_change_pct=min_change,
+        change_of=change_of,
+        limit=limit,
+        offset=offset,
+    )
+
+
 @app.get("/experiments/{experiment_id}", tags=["experiments"])
 def get_experiment(experiment_id: int) -> dict[str, Any]:
     return service.get_experiment(experiment_id)
@@ -253,6 +290,16 @@ def stream_experiment(experiment_id: int, request: Request, after: int = 0):
 @app.get("/experiments/{experiment_id}/log", tags=["experiments"])
 def experiment_log(experiment_id: int) -> dict[str, Any]:
     return service.experiment_log(experiment_id)
+
+
+@app.get("/experiments/{experiment_id}/changes", tags=["experiments"])
+def experiment_changes(
+    experiment_id: int,
+    iteration: Optional[int] = Query(None, ge=1, description="a saved iteration; default: the measured (kept) one"),
+    patch: bool = Query(True, description="include each file's diff (truncated for large changes)"),
+) -> dict[str, Any]:
+    """The code this experiment changed in the target project, per file, with the diff."""
+    return service.experiment_changes(experiment_id, iteration, patch)
 
 
 @app.get("/experiments/{experiment_id}/report", tags=["experiments"])

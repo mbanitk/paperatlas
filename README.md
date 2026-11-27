@@ -34,8 +34,24 @@ flowchart LR
 - **Validate** — paired deltas, bootstrap 95% CI and quality guardrails give a verdict:
   `reproduced`, `partial`, `not_reproduced` or `regression`, with an HTML report (and a draft PR if
   the target repo has a GitHub remote).
+- **Explain** — each verified build's diff is saved under `data/r2e/experiments/<id>/changes/`
+  (`iteration-<n>.patch` + a `.json` summary; branches and worktrees don't outlive a drop). The
+  experiment page shows the measured iteration's files with +/− and each file's diff, and *Why this
+  result*: the code change linked to the gain, loss or no change, grounded in the checks' CIs and the
+  technique's counters per request (it says so plainly when the change never triggered or the effect
+  is within noise). One LLM call at the end of judging writes the explanation; rule-based otherwise.
 
 ## Architecture
+
+[Interactive architecture field guide](docs/architecture.html) — open the HTML file locally.
+The system context diagram opens directly to **System map · all connections**, grouped into clients,
+the PaperAtlas application, persistence and integrations. Select a block to inspect its execution
+and data flow, code-health evidence and suggested improvements. The [agentic workflow diagram](docs/architecture.html#agent-workflow) separates
+model proposals, coding-agent changes, measured verdicts and human decisions, including retry paths.
+On the expanded system map, hover or keyboard-focus a block to highlight its connections.
+A filled dot on a routed wire marks a connected branch; a gap means two lines cross without connecting.
+Moving arrows show direction; motion can be paused and starts off for reduced-motion users.
+The guide works offline; only its source links need a connection.
 
 | Service | Port | Role |
 |---|---|---|
@@ -71,6 +87,23 @@ paperatlas services up        # http://127.0.0.1:8100
 
 For frontend development run `npm run dev` in `web/` (Vite proxies `/api` to the gateway).
 
+If the machine restarts or the app is closed mid-experiment, the next `paperatlas services up` resumes the
+interrupted work from its last completed step: jobs that failed while the previous worker was shutting down
+(within `PAPERATLAS_SHUTDOWN_WINDOW_S`, default 120 s) and experiments left without a job are re-queued.
+Failures from before the shutdown stay failed. A `paperatlas r2e batch` run has to be started again.
+
+To search for new papers and test them every day (at 00:00 here), install the daily run:
+
+```bash
+paperatlas r2e schedule --daily --hour 0 --install   # launchd; --remove to uninstall
+paperatlas r2e daily --project inference-lab         # the same run, now
+```
+
+It starts the services if no worker is alive, scans (topics → discover → distill → match; papers already in the
+database are not fetched or distilled again), explains new testable claim cards, and starts a background batch
+for claims not yet tested on the current engine unless a batch is already running (only one runs per project; a
+running batch picks up new claims itself). Its log is `data/logs/daily.log`.
+
 ## Command line
 
 The CLI uses the same service layer and job queue as the console, so either can approve a gate.
@@ -94,6 +127,9 @@ Individual stages: `paperatlas r2e topics refresh`, `paperatlas r2e discover`,
 `paperatlas r2e assets --project inference-lab [--reprofile] [--dry-run]` (pre-screen the matched claims for
 missing assets and report which would be held back; classifications are stored per claim text, so only new or
 changed claims cost an LLM call).
+`paperatlas r2e changes [IDS…]` saves the diffs of experiments judged before diffs were saved (from
+their branch or worktree, per iteration while the commits exist) and explains their results; add
+`--no-llm` for rule-based text, `--force` to redo. Experiments the worker is building are skipped.
 
 ## Target project contract
 
@@ -130,6 +166,12 @@ Environment variables (or `.env`, see [`.env.example`](.env.example)):
 `PAPERATLAS_S2_API_KEY`, `PAPERATLAS_OPENALEX_API_KEY`, `PAPERATLAS_USPTO_API_KEY`,
 `PAPERATLAS_BUILDER` (`copilot`/`codex`), service ports and worker concurrency.
 Without source keys, Semantic Scholar is rate limited and patents are skipped.
+
+`PAPERATLAS_LLM_PROVIDER` selects the LLM: `openai` (needs `OPENAI_API_KEY`), `copilot` (the GitHub
+Copilot CLI, no key), or an ordered fallback list such as `openai,copilot`, which uses Copilot when an OpenAI
+request fails (for example, an expired key or no quota). When it is unset, OpenAI is used if a key is set.
+`PAPERATLAS_COPILOT_LLM_MODEL` / `PAPERATLAS_BUILDER_MODEL` pick the Copilot models (the CLI default otherwise);
+`PAPERATLAS_COPILOT_CONTEXT` and `PAPERATLAS_COPILOT_REASONING_EFFORT` apply to every Copilot CLI call.
 
 ## Paper ingestion (single papers)
 

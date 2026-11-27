@@ -1,12 +1,13 @@
 import { autoUpdate, FloatingArrow, FloatingPortal, useFloating } from '@floating-ui/react'
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FocusEvent, type MouseEvent, type ReactNode } from 'react'
 import type { FlowDiagramData } from '../api/types'
+import { hoverBlocked } from '../lib/exclusive'
 import { formatMath } from '../lib/format'
 import { compareFlows, FLOW_TEXT, FULL_METRICS, layoutFlow, MINI_METRICS, VERTICAL_METRICS, type FlowLayout, type LaidOutEdge, type LaidOutNode, type NodeStatus } from '../lib/flow'
 import { MIN_DIAGRAM_SCALE } from '../lib/textMeasure'
 import { fitScale, useElementWidth } from '../lib/useElementWidth'
 import { ArrowRightIcon, GLYPHS, type GlyphName } from './Icons'
-import { floatingMiddleware } from './Tooltip'
+import { floatingMiddleware, useExclusiveOpen } from './Tooltip'
 import { cx } from './ui'
 
 /**
@@ -74,10 +75,11 @@ export function useSvgTooltip() {
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
   }, [state])
+  useExclusiveOpen(!!state, () => setState(null), { reference: () => state?.element, floating: () => refs.floating.current })
   const show = (element: Element, content: ReactNode) => setState({ element, content })
   const hide = () => setState(null)
   const bind = (content: ReactNode) => ({
-    onMouseEnter: (event: MouseEvent<Element>) => show(event.currentTarget, content),
+    onMouseEnter: (event: MouseEvent<Element>) => hoverBlocked(event.currentTarget) || show(event.currentTarget, content),
     onMouseLeave: hide,
     onFocus: (event: FocusEvent<Element>) => show(event.currentTarget, content),
     onBlur: hide,

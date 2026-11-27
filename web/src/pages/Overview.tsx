@@ -129,7 +129,7 @@ function OutcomesTile({ stats }: { stats: Stats }) {
       }
       context={<OutcomeBar slices={outcomes.slices} total={outcomes.total} failed={progressCounts(stats.experiments).failed} />}
       to="/experiments?tab=all"
-      className="h-full"
+      fill
     />
   )
 }
@@ -143,10 +143,10 @@ function Tiles({ stats, picks }: { stats: Stats | undefined; picks: number }) {
   const decisions = decisionCounts(stats.experiments, picks)
   const progress = progressCounts(stats.experiments)
   return (
-    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-      <StatTile label="Needs you" value={decisions.total} context={decisionBreakdown(decisions)} to="/experiments?tab=needs_you" attention={decisions.total > 0} />
-      <StatTile label="In progress" value={progress.inProgress} context={progress.breakdown} to="/experiments?tab=active" />
-      <div className="col-span-2 hidden min-w-0 lg:block">
+    <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
+      <StatTile label="Needs you" value={decisions.total} context={decisionBreakdown(decisions)} to="/experiments?tab=needs_you" attention={decisions.total > 0} fill />
+      <StatTile label="In progress" value={progress.inProgress} context={progress.breakdown} to="/experiments?tab=active" fill />
+      <div className="hidden min-w-0 lg:block">
         <OutcomesTile stats={stats} />
       </div>
     </div>

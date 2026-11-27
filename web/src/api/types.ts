@@ -652,6 +652,37 @@ export interface ExperimentSummary {
   adoption_median_delta_pct?: number | null
 }
 
+/** One value of a list filter and how many experiments it would match (given the other filters). */
+export interface FacetCount {
+  value: string
+  count: number
+}
+
+/** Experiments per list tab: needs you (a gate waits), active (not finished) and all. */
+export interface ExperimentScopeCounts {
+  needs_you: number
+  active: number
+  all: number
+}
+
+/** `GET /lab/experiments/search`: one page of filtered experiments, the total and the facet counts. */
+export interface ExperimentSearchResult {
+  total: number
+  limit: number
+  offset: number
+  items: ExperimentSummary[]
+  facets: {
+    /** Matches per tab with every other filter applied. */
+    scope: ExperimentScopeCounts
+    status: FacetCount[]
+    verdict: FacetCount[]
+    adoption: FacetCount[]
+    category: FacetCount[]
+  }
+  /** Per tab with no filters (project only). */
+  overall: ExperimentScopeCounts
+}
+
 export interface Guardrails {
   max_exact_match_drop?: number
   min_output_agreement?: number | null
@@ -760,6 +791,7 @@ export interface MechanismTable {
   missing: string[]
   measured: boolean
   tokens: { baseline: number; variant: number }
+  rounds?: { baseline: number | null; variant: number | null }
 }
 
 export type AdoptionVerdict = 'worth_adopting' | 'small_gain' | 'not_reproduced' | 'regression' | 'inconclusive'
@@ -813,6 +845,8 @@ export interface IterationEntry {
   tuned: { baseline?: Record<string, KnobValue> | null; variant?: Record<string, KnobValue> | null } | null
   /** commit of this iteration's build (the keep-or-revert loop resets to the best one) */
   sha?: string | null
+  /** size of this iteration's diff from the base */
+  changes?: { files_changed?: number | null; additions?: number | null; deletions?: number | null; summary?: string | null } | null
   eval_run_id?: number | null
   adopt_run_id?: number | null
   quality_ok?: boolean | null
@@ -855,11 +889,134 @@ export interface BuildAttempt {
   log: string | null
 }
 
+export type FileChangeStatus = 'added' | 'modified' | 'deleted' | 'renamed' | 'copied' | 'type_changed'
+export type FileKind = 'source' | 'test' | 'docs' | 'config' | 'other'
+
+/** One file of an experiment's diff (lab/changes.py). Counts are null for binary files. */
+export interface CodeChangeFile {
+  path: string
+  old_path?: string | null
+  status: FileChangeStatus | string
+  kind: FileKind | string
+  additions: number | null
+  deletions: number | null
+  binary?: boolean
+  /** this file's unified diff (GET /changes only; null for binary files or when over the size budget) */
+  patch?: string | null
+  patch_lines?: number
+  patch_truncated?: boolean
+  /** left out of the response to keep it small */
+  omitted?: boolean
+}
+
+/** Summary of the code an iteration changed, from its base commit to its commit. */
+export interface CodeChangesSummary {
+  iteration?: number | null
+  base?: string | null
+  head?: string | null
+  files: CodeChangeFile[]
+  files_changed?: number
+  additions?: number
+  deletions?: number
+  /** one line on what the diff touches */
+  summary?: string
+  captured_at?: string
+  patch_bytes?: number
+  patch_truncated?: boolean
+  source?: 'build' | 'backfill' | string
+}
+
+export interface CodeChangesIteration {
+  iteration: number
+  files_changed: number | null
+  additions: number | null
+  deletions: number | null
+  head?: string | null
+  summary?: string | null
+}
+
+/** GET /lab/experiments/:id/changes */
+export interface ExperimentChanges extends CodeChangesSummary {
+  experiment_id: number
+  status: string
+  available: boolean
+  /** why there is no diff to show */
+  reason?: string | null
+  /** read from git now (in progress, or not saved yet) rather than from the saved diff */
+  live?: boolean
+  kept_iteration?: number | null
+  iterations: CodeChangesIteration[]
+  truncated?: boolean
+}
+
+export type CodeEffectOutcome = 'gain' | 'loss' | 'no_change' | 'mixed' | 'unknown'
+export type CodeEffectNoteKind = 'never_triggered' | 'no_counters' | 'within_noise' | 'quality' | 'no_diff' | 'no_engine_code'
+export interface CodeEffectNote {
+  kind: CodeEffectNoteKind | string
+  text: string
+}
+export type Triggered = 'yes' | 'no' | 'unknown'
+
+export interface CodeEffectCounter {
+  name: string
+  meaning?: string | null
+  expected: boolean
+  total: number | null
+  per_request: number | null
+  per_1k_tokens: number | null
+  baseline_total?: number | null
+}
+
+export interface CodeEffectCheck {
+  check: 'claim' | 'adoption'
+  label: string
+  /** "a paper-like workload", "your default workload (short_chat)" */
+  setting: string
+  verdict: string | null
+  median_pct: number | null
+  ci_low_pct: number | null
+  ci_high_pct: number | null
+  outcome: Exclude<CodeEffectOutcome, 'mixed'>
+  within_noise: boolean
+  quality_ok: boolean | null
+  quality_problems: string[]
+  triggered: Triggered
+  missing_counters: string[]
+  counters: CodeEffectCounter[]
+  requests: number | null
+  tokens_per_request: number | null
+}
+
+/** "Why this result": the code change linked to the measured outcome (lab/effect.py). */
+export interface CodeEffect {
+  metric: string
+  metric_label: string
+  outcome: CodeEffectOutcome
+  triggered: Triggered
+  checks: CodeEffectCheck[]
+  change_summary: string
+  headline: string
+  links: { code: string; files: string[]; effect: string }[]
+  why: string
+  /** always-shown plain statements: never triggered, within noise, quality, what the diff touched */
+  notes: CodeEffectNote[]
+  iteration?: number | null
+  head?: string | null
+  files_changed?: number | null
+  additions?: number | null
+  deletions?: number | null
+  source: 'llm' | 'rules'
+  model?: string | null
+  generated_at?: string
+}
+
 export interface BuildInfo {
   builder?: string
   attempts?: BuildAttempt[]
   files?: string[]
   diff_stat?: string
+  /** the measured (kept) iteration's diff summary; the diff itself is at GET /changes */
+  code_changes?: CodeChangesSummary | null
   agent_summary?: string
   pr_url?: string | null
   merge_sha?: string
@@ -936,6 +1093,7 @@ export interface VerdictDetails {
   iteration?: number | null
   iterations?: IterationEntry[] | null
   tuning?: TuningResult | null
+  code_effect?: CodeEffect | null
   [extra: string]: unknown
 }
 

@@ -325,7 +325,7 @@ export function KeyNumbers({ items }: { items: ClaimExplainer['key_numbers'] }) 
               label={sanitizeText(item.label)}
               value={formatReportedValue(item.value) ?? sanitizeText(item.value)}
               context={item.meaning ? sanitizeText(item.meaning) : undefined}
-              className="h-full"
+              fill
             />
           </li>
         ))}

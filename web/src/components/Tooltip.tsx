@@ -50,7 +50,37 @@ import {
   type ReactNode,
   type Ref,
 } from 'react'
+import { claimOpen, hoverBlocked, releaseOpen, type Layer } from '../lib/exclusive'
 import { InfoIcon } from './Icons'
+
+/** How a floating layer competes for the screen (see lib/exclusive). */
+export interface ExclusiveOptions {
+  /** Opened on purpose (menu, pinned popover): hovering elsewhere won't open another layer over it. */
+  sticky?: boolean
+  reference?: () => Element | null | undefined
+  floating?: () => Element | null | undefined
+}
+
+/**
+ * Keep at most one floating layer open: when this one opens it closes any other tooltip, popover or menu
+ * (except layers it is nested in). Hover-opened layers should also check `hoverBlocked` before opening.
+ */
+export function useExclusiveOpen(open: boolean, close: () => void, options: ExclusiveOptions = {}): void {
+  const latest = useRef({ close, options })
+  useLayoutEffect(() => {
+    latest.current = { close, options }
+  })
+  const [layer] = useState<Layer>(() => ({
+    close: () => latest.current.close(),
+    sticky: () => !!latest.current.options.sticky,
+    floating: () => latest.current.options.floating?.() ?? null,
+  }))
+  useLayoutEffect(() => {
+    if (!open) return
+    claimOpen(layer, latest.current.options.reference?.())
+    return () => releaseOpen(layer)
+  }, [open, layer])
+}
 
 const cx = (...classes: (string | false | null | undefined)[]) => classes.filter(Boolean).join(' ')
 
@@ -128,7 +158,8 @@ export function Tooltip({ content, children, placement = 'top', asChild = false,
 
   const { refs, floatingStyles, context, middlewareData } = useFloating({
     open: open && !disabled && !empty,
-    onOpenChange: (next) => {
+    onOpenChange: (next, _event, reason) => {
+      if (next && reason === 'hover' && hoverBlocked(refs.domReference.current)) return
       if (next) setRoot(portalRootFor(refs.domReference.current))
       setOpen(next)
     },
@@ -144,6 +175,10 @@ export function Tooltip({ content, children, placement = 'top', asChild = false,
     useClick(context, { ignoreMouse: true, keyboardHandlers: false }),
     useDismiss(context, { referencePress: false }),
   ])
+  useExclusiveOpen(open && !disabled && !empty, () => setOpen(false), {
+    reference: () => refs.domReference.current,
+    floating: () => refs.floating.current,
+  })
 
   // In wrap mode, describe the focusable element inside (e.g. a button) rather than the wrapper.
   useLayoutEffect(() => {
@@ -297,6 +332,7 @@ export function InfoPopover({
   const { refs, floatingStyles, context, middlewareData } = useFloating({
     open,
     onOpenChange: (next, event, reason) => {
+      if (next && reason === 'hover' && hoverBlocked(refs.domReference.current)) return
       if (next) setRoot(portalRootFor(refs.domReference.current))
       onOpenChange(next, event, reason)
     },
@@ -312,6 +348,14 @@ export function InfoPopover({
     useDismiss(context),
     useRole(context, { role: 'dialog' }),
   ])
+  useExclusiveOpen(
+    open,
+    () => {
+      setOpen(false)
+      setPinned(false)
+    },
+    { sticky: pinned, reference: () => refs.domReference.current, floating: () => refs.floating.current },
+  )
 
   const childRef = isValidElement(children) ? ((children.props as { ref?: Ref<unknown> }).ref ?? null) : null
   const mergedChildRef = useMergeRefs([refs.setReference, childRef as Ref<Element>])

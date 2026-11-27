@@ -468,7 +468,7 @@ export function ResultTiles({ results, max = 4, size = 'sm' }: { results: PaperE
             value={formatReportedValue(result.value) ?? sanitizeText(result.value)}
             context={size === 'md' && result.context ? sanitizeText(result.context) : undefined}
             info={size === 'sm' && result.context ? sanitizeText(result.context) : undefined}
-            className="h-full"
+            fill
           />
         </li>
       ))}

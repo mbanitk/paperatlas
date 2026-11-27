@@ -8,11 +8,13 @@ import { Button, Card, Checkbox, Chip, DefinitionList, EmptyState, ErrorState, E
 import { displayValue, durationBetween, formatDuration, formatNumber, formatSigned, tailLines } from '../../lib/format'
 import { sentenceCase } from '../../lib/semantics'
 import { formatConfig, runKindLabel } from '../../lib/protocol'
+import { formatChangeCounts } from '../../lib/codeChanges'
 
 export function BuildCard({ experiment }: { experiment: Experiment }) {
   const build: BuildInfo = experiment.build ?? {}
   const attempts = build.attempts ?? []
   const files = build.files ?? []
+  const code = build.code_changes
   const [showSummary, setShowSummary] = useState(false)
   const hasBuild = attempts.length > 0 || files.length > 0 || build.builder
   return (
@@ -69,23 +71,39 @@ export function BuildCard({ experiment }: { experiment: Experiment }) {
               </ol>
             </div>
           )}
-          {files.length > 0 && (
+          {code ? (
             <div>
-              <h3 className="mb-1.5 text-xs font-semibold text-muted">Changed files ({files.length})</h3>
-              <ul className="space-y-0.5 font-mono text-xs">
-                {files.map((file) => (
-                  <li key={file} className="break-all">
-                    {file}
-                  </li>
-                ))}
-              </ul>
+              <h3 className="mb-1.5 text-xs font-semibold text-muted">Changed files</h3>
+              <p className="text-sm">
+                {(code.files_changed ?? code.files.length).toLocaleString('en-US')} file{(code.files_changed ?? code.files.length) === 1 ? '' : 's'},{' '}
+                <span className="font-mono text-xs">{formatChangeCounts(code.additions, code.deletions)}</span>
+                {code.iteration != null && <span className="text-muted"> · iteration {code.iteration}</span>} ·{' '}
+                <a href="#code-changes" className="inline-flex min-h-6 items-center">
+                  See the code changes
+                </a>
+              </p>
             </div>
-          )}
-          {build.diff_stat && (
-            <div>
-              <h3 className="mb-1.5 text-xs font-semibold text-muted">Diff stat</h3>
-              <pre className="overflow-x-auto rounded-md border border-line-muted bg-canvas-subtle p-2 text-xs leading-relaxed">{build.diff_stat}</pre>
-            </div>
+          ) : (
+            <>
+              {files.length > 0 && (
+                <div>
+                  <h3 className="mb-1.5 text-xs font-semibold text-muted">Changed files ({files.length})</h3>
+                  <ul className="space-y-0.5 font-mono text-xs">
+                    {files.map((file) => (
+                      <li key={file} className="break-all">
+                        {file}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {build.diff_stat && (
+                <div>
+                  <h3 className="mb-1.5 text-xs font-semibold text-muted">Diff stat</h3>
+                  <pre className="overflow-x-auto rounded-md border border-line-muted bg-canvas-subtle p-2 text-xs leading-relaxed">{build.diff_stat}</pre>
+                </div>
+              )}
+            </>
           )}
           {build.agent_summary && (
             <div>

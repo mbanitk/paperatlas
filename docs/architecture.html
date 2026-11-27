@@ -1,0 +1,1176 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="An interactive field guide to PaperAtlas: how requests become experiments, and where to improve the code.">
+  <title>PaperAtlas · Architecture field guide</title>
+  <style id="tailwind">/*! tailwindcss v4.3.5 | MIT License | https://tailwindcss.com */
+:root,:host{--spacing:.25rem}.mt-1{margin-top:var(--spacing)}.mt-4{margin-top:calc(var(--spacing) * 4)}.flex{display:flex}.grid{display:grid}.flex-wrap{flex-wrap:wrap}.content-start{align-content:flex-start}.items-center{align-items:center}.justify-between{justify-content:space-between}.gap-1{gap:var(--spacing)}.gap-2{gap:calc(var(--spacing) * 2)}.gap-3{gap:calc(var(--spacing) * 3)}.gap-4{gap:calc(var(--spacing) * 4)}.gap-5{gap:calc(var(--spacing) * 5)}.p-3{padding:calc(var(--spacing) * 3)}.p-4{padding:calc(var(--spacing) * 4)}.px-3{padding-inline:calc(var(--spacing) * 3)}.px-4{padding-inline:calc(var(--spacing) * 4)}.py-2{padding-block:calc(var(--spacing) * 2)}.py-3{padding-block:calc(var(--spacing) * 3)}.pt-3{padding-top:calc(var(--spacing) * 3)}.pb-10{padding-bottom:calc(var(--spacing) * 10)}@media (width>=40rem){.sm\:p-6{padding:calc(var(--spacing) * 6)}.sm\:px-6{padding-inline:calc(var(--spacing) * 6)}.sm\:px-8{padding-inline:calc(var(--spacing) * 8)}}</style>
+  <style>
+    :root { color-scheme: light; --ink: #192d31; --muted: #475f62; --rule: #c9d4cf; }
+    * { box-sizing: border-box; }
+    body { margin: 0; color: var(--ink); background: #f6f7f2; font: 1rem/1.5 system-ui, sans-serif; }
+    h1, h2, h3, p, figure { margin: 0; }
+    button { color: inherit; font: inherit; cursor: pointer; }
+    a { color: #155c60; text-underline-offset: .18em; }
+    :focus-visible { outline: 3px solid #1366bd; outline-offset: 3px; }
+    .wrap { width: min(100%, 102rem); margin-inline: auto; }
+    .kicker, code, .ref { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .kicker { font-size: .72rem; letter-spacing: .09em; font-weight: 700; text-transform: uppercase; }
+    .revision { font-size: .8rem; }
+    h1 { font-size: clamp(2rem, 4vw, 3.2rem); line-height: 1.05; letter-spacing: -.05em; }
+    .lede { max-width: 64ch; color: var(--muted); font-size: 1.05rem; }
+    .intro { padding-block: 1.3rem 1rem; }
+    .small { color: var(--muted); font-size: .86rem; }
+    [data-tone="focused"] { --accent: #23705a; --wash: #eef7f0; --line: #a2c9b9; }
+    [data-tone="review"] { --accent: #825600; --wash: #fff7e4; --line: #d8c394; }
+    [data-tone="hotspot"] { --accent: #a23735; --wash: #fff1eb; --line: #e4b3a6; }
+    [data-tone="scaffold"] { --accent: #526078; --wash: #eff1f6; --line: #b9c0cb; }
+    .badge { display: inline-flex; align-items: center; gap: .35rem; width: fit-content; color: var(--accent);
+      background: var(--wash); font-size: .75rem; font-weight: 700; white-space: nowrap; }
+    .badge::before { content: ""; width: .52rem; height: .52rem; border-radius: 50%; background: var(--accent); }
+    #legend .badge { padding: .1rem .5rem; border: 1px solid var(--line); border-radius: 1rem; }
+    .board { --wire: #61819b; --blue: #195e91; --paper: #fbfdff; background: var(--paper); border: 1px solid #b5c6d1; border-radius: .8rem; }
+    .board figcaption, .map-footer { padding: .65rem 1rem; }
+    .board figcaption { border-bottom: 1px solid #d6e0e7; }
+    .topology { position: relative; padding: 1.35rem; display: grid; align-items: center;
+      grid-template-columns: minmax(0,1fr) minmax(0,3.7fr) minmax(0,1fr); column-gap: clamp(2.5rem, 5vw, 6rem);
+      background: radial-gradient(#dce6ec .65px, transparent .65px) 0 0 / 14px 14px; }
+    .topology .core { padding: 1rem 1.55rem 1.25rem; }
+    .tier + .tier { margin-top: 1.55rem; padding-top: 1.15rem; border-top: 1px solid #cfdee8; }
+    .tier h3 { margin-bottom: .65rem; font: 650 .72rem/1.3 ui-monospace, monospace; color: #486475; }
+    .ingress { display: grid; align-items: center; grid-template-columns: minmax(0,1fr) minmax(0,1.5fr); gap: 2.5rem; }
+    .ingress .grid, .topology .endpoints { gap: 1.25rem; }
+    .triplet, .sequence { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 2.65rem; }
+    .tier [data-key="build"] { grid-column: 2; }
+    .topology .node strong { min-width: 0; overflow-wrap: anywhere; }
+    .gate-label { font: .69rem/1.3 ui-monospace, monospace; color: #486475; padding: .9rem 0; }
+    .outer .node { grid-template-columns: 1fr; justify-items: center; text-align: center; gap: .15rem; }
+    .outer .node svg { grid-row: auto; width: 2rem; height: 2rem; }
+    .boundary-note { font-size: .75rem; line-height: 1.35; color: var(--muted); }
+    .integrations { grid-column: 2; }
+    .drop { margin: 0 auto; width: fit-content; display: flex; align-items: center; height: 3rem; font: .7rem ui-monospace, monospace; color: #385467; }
+    #map-caption { padding: .55rem 1rem; color: #385467; border-bottom: 1px solid #d6e0e7; font-size: .85rem; }
+    #wires { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+    #wires .wire-quiet { opacity: .18; }
+    .topology .zone { border-color: #c4d1d8; }
+    .topology .core { border-color: #7498b2; }
+    .control-line, .data-line { fill: none; stroke-width: 1.6; }
+    .control-line { stroke: #326e9f; marker-end: url(#control-head); }
+    .data-line { stroke: #477968; stroke-dasharray: 4 3; marker-end: url(#data-head); }
+    .key-line { width: 1.5rem; border-top: 2px solid #326e9f; }
+    .key-line.data { border-top: 2px dashed #477968; }
+    .junction { stroke: #fff; stroke-width: 1; }
+    .junction.control { fill: #326e9f; }
+    .junction.data { fill: #477968; }
+    .line-key { display: inline-flex; align-items: center; gap: .3rem; white-space: nowrap; }
+    .line-key svg { width: 1.6rem; height: 1rem; color: #385467; }
+    .zone { margin: 0; padding: .75rem; min-inline-size: 0; border: 1px dashed #8aa6b7; border-radius: .4rem; background: var(--paper); }
+    .zone legend { padding: 0 .35rem; font-size: .84rem; font-weight: 700; color: #385467; }
+    .core { border: 2px dashed #4782ae; background: #f1f7fb; }
+    .core legend { font-size: 1.13rem; color: var(--blue); }
+    .node, .note { background: var(--wash); border: 1px solid var(--line); border-radius: .4rem; }
+    .node { position: relative; display: grid; grid-template-columns: auto 1fr; align-content: center; align-items: center; column-gap: .5rem;
+      width: 100%; min-height: 2.75rem; padding: .4rem .55rem; text-align: left; }
+    .node svg { grid-row: span 2; width: 1.4rem; height: 1.4rem; color: var(--blue); }
+    .node strong { font-size: .88rem; line-height: 1.2; }
+    .node .badge { font-size: .67rem; }
+    .node:hover { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+    .packet { fill: none; stroke-width: 2.6; stroke-linecap: round; stroke-dasharray: 5 95; animation: travel 4s linear infinite; }
+    .packet.control { stroke: #164f85; }
+    .packet.data { stroke: #22674d; }
+    @keyframes travel { to { stroke-dashoffset: -100; } }
+    body:not(.flowing) .packet { display: none; }
+    .motion-toggle { font: inherit; background: white; color: #244f70; border: 1px solid #adbfca; border-radius: .35rem; padding: .2rem .5rem; font-size: .85rem; }
+    .motion-toggle[aria-pressed="true"] { background: #eaf2f5; }
+    .rating-guide { padding: .35rem 1rem .65rem; }
+    .map-footer { border-top: 1px solid #d6e0e7; }
+    .map-footer .node { width: auto; }
+    .note { border-left: 4px solid var(--accent); }
+    .node-summary { color: #354b4c; font-size: .87rem; line-height: 1.4; }
+    dialog { width: min(72rem, calc(100% - 1.5rem)); max-height: 94vh; max-height: 94dvh; padding: 0;
+      color: var(--ink); border: 1px solid #9cafa8; border-radius: .85rem; background: #fcfdf9; overflow-y: auto; }
+    dialog::backdrop { background: rgb(13 32 34 / 65%); }
+    body:has(dialog[open]) { overflow: hidden; }
+    .dialog-bar { position: sticky; top: 0; z-index: 1; background: #edf2ec; border-bottom: 1px solid var(--rule); }
+    .close { background: white; border: 1px solid #9caea7; border-radius: .4rem; font-size: .9rem; }
+    .detail-title { font-size: clamp(1.6rem, 4vw, 2.4rem); line-height: 1.15; letter-spacing: -.045em; }
+    .detail-map { position: relative; display: grid; align-items: center; grid-template-columns: minmax(0,1fr) minmax(0,1.6fr) minmax(0,1fr);
+      column-gap: 2rem; padding: 1rem; background: radial-gradient(#dce6ec .8px, transparent .8px) 0 0 / 12px 12px; }
+    .detail-map .zone { padding: .65rem; }
+    .detail-map .core { padding-inline: 1.65rem; }
+    .map-stack { display: grid; gap: 1.05rem; }
+    .map-stack .node { min-width: 0; overflow-wrap: anywhere; }
+    .map-stack .node[aria-pressed=true] { border-color: var(--accent); box-shadow: inset 3px 0 var(--accent); }
+    .map-stack .node small { grid-column: 2; color: #475f62; font: .7rem/1.4 ui-monospace, monospace; }
+    .port { display: grid; grid-template-columns: 1.2rem minmax(0,1fr); align-items: center; gap: .25rem .45rem;
+      padding: .55rem; background: white; border: 1px solid #bfd1df; border-radius: .35rem; font-size: .83rem; overflow-wrap: anywhere; }
+    .port svg { width: 1.2rem; height: 1.2rem; color: var(--blue); }
+    .port small { grid-column: 1 / -1; line-height: 1.4; font-size: .79rem; }
+    .detail-map[data-mode=data] .port { background: #f3faf6; border: 1px dashed #759c89; }
+    #detail-wires { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+    .lens { display: inline-flex; align-items: center; gap: .25rem; margin: 0; padding: .2rem; border: 1px solid #b5c6d1; border-radius: .4rem; }
+    .lens label { cursor: pointer; padding: .25rem .55rem; border-radius: .25rem; font-size: .85rem; }
+    .lens label:has(:checked) { background: #234e6b; color: white; }
+    .lens label:focus-within { outline: 2px solid #1366bd; outline-offset: 2px; }
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+    .note h3 { font-size: 1rem; }
+    .ref { font-size: .76rem; overflow-wrap: anywhere; }
+    .next { border-top: 1px solid var(--rule); }
+    [hidden] { display: none !important; }
+    .lane-sheet { padding: .8rem; background: #f2f6f8; }
+    .lane-sheet > p { margin-bottom: .65rem; }
+    .lane-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 35rem), 1fr)); gap: .7rem; align-items: start; }
+    .lane-group { min-width: 0; container-type: inline-size; padding: .7rem; background: #fff; border: 1px solid #c6d4dd; border-radius: .45rem; }
+    .lane-group summary { cursor: pointer; color: #244f70; font-weight: 700; }
+    .handoff-lane { display: flex; align-items: stretch; padding: .55rem 0; }
+    .lane-wire { flex: none; align-self: center; display: grid; place-items: center; width: 2.6rem; min-height: 2.4rem;
+      padding: 0; color: #326e9f; background: transparent; border: 0; border-radius: .25rem; }
+    .lane-wire.data { color: #33745a; }
+    .lane-wire svg { width: 2.5rem; height: 1rem; display: block; overflow: visible; }
+    .lane-wire .shaft { stroke: currentColor; stroke-width: 2; }
+    .lane-wire.data .shaft { stroke-dasharray: 5 3; }
+    .lane-wire .packet { stroke-dasharray: 4 32; animation: short-flow 2.5s linear infinite; }
+    @keyframes short-flow { to { stroke-dashoffset: -36; } }
+    .lane-label { margin-top: .45rem; font: 600 .72rem/1.35 ui-monospace, monospace; color: #486475; }
+    .jump { font-size: .86rem; font-weight: 650; }
+    #agent-workflow { scroll-margin-top: .7rem; }
+    .agent-stage { flex: 1 1 0; min-width: 0; display: grid; align-content: start; gap: .2rem; text-align: left;
+      padding: .5rem; border: 1px solid #b9c8d4; border-radius: .4rem; background: #f7fafc; overflow-wrap: anywhere; }
+    .agent-stage small { font: 650 .68rem ui-monospace, monospace; color: #42596b; }
+    .agent-stage strong { font-size: .88rem; }
+    .agent-stage[aria-pressed=true] { border-color: #275b7b; box-shadow: inset 3px 0 #275b7b; }
+    #agent-notes { border-top: 1px solid #c6d4dd; }
+    #agent-notes dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(13rem, 100%), 1fr)); gap: 1rem; margin: .45rem 0; }
+    #agent-notes dt { font-size: .75rem; font-weight: 700; color: var(--muted); }
+    #agent-notes dd { margin: .15rem 0 0; font-size: .9rem; }
+    @container (max-width: 30rem) {
+      .handoff-lane.multi { flex-direction: column; }
+      .handoff-lane.multi .lane-wire { min-height: 1.7rem; }
+      .handoff-lane.multi .lane-wire svg { transform: rotate(90deg); width: 1.7rem; }
+    }
+    @media (max-width: 64rem) {
+      .topology { grid-template-columns: minmax(0,1fr) minmax(0,3.6fr) minmax(0,1fr); column-gap: 2.3rem; padding: .65rem; }
+      .zone { padding: .5rem; }
+      .node { padding: .35rem; column-gap: .3rem; }
+    }
+    @media (min-width: 47rem) and (max-width: 55rem) {
+      .triplet, .sequence { gap: 1.4rem; }
+      .topology .core { padding-inline: .9rem; }
+      .tier .node { grid-template-columns: minmax(0,1fr); }
+      .tier .node svg { grid-row: auto; }
+      .tier .node strong { overflow-wrap: anywhere; }
+    }
+    @media (max-width: 47rem) {
+      .topology { grid-template-columns: minmax(0,1fr); padding-inline: 1.7rem; row-gap: .75rem; }
+      .outer .endpoints { grid-template-columns: repeat(auto-fit, minmax(min(6rem,100%),1fr)); }
+      .integrations { grid-column: 1; }
+      .map-footer { align-items: flex-start; }
+      .detail-map { grid-template-columns: minmax(0,1fr); gap: .65rem; padding: .65rem 1.65rem; }
+      .detail-map .zone { padding-inline: 1.65rem; }
+    }
+    @media (max-width: 35rem) {
+      .triplet, .ingress, .sequence { grid-template-columns: 1fr; gap: 1.15rem; }
+      .tier [data-key="build"] { grid-column: auto; }
+    }
+  </style>
+</head>
+<body>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <symbol id="screen" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="15" rx="2"/><path d="M2 7h20M8 22h8m-4-4v4"/></symbol>
+      <symbol id="terminal" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m6 9 3 3-3 3m6 0h5"/></symbol>
+      <symbol id="routing" viewBox="0 0 24 24"><path d="M2 12h8m0 0 6-7h5m-11 7 6 7h5M18 2l3 3-3 3m0 8 3 3-3 3"/></symbol>
+      <symbol id="server" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="7" rx="2"/><path d="M6 6.5h3m-3 11h3"/></symbol>
+      <symbol id="cube" viewBox="0 0 24 24"><path d="m12 2 9 5v10l-9 5-9-5V7zm-9 5 9 5 9-5m-9 5v10"/></symbol>
+      <symbol id="worker" viewBox="0 0 24 24"><path d="M7 3v4m10-4v4M7 17v4m10-4v4M2 9h4m-4 6h4m12-6h4m-4 6h4"/><rect x="6" y="6" width="12" height="12" rx="2"/><path d="m10 9 5 3-5 3z"/></symbol>
+      <symbol id="book" viewBox="0 0 24 24"><path d="M12 6Q8 3 2 4v15q6-1 10 2 4-3 10-2V4q-6-1-10 2zm0 0v15"/></symbol>
+      <symbol id="filter" viewBox="0 0 24 24"><path d="M2 4h20l-8 9v6l-4 2v-8z"/></symbol>
+      <symbol id="compare" viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/><path stroke-width="4" d="M8 3v6m9 0v6M9 15v6"/></symbol>
+      <symbol id="chart" viewBox="0 0 24 24"><path d="M3 3v18h19M7 17v-4m5 4V9m5 8V5"/></symbol>
+      <symbol id="file" viewBox="0 0 24 24"><path d="M5 2h9l5 5v15H5zm9 0v6h5M8 12h8m-8 4h6"/></symbol>
+      <symbol id="db" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v7c0 4 18 4 18 0V5M3 12v7c0 4 18 4 18 0v-7"/></symbol>
+      <symbol id="folder" viewBox="0 0 24 24"><path d="M2 7V4h8l3 3h9v13H2zm0 3h20"/></symbol>
+      <symbol id="model" viewBox="0 0 24 24"><circle cx="5" cy="12" r="3"/><circle cx="18" cy="5" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8 11 7-5m-7 7 7 5"/></symbol>
+      <symbol id="repo" viewBox="0 0 24 24"><circle cx="7" cy="5" r="2"/><circle cx="7" cy="19" r="2"/><circle cx="18" cy="6" r="2"/><path d="M7 7v10m0-2c0-5 11-1 11-7"/></symbol>
+      <symbol id="branch-key" viewBox="0 0 26 16"><path d="M1 11h24M13 11V1" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="13" cy="11" r="3" fill="currentColor"/></symbol>
+      <symbol id="cross-key" viewBox="0 0 26 16"><path d="M1 8h8m8 0h8M13 1v14" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
+      <marker id="control-head" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5" markerHeight="5" orient="auto"><path d="M0 0 8 4 0 8z" fill="#326e9f"/></marker>
+      <marker id="data-head" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5" markerHeight="5" orient="auto"><path d="M0 0 8 4 0 8z" fill="#477968"/></marker>
+    </defs>
+  </svg>
+  <main class="wrap px-4 pb-10 sm:px-8">
+    <header class="intro flex flex-wrap items-center justify-between gap-3">
+      <h1>PaperAtlas architecture</h1>
+      <nav aria-label="Guide links" class="flex flex-wrap items-center gap-3">
+        <a class="jump" href="#agent-workflow">Agentic workflow ↓</a>
+        <a class="revision" href="https://github.com/mbanitk/paperatlas/tree/700bbbd2e757206b08919098d574e6fe9d77d4e9">Source <code>700bbbd</code></a>
+      </nav>
+    </header>
+
+    <figure class="board" aria-labelledby="map-title">
+      <figcaption class="flex flex-wrap items-center justify-between gap-2">
+        <div class="flex flex-wrap items-center gap-3">
+          <h2 id="map-title" class="kicker">01 / System context diagram</h2>
+          <strong>System map · all connections</strong>
+          <button type="button" class="motion-toggle" aria-label="Animate flow"></button>
+        </div>
+        <div id="legend" aria-label="Code maintenance priorities" class="flex flex-wrap gap-2"></div>
+      </figcaption>
+      <p id="map-caption">Start at the web console or CLI. Hover or focus a module to highlight its connections; select it to see its execution and data flow.</p>
+      <div class="topology">
+        <fieldset class="zone outer"><legend>Clients</legend>
+          <div class="endpoints grid gap-2">
+            <button data-key="console" data-icon="screen"></button>
+            <button data-key="cli" data-icon="terminal"></button>
+          </div>
+          <p class="boundary-note mt-1">Web → gateway (HTTP)<br>CLI → Python services (no HTTP)</p>
+        </fieldset>
+        <fieldset class="zone core"><legend>PaperAtlas application</legend>
+          <section class="tier"><h3>01 / HTTP entry points</h3>
+            <div class="ingress">
+              <button data-key="gateway" data-icon="routing"></button>
+              <div class="grid gap-2">
+                <button data-key="research" data-icon="server"></button>
+                <button data-key="lab" data-icon="server"></button>
+              </div>
+            </div>
+          </section>
+          <section class="tier"><h3>02 / Commands, queued work &amp; operator tools</h3>
+            <div class="triplet">
+              <button data-key="ops" data-icon="terminal"></button>
+              <button data-key="worker" data-icon="worker"></button>
+              <button data-key="service" data-icon="cube"></button>
+            </div>
+          </section>
+          <section class="tier"><h3>03 / Workflow stages · called by the worker</h3>
+            <div class="sequence">
+              <button data-key="discover" data-icon="book"></button>
+              <button data-key="distill" data-icon="filter"></button>
+              <button data-key="match" data-icon="compare"></button>
+            </div>
+            <p class="gate-label">Pick claim (Gate 1) → approve plan (Gate 2) ↓</p>
+            <div class="sequence">
+              <button data-key="build" data-icon="worker"></button>
+              <button data-key="judge" data-icon="chart"></button>
+            </div>
+            <p class="gate-label">After the verdict: merge or drop (Gate 3).</p>
+          </section>
+        </fieldset>
+        <fieldset class="zone outer"><legend>Persistence</legend>
+          <div class="endpoints grid gap-2">
+            <button data-key="db" data-icon="db"></button>
+            <button data-key="files" data-icon="folder"></button>
+          </div>
+          <p class="boundary-note mt-1">Query results → lab API<br>Kept report → local files</p>
+        </fieldset>
+        <div class="integrations">
+          <div class="drop">via PaperAtlas adapters</div>
+          <fieldset class="zone outer"><legend>Integration boundaries</legend>
+            <div class="triplet">
+              <button data-key="feeds" data-icon="book"></button>
+              <button data-key="models" data-icon="model"></button>
+              <button data-key="target" data-icon="repo"></button>
+            </div>
+          </fieldset>
+        </div>
+        <svg id="wires" aria-hidden="true"><g></g></svg>
+      </div>
+      <div class="map-footer flex flex-wrap items-center gap-3">
+        <span class="kicker">Outside the running loop</span><code class="small">uvicorn api.main:app →</code><button data-key="scaffold" data-icon="cube"></button>
+        <span class="flex items-center gap-2 small"><i class="key-line"></i>Execution call</span>
+        <span class="flex items-center gap-2 small"><i class="key-line data"></i>Data transfer</span>
+        <span class="line-key small"><svg aria-hidden="true"><use href="#branch-key"/></svg>Connected branch</span>
+        <span class="line-key small"><svg aria-hidden="true"><use href="#cross-key"/></svg>Crossing only</span>
+      </div>
+      <details class="rating-guide small"><summary>What the code colors mean</summary>
+        <p><strong>Focused:</strong> one clear job. <strong>Review:</strong> a specific improvement is worth considering. <strong>Hotspot:</strong> several responsibilities change together. <strong>Scaffold:</strong> outside the live workflow. A module takes its highest component priority. Ratings describe the code, not its authorship.</p>
+      </details>
+      <noscript><p class="p-4">Enable JavaScript to explore the interactive map. No network connection or PaperAtlas services are required.</p></noscript>
+    </figure>
+    <figure id="agent-workflow" class="board mt-4" aria-labelledby="agent-title" tabindex="-1">
+      <figcaption class="flex flex-wrap items-center justify-between gap-2">
+        <h2 id="agent-title">Agentic workflow</h2>
+        <button type="button" class="motion-toggle" aria-label="Animate flow"></button>
+        <a class="jump" href="#map-title">System overview ↑</a>
+      </figcaption>
+      <div class="lane-sheet">
+        <p class="small">LangGraph coordinates the run. Models propose, the coding agent edits, the harness measures, and a person decides whether to merge. Select a stage for its inputs, outputs and source.</p>
+        <div id="agent-lanes" class="lane-groups"></div>
+        <details id="agent-feedback" class="lane-group mt-4"><summary>Revision and retry paths</summary></details>
+      </div>
+      <section id="agent-notes" class="p-4" aria-label="Selected workflow stage" aria-live="polite" hidden></section>
+      <div class="map-footer small"><strong>Pause and resume.</strong> The worker advances the experiment graph to an interrupt or the end. Postgres holds the graph checkpoint; a gate decision queues a gate-tagged resume job. The experiment row carries the status shown in the console. <span id="state-source"></span></div>
+    </figure>
+  </main>
+
+  <dialog id="detail" aria-labelledby="detail-title">
+    <div class="dialog-bar flex items-center justify-between gap-3 px-4 py-2 sm:px-6">
+      <span id="detail-id" class="kicker"></span>
+      <form method="dialog"><button class="close px-3 py-2" autofocus>Close <span aria-hidden="true">×</span></button></form>
+    </div>
+    <div class="grid gap-5 p-4 sm:p-6">
+      <header class="grid gap-2">
+        <div id="detail-tone"></div>
+        <h2 class="detail-title" id="detail-title"></h2>
+        <p id="detail-purpose" class="lede"></p>
+      </header>
+      <figure class="board">
+        <figcaption class="flex flex-wrap items-center justify-between gap-2">
+          <strong class="kicker">Component diagram</strong>
+          <button type="button" class="motion-toggle" aria-label="Animate flow"></button>
+          <fieldset class="lens"><legend class="sr-only">Diagram view</legend>
+            <label><input class="sr-only" type="radio" name="lens" value="execution" checked>Execution flow</label>
+            <label><input class="sr-only" type="radio" name="lens" value="data">Data flow</label>
+          </fieldset>
+        </figcaption>
+        <div id="detail-map" class="detail-map">
+          <fieldset class="zone"><legend id="left-title"></legend><div id="inputs" class="map-stack"></div></fieldset>
+          <fieldset class="zone core"><legend id="inside-title"></legend><div id="components" class="map-stack"></div></fieldset>
+          <fieldset class="zone"><legend id="right-title"></legend><div id="outputs" class="map-stack"></div></fieldset>
+          <svg id="detail-wires" aria-hidden="true"><g></g></svg>
+        </div>
+        <div class="map-footer grid gap-1">
+          <div class="flex flex-wrap items-center gap-2 small"><i id="detail-line" class="key-line" aria-hidden="true"></i><span id="flow-caption"></span>
+          </div>
+          <ul id="detail-paths" class="sr-only" aria-label="Connections in this view"></ul>
+          <details id="neighbors" class="small"><summary>Triggers and handoffs</summary><ul></ul></details>
+        </div>
+      </figure>
+      <section class="grid gap-3" aria-labelledby="evidence-title">
+        <h2 id="evidence-title" class="kicker">Selected step / source evidence</h2>
+        <div id="notes" aria-live="polite"></div>
+      </section>
+      <aside class="next grid gap-1 pt-3"><strong>One practical next step</strong><p id="detail-next"></p></aside>
+    </div>
+  </dialog>
+
+  <template id="note-template">
+    <article class="note grid content-start gap-2 p-3">
+      <span class="badge"></span><h3></h3><p class="node-summary"></p><div class="grid gap-1"></div>
+    </article>
+  </template>
+
+  <script>
+    // Paths start at src/paperatlas unless prefixed with "/". Line ranges pin the review to this snapshot.
+    const revision = "700bbbd2e757206b08919098d574e6fe9d77d4e9";
+    const tones = { scaffold: "Scaffold", focused: "Focused", review: "Review", hotspot: "Hotspot" };
+    const part = (title, tone, note, ...refs) => ({ title, tone, note, refs });
+    // Execution paths start/end at named ports; numeric hops index parts. In a data route,
+    // "record" is the intermediate payload between the first and last data descriptions.
+    const modules = {
+      console: {
+        title: "Web console", summary: "React client",
+        purpose: "A researcher starts a scan in the browser. React components send commands via the gateway and render progress from the lab event stream.",
+        paths: [["Start scan", 0, 1, "Gateway"], ["Progress event", 1, 0, "Refresh the view"]],
+        via: [1, "record", 0],
+        data: [["User input", "Project ID and scan options"], ["HTTP response", "Triage ID and queued status"], ["Browser state", "Event IDs, stages and messages in the progress view"]],
+        parts: [
+          part("React console", "hotspot", "Routes split research from experiments, but Recommendations.tsx puts the scan dialog, live triage, card rendering and prerequisite selection in one 980-line page.",
+            "/web/src/App.tsx:23-48", "/web/src/pages/Recommendations.tsx:50-131", "/web/src/pages/Recommendations.tsx:388-428"),
+          part("Query & event clients", "focused", "Pages use React Query hooks over the HTTP client. A separate event-stream hook tracks a cursor and merges updates; the page need not decode SSE itself.",
+            "/web/src/api/client.ts:85-111", "/web/src/api/queries.ts:299-360", "/web/src/api/sse.ts:21-49")
+        ],
+        next: "Extract the scan dialog and triage-progress view from Recommendations.tsx before changing how claims are ranked. Neither component needs to own the selection policy."
+      },
+      cli: {
+        title: "Python CLI", summary: "Terminal client",
+        purpose: "Commands share Python functions and Postgres state with the web services. A scan does not need to round-trip through HTTP.",
+        paths: [["r2e scan", 0, 1, "Queue triage.run"], ["If --inline", 2, "Execute queued jobs"]],
+        via: [0, "record", 1],
+        data: [["Arguments", "--project, --per-topic and --no-llm"], ["Service input", "Resolved project ID + triage options"], ["Output", "Triage ID on stdout; status after inline execution"]],
+        parts: [
+          part("Parse command", "review", "One 177-line argparse builder wires database, process-control and research commands together.", "cli.py:301-477"),
+          part("Call service", "focused", "cmd_scan resolves the project and calls start_triage, just like the lab API.", "cli.py:167-179"),
+          part("Drain queue", "focused", "Inline mode uses the worker's execute function and renews leases while claiming queued jobs.", "cli.py:56-65")
+        ],
+        next: "Group parser registration by command family before adding more subcommands. Keep the existing handlers and command names."
+      },
+      gateway: {
+        title: "Gateway :8100", summary: "Static host & HTTP proxy",
+        purpose: "One browser origin serves the built web console and proxies two API prefixes. Long-lived event streams go through the same proxy.",
+        paths: [["Page request", 0, "Web console"], ["/api/{service}/…", 1, "Research or lab API"], ["Upstream response", 2, "Browser"]],
+        via: [1, "record", 2],
+        data: [["Incoming", "Method, encoded path, query and body"], ["Upstream", "/api/lab/triage/7 becomes /triage/7 on lab-api"], ["Returned", "Upstream status, headers and streamed bytes"]],
+        parts: [
+          part("Serve console", "focused", "A built asset is served as a file; a client-side route gets index.html. An unbuilt console returns 503.", "services/gateway.py:78-88"),
+          part("Select upstream", "focused", "The backend map selects an API and the raw subpath preserves encoded characters in paper IDs.", "services/gateway.py:17-32", "services/gateway.py:43-58"),
+          part("Stream response", "focused", "The response body passes through incrementally and the upstream response is closed afterward.", "services/gateway.py:34-63")
+        ],
+        next: "Keep the gateway transport-only. Test encoded paper IDs and unbuffered SSE when changing proxy routing."
+      },
+      research: {
+        title: "Research API :8101", summary: "Catalog endpoints",
+        purpose: "Reading the catalog is synchronous. A request to discover or distill papers returns a job ID rather than holding the connection open.",
+        paths: [["GET /papers", 0, "Return page"], ["POST /distill", 1, "Worker handles job later"]],
+        via: [1, "record"],
+        data: [["Example request", "POST /distill with paper_ids and limit"], ["Queue row", "kind = distill, payload = validated options"], ["Caller receives", "JobQueued with job_id and kind"]],
+        parts: [
+          part("Catalog query", "focused", "Paper and claim routes pass search text, filters and pagination to the shared read functions.", "services/research_api.py:110-118", "services/research_api.py:150-160"),
+          part("Queue command", "focused", "Routes for topic refresh, discover and distill each enqueue a named job and return its ID.", "services/research_api.py:95-108")
+        ],
+        next: "Use the existing queued response for new batch operations so callers can track work without a long-running HTTP request."
+      },
+      lab: {
+        title: "Lab API :8102", summary: "Experiments & gates",
+        purpose: "Project scans, picks and gate decisions enter through this API. Progress streams read durable event rows; the request handler does not run the benchmark.",
+        paths: [["POST triage or gate decision", 0, "Shared service"], ["GET experiment stream", 1, "Send progress; repeat"]],
+        via: [1, "record"],
+        data: [["Stream input", "Experiment ID and last seen event ID"], ["Database", "Events for this experiment after that cursor"], ["Browser", "SSE frames with id, progress event and JSON data"]],
+        parts: [
+          part("Delegate command", "focused", "The HTTP layer forwards validated IDs and options to service functions. Gate transition logic stays in the shared layer.", "services/lab_api.py:160-184", "services/lab_api.py:198-211"),
+          part("Stream new events", "focused", "The API polls event rows by cursor, emits a keep-alive when idle and resumes from Last-Event-ID.", "services/lab_api.py:235-244", "services/common.py:50-83")
+        ],
+        next: "Reuse the existing cursor-based responder for new live views rather than adding another event protocol."
+      },
+      service: {
+        title: "Shared service", summary: "Query the catalog, start scans and record decisions.",
+        purpose: "HTTP handlers, CLI commands and graph nodes call lab/service.py. It is a productive first refactor target: one 1,106-line file owns both research reads and experiment state changes.",
+        paths: [["Read request", 0, "Response"], ["Start scan / pick", 1, "Queued job"], ["Gate decision", 2, "Resume job"]],
+        via: ["record", 2],
+        data: [["Gate 2 input", "Experiment ID, approve decision and optional spec edits"], ["Locked row", "Check awaiting_approval; update spec and status"], ["Same transaction", "Event plus experiment.resume job with gate-tagged payload"]],
+        parts: [
+          part("Read models", "hotspot", "Paper and claim lookups, recommendation joins and experiment summaries all assemble client payloads in the same module as lifecycle commands.",
+            "lab/service.py:139-221", "lab/service.py:336-411", "lab/service.py:731-788"),
+          part("Scan & experiment creation", "review", "Starting a triage and turning picks into experiments are separate operations. Creation also handles bundles, prerequisite ordering and dependent jobs.",
+            "lab/service.py:414-519", "lab/service.py:544-564"),
+          part("Atomic gate transition", "focused", "A row lock serializes competing decisions. Status, event and resume job are written in the same transaction; moving one write independently would break that guarantee.",
+            "lab/service.py:883-892", "lab/service.py:915-980")
+        ],
+        next: "Move the read-only paper and claim queries behind a research-read module first. Keep existing callers stable and leave gate writes together."
+      },
+      worker: {
+        title: "Worker & workflows", summary: "Lease jobs, advance graphs and resume after review.",
+        purpose: "A worker claims a Postgres job and dispatches it by kind. The triage graph ends at a shortlist. The experiment graph checkpoints in agent.* and interrupts for spec approval and the final decision.",
+        paths: [["Runnable job", 0, 1, 2, "Gate 1: shortlist"], ["Runnable job", 0, 1, 3, "Gate 2 / Gate 3"]],
+        via: [0, 1, 2, "record"],
+        data: [["lab.jobs", "Job kind + payload, e.g. triage.run with triage_id"], ["Graph state", "Thread ID and stage outputs checkpointed in agent.*"], ["Visible result", "Shortlist in lab.triage, progress events and job outcome"]],
+        parts: [
+          part("Job lease", "focused", "A transaction claims a runnable job; owner-checked updates prevent an old worker from recording an outcome after losing its lease.",
+            "lab/events.py:131-177"),
+          part("Worker dispatch", "focused", "A handler table maps job kinds to functions. A lease heartbeat is separate from the thread pool that executes them; the supervisor launches this worker alongside the HTTP processes.",
+            "services/worker.py:104-149", "services/worker.py:167-219", "services/supervisor.py:18-42"),
+          part("Triage graph", "focused", "The edges spell out topics, discover, distill, match and shortlist. The last node records awaiting_pick and ends the graph rather than starting a build.",
+            "lab/orchestrator.py:883-927"),
+          part("Experiment graph", "hotspot", "In the 927-line orchestrator, node_judge alone spans 101 lines: it diagnoses results, chooses iterations, can restore a commit, renders a report and attempts a draft PR.",
+            "lab/orchestrator.py:457-557", "lab/orchestrator.py:648-696")
+        ],
+        next: "Extract the choice of which iteration to keep as a pure function. Leave Git changes, status writes and checkpoint transitions in the graph until replay behavior is covered."
+      },
+      discover: {
+        title: "Discover", summary: "Turn seed areas into ranked topics and papers.",
+        purpose: "Configured seed areas drive searches across arXiv, Semantic Scholar, OpenAlex, Hugging Face Papers and USPTO. The result passed to distillation is a set of selected paper IDs.",
+        paths: [["config/r2e.yaml", 0, 1, 2, "Selected IDs + text"], ["Single paper / URL", 3, "Paper store"]],
+        via: [0, 1, "record", 2],
+        data: [["Search input", "Seed area, topic queries and lookback window"], ["Candidates", "Normalized paper metadata, topic relevance and rank"], ["Distillation input", "Selected paper IDs; available PDF text saved on paper rows"]],
+        parts: [
+          part("Source connectors", "review", "Connectors return common PaperMetadata and share HTTP backoff. The arXiv connector also calls a private feed parser on the older ingestion client, coupling the two paths.",
+            "discovery/sources/base.py:20-86", "discovery/sources/arxiv.py:12-40"),
+          part("Topic selection", "focused", "refresh_topics coordinates separate functions for collecting, embedding, clustering, scoring and labeling candidates. Cluster selection can be examined independently of fetching.",
+            "discovery/topics.py:82-118", "discovery/topics.py:305-347"),
+          part("Paper ranking", "focused", "rank_topic assigns scores and ranks. discover takes the top papers per topic and fetches PDF text only when the row lacks it and a PDF URL exists.",
+            "discovery/ranking.py:87-164"),
+          part("Single-paper ingestion", "review", "concepts/extraction also accepts identifiers, URLs and arXiv queries. These paths repeat the enrich-and-persist sequence around the same PDF parser and PaperStore.",
+            "concepts/extraction/pipeline.py:37-92", "concepts/extraction/pipeline.py:130-150")
+        ],
+        next: "Expose the arXiv feed parser as a shared public function. Exercise it with the same feed fixture from both entry points before changing either connector."
+      },
+      distill: {
+        title: "Distill", summary: "Extract testable claims and connect related ideas.",
+        purpose: "A paper becomes concepts with claim cards: the proposed change, metric, baseline and evidence. A heuristic fallback produces non-testable concepts rather than inventing a measurable gain.",
+        paths: [["Paper text", 0, 1, 2, "Stored claims"], ["Stored claims", 3, "Groups / links"]],
+        via: [0, 1, "record", 2],
+        data: [["Paper row", "Title, abstract and available raw text"], ["Validated concepts", "Technique, evidence quote, effect, direction and baseline"], ["Stored", "Concept and claim rows with embeddings; claim IDs used for grouping"]],
+        parts: [
+          part("Claim extractor", "review", "LLM failure or empty output can select the heuristic path, but the source property is based on whether a client exists. A fallback result can therefore be stored as LLM-derived.",
+            "distill/extractor.py:101-120", "distill/pipeline.py:83-90"),
+          part("Claim contract", "focused", "Pydantic models define effects and evidence. Parsing validates each concept separately so one malformed item need not invalidate the rest of a paper.",
+            "distill/claims.py:50-85", "distill/extractor.py:156-164"),
+          part("Batch persistence", "review", "The pipeline embeds and saves claims, then schedules optional maps and explanations. It imports a private bulk-run helper from the explainer module.",
+            "distill/pipeline.py:83-150"),
+          part("Groups & concept links", "focused", "Dedup groups similar claims across papers. A separate concept-map pass describes relationships inside one paper; relations.py reads those links for cards and prerequisite chains.",
+            "distill/dedup.py:41-89", "distill/concept_map.py:175-224", "distill/relations.py:60-129")
+        ],
+        next: "Return the actual extraction source with each paper's results. Add a case where a configured model fails and verify that the stored provenance says heuristic."
+      },
+      match: {
+        title: "Match & plan", summary: "Rank feasible claims and draft the experiment spec.",
+        purpose: "A fast technique on the paper's hardware may not help here. Matching combines the target's capabilities and metrics with predicted gain. Planning happens only after a claim is picked.",
+        paths: [["Target lab.yaml", 0, "Registered project"], ["Claims + profile", 1, 2, "Gate 1: pick"], ["Picked claim", 3, "Gate 2: approve spec"]],
+        via: [1, 2, "record", 3],
+        data: [["Candidate", "Claim + project metrics, hardware and optional roofline"], ["Match row", "Score, blockers, testable_here and target metric"], ["After a pick", "Experiment spec: flag, workload, baseline, threshold and guardrails"]],
+        parts: [
+          part("Project profile", "focused", "Reads lab.yaml, Git facts and registered techniques; persists a project embedding. A separate measurement can supply a roofline (where the engine spends time).",
+            "lab/profiler.py:60-110", "lab/profiler.py:155-194"),
+          part("Cost prediction", "review", "predict produces a hardware-aware estimate, not a benchmark. Its category-specific rules occupy a single 118-line function.",
+            "lab/costmodel.py:118-235"),
+          part("Claim matcher", "hotspot", "match_project loads candidates, computes scores and blockers, requests optional model review, upserts matches and may generate explainers in one 137-line function.",
+            "lab/matcher.py:186-322"),
+          part("Spec planner", "review", "The planner picks a metric and workload, builds an optional model prompt, normalizes the answer and enforces thresholds in the same function. protocol.py defines the comparison arms.",
+            "lab/planner.py:229-341", "lab/protocol.py:157-180")
+        ],
+        next: "Separate scoring one claim from loading and saving matches. Pin the order, blockers and target metric on a small set of claims before moving the database loop."
+      },
+      build: {
+        title: "Build & measure", summary: "Run a flagged change against a controlled baseline.",
+        purpose: "The target repository supplies its own install, test and bench_ab commands. PaperAtlas prepares an isolated branch, verifies the change and records measurements; it does not substitute a synthetic benchmark.",
+        paths: [["Approved spec", 0, 1, "Verified flag"], ["Verified flag", 2, 3, "Target A/B harness"], ["Harness JSON", 2, "Run records + logs"]],
+        via: [0, 1, "record", 2],
+        data: [["Spec + profile", "Flag, arms, workload, rounds and bench_ab template"], ["Target worktree", "Flagged implementation and rendered benchmark command"], ["Run evidence", "Baseline/variant rounds, quality and environment in JSON and lab.runs"]],
+        parts: [
+          part("Experiment workspace", "focused", "workspace.py encapsulates branch and worktree operations. process.py handles cancellation and log capture; safety.py scrubs the environment passed to project commands.",
+            "lab/workspace.py:36-52", "lab/process.py:59-90", "lab/safety.py"),
+          part("Builder & verification", "review", "Copilot and Codex share an adapter boundary. The same 403-line builder file also formats prompts, checks protected paths and verifies that the flag and tests work.",
+            "lab/builder.py:36-108", "lab/builder.py:286-347"),
+          part("Benchmark runner", "review", "Smoke, optional tuning, evaluation and adoption checks share run_benchmark. It assembles arms, records the run, waits for the GPU, executes the harness, validates output and persists completion.",
+            "lab/runner.py:68-183"),
+          part("GPU coordination", "focused", "A Postgres advisory lock serializes benchmark use across workers. A separate check reports background GPU activity so noisy measurements can be interpreted.",
+            "lab/gpu.py:19-39", "lab/gpu.py:56-84")
+        ],
+        next: "Extract benchmark command preparation from run_benchmark so claim and adoption arm selection can be checked without a GPU, database or subprocess."
+      },
+      judge: {
+        title: "Judge & report", summary: "Separate measured effect from interpretation.",
+        purpose: "The claim check compares against the paper baseline when available. A separate adoption check, when needed, compares against project defaults. A verdict is evidence for Gate 3, not permission to merge.",
+        paths: [["Paired A/B results", 0, 1, "Bounded retry or report"], ["Kept run + verdict", 2, "Gate 3: merge / drop"]],
+        via: [0, "record", 1, 2],
+        data: [["Measurements", "Paired baseline/variant metrics + required quality results"], ["Computed evidence", "Median improvement, bootstrap interval and guardrail failures"], ["Review output", "Stored verdict and HTML report; merge/drop remains a decision"]],
+        parts: [
+          part("Statistical judge", "focused", "evaluate works on result, spec and profile values, not the database. It checks paired deltas, bootstrap intervals and guardrails; missing measurements can yield inconclusive.",
+            "lab/judge.py:102-191"),
+          part("Analyst", "focused", "The analyst explains the measured verdict and may suggest another iteration. Model failure has an explicit rule-based fallback that does not request another build.",
+            "lab/analyst.py:90-119", "lab/analyst.py:145-167"),
+          part("Report renderer", "focused", "Chart helpers and a Jinja template render the kept evidence to HTML. Rendering is distinct from the graph node that records the verdict and asks for a decision.",
+            "lab/report.py:119-179", "lab/report.py:181-242", "lab/templates/report.html")
+        ],
+        next: "Preserve the judge/analyst split. When changing a threshold, use paired fixtures for a gain, a regression and missing quality data; do not change the analyst prompt to alter the verdict."
+      },
+      db: {
+        title: "PostgreSQL", summary: "SQL + pgvector",
+        purpose: "Postgres with pgvector stores research.*, lab.* and the agent.* graph checkpoints. The filesystem holds worktrees, logs, benchmark artifacts, reports and digests; it is not the job queue.",
+        paths: [["Database upgrade", 0, "Schema ready"], ["Ingest / distill", 1, "Commit rows"], ["Catalog query", 2, "Return ranked IDs"]],
+        via: [2, "record"],
+        data: [["Search input", "Query text and a normalized embedding"], ["Candidate sets", "Full-text ranks and pgvector cosine ranks"], ["Read result", "IDs ordered by reciprocal-rank fusion, with both source ranks"]],
+        parts: [
+          part("Schema & migrations", "focused", "SQLAlchemy models describe research and lab rows. Alembic upgrades those schemas, while the graph checkpointer creates its own tables in agent.",
+            "db/schema.py:1-46", "db/migrate.py", "lab/orchestrator.py:59-72"),
+          part("PaperStore", "review", "One store owns ingestion, embeddings and claim replacement. Re-distillation also needs to know about lab experiments to avoid deleting claims on which results depend.",
+            "db/store.py:119-159", "db/store.py:282-321"),
+          part("Hybrid search", "focused", "A single query ranks lexical and vector candidates and combines their ranks. It returns each rank separately, making disagreements easier to inspect.",
+            "db/search.py:31-100")
+        ],
+        next: "Before moving claim persistence, keep a database test that re-distills a paper with a live experiment and proves that its claim and run history survive."
+      },
+      files: {
+        title: "Artifact files", summary: "Local filesystem",
+        purpose: "Worktrees hold target code; the experiment artifact directory holds the physical outputs. Postgres run records point back to the relevant files.",
+        paths: [["Start experiment", 0, "Isolated worktree"], ["Run harness", 1, "Persist result paths"], ["Judge kept run", 2, "HTML report"]],
+        via: [0, 1, "record", 2],
+        data: [["Experiment ID", "Selects r2e/experiments/<id>/ under the data directory"], ["Harness writes", "Timestamped JSON results and a separate log file"], ["Review artifact", "report.html built from verdict, spec and kept measurements"]],
+        parts: [
+          part("Allocate workspace", "focused", "Per-experiment worktree and artifact directory paths are derived separately from the configured data root.", "lab/workspace.py:23-52"),
+          part("Write run files", "review", "The runner allocates paths, records them in SQL and reads back the results to validate the harness contract. These responsibilities are coupled.", "lab/runner.py:86-126", "lab/runner.py:153-183"),
+          part("Render report", "focused", "The graph passes the selected measurements and verdict to the report renderer, then persists the verdict with its report path.", "lab/orchestrator.py:526-554", "lab/report.py:181-242")
+        ],
+        next: "Keep the mapping from run ID to result and log paths explicit when separating benchmark execution from storage."
+      },
+      feeds: {
+        title: "Research feeds", summary: "Paper & patent sources",
+        purpose: "PaperAtlas uses adapters for arXiv, Semantic Scholar, OpenAlex, Hugging Face Papers and USPTO. The assessment here covers those adapters, not the external services.",
+        paths: [["Configured names", 0, "Enabled connectors"], ["Topic query", 1, 2, "Paper store"]],
+        via: [1, "record", 2],
+        data: [["Outbound", "Search terms, date range and per-source limit"], ["Inbound", "Provider-specific feed or JSON records"], ["Normalized", "PaperMetadata records upserted to canonical paper IDs"]],
+        parts: [
+          part("Build source list", "focused", "A registry maps configuration names to adapters and rejects unknown names.", "discovery/sources/__init__.py:12-25"),
+          part("Fetch with backoff", "focused", "The shared HTTP layer spaces requests, retries transient failures and logs disabled connectors.", "discovery/sources/base.py:34-86"),
+          part("Normalize records", "review", "Each adapter converts its response into PaperMetadata. The arXiv implementation reaches into another client's private feed parser.", "discovery/sources/arxiv.py:16-40", "discovery/ranking.py:60-73")
+        ],
+        next: "Make the shared arXiv parser public and keep feed-format fixtures independent of HTTP calls."
+      },
+      models: {
+        title: "Model adapters", summary: "Shared embeddings, structured generation and cache.",
+        purpose: "Embeddings support clustering, deduplication, search and matching. The text-generation client is a different dependency: it produces structured content for extraction, planning and explanation.",
+        paths: [["Text", 0, "Normalized vectors"], ["Prompt + schema", 1, "Hit: stored response"], ["Cache miss", 2, "Generated response"]],
+        via: [1, "record", 2],
+        data: [["Generation input", "Model, system prompt, user prompt and optional schema"], ["Cache miss", "No response found for the hash of those inputs in research.llm_cache"], ["Result", "Provider response cached; JSON parsed for structured callers"]],
+        parts: [
+          part("Sentence encoder", "focused", "A cached model returns normalized vectors and checks the dimension against the database contract. This is the active embeddings code, not the empty FAISS scaffold.",
+            "embeddings/text.py:16-45"),
+          part("Response cache", "focused", "The LLM client checks its Postgres cache before calling a provider, then stores the result. The settings module supplies model and connection configuration.",
+            "llm/client.py:38-112", "settings.py"),
+          part("Provider boundary", "review", "The HTTP provider requests strict JSON-schema output. The Copilot CLI adapter instead prompts for JSON and parses text; callers cannot assume equivalent schema enforcement.",
+            "llm/client.py:113-133", "llm/client.py:191-241")
+        ],
+        next: "Share fixtures for malformed and incomplete replies across provider adapters. Keep validation at the boundary where generated data becomes a claim or spec."
+      },
+      target: {
+        title: "Target project", summary: "Git repo & A/B harness",
+        purpose: "The target is a separate repository, not a PaperAtlas service. PaperAtlas reads its contract and runs its commands in an experiment worktree. The colors describe the integration code.",
+        paths: [["Register repo", 0, "Project ready for matching"], ["Approved spec", 1, 2, "Return paired measurements"]],
+        via: [0, 1, "record", 2],
+        data: [["Target contract", "lab.yaml: models, metrics, workloads and commands"], ["Harness invocation", "bench_ab populated with model, flags, workload, rounds and output path"], ["Harness output", "schema_version, rounds, arms, quality and environment"]],
+        parts: [
+          part("Read project contract", "focused", "The profiler checks required keys and adds Git metadata and registered techniques before storing the profile.", "lab/profiler.py:60-110"),
+          part("Create worktree", "focused", "The workspace helper creates or reopens an experiment branch and records its base.", "lab/workspace.py:36-52"),
+          part("Call target harness", "review", "The runner interprets the project's command template and validates its JSON. The project owns measurement; PaperAtlas owns the arm and output contract.", "lab/runner.py:25-60", "lab/runner.py:86-126")
+        ],
+        next: "Exercise a minimal target fixture with one flag, one workload and paired rounds before adding a new harness format."
+      },
+      ops: {
+        title: "Explanations & ops", summary: "Narrate results, batch experiments and schedule scans.",
+        purpose: "These are optional entry points around the main loop. An explanation or digest reads existing evidence; scheduled scans and batch runs reuse the same commands and experiment records.",
+        paths: [["Research rows", 0, "Console explanation"], ["Weekly launchd trigger", 1, "Scan then digest"], ["Testable project claims", 2, "Experiment jobs"]],
+        via: [1, "record"],
+        data: [["Digest input", "Project ID and reporting window"], ["Read model", "Current topics, testable claims, recent verdicts and waiting experiments"], ["Published locally", "A dated HTML file under r2e/digests/"]],
+        parts: [
+          part("Explainers", "review", "r2e/explainers.py spans 569 lines: output schemas, diagram cleanup, topic statistics, prompting, persistence and parallel backfill live together.",
+            "r2e/explainers.py:229-260", "r2e/explainers.py:414-472", "r2e/explainers.py:507-569"),
+          part("Weekly schedule & digest", "focused", "The macOS launchd job invokes scan then digest. Installation is opt-in. The digest builder reads recent topics, claims and verdicts rather than rerunning experiments.",
+            "r2e/schedule.py:15-48", "r2e/digest.py:38-85"),
+          part("Batch driver", "review", "run_batch mixes capacity checks, claim selection and experiment creation in one polling loop. Batch mode automatically approves Gate 2; it leaves Gate 3 to a person.",
+            "lab/batch.py:59-124")
+        ],
+        next: "Give bulk explanation scheduling a public helper independent of prompt construction. Distillation and matching could then stop importing the explainer module's private _run_all."
+      },
+      scaffold: {
+        title: "Original scaffold", summary: "Prototype API, ranking models and reserved packages.",
+        purpose: "Do not follow these directories to debug a production recommendation. The running project fits claims with lab/matcher.py; the original search/recommend/graph API is a separate app.",
+        paths: [["uvicorn api.main:app", 0, "Prototype routes"], ["Embedding arrays", 1, "Prototype ranking"]],
+        via: ["record", 0],
+        data: [["Prototype only", "Query text sent to the original /search/ endpoint"], ["Route function", "Receives query as a string; does not call hybrid search"], ["Response", "JSON echo: {\"query\": \"kv cache\"} for the example input"]],
+        parts: [
+          part("Prototype API", "scaffold", "The root api/main.py re-exports paperatlas.api.main. Its search route echoes the input; it is not the gateway's research API or hybrid search.",
+            "/api/main.py", "api/main.py", "api/routes/search.py"),
+          part("Prototype ranking", "scaffold", "ConceptRecommender sorts cosine similarities; ConceptRanker is a small neural network. The surrounding ML training and inference files are placeholders, not the active matching pipeline.",
+            "recommender/concept_recommender.py", "ml/models/concept_ranker.py", "ml/training/train_ranker.py"),
+          part("Reserved namespaces", "scaffold", "graph, user, experiments/notebooks and ui are scaffold packages. Empty embedding backends sit beside the live embeddings/text.py; do not classify the whole embeddings package as unused.",
+            "graph/analytics/pagerank.py", "user/interest_model.py", "experiments/notebooks/__init__.py", "ui/__init__.py", "embeddings/faiss_index.py")
+        ],
+        next: "Label the prototype entry point and empty packages before considering removal. Keep live text embeddings and concepts/extraction out of any scaffold cleanup."
+      }
+    };
+
+    const $ = (selector, root = document) => root.querySelector(selector);
+    const clone = id => $(id).content.firstElementChild.cloneNode(true);
+    const el = (tag, cls, text) => {
+      const node = document.createElement(tag);
+      node.className = cls;
+      node.textContent = text;
+      return node;
+    };
+    const rating = parts => ["hotspot", "review", "focused", "scaffold"].find(t => parts.some(p => p.tone === t));
+    function badge(node, tone) {
+      node.dataset.tone = tone;
+      node.textContent = tones[tone];
+      return node;
+    }
+    function source(ref) {
+      const [file, lines] = ref.split(":");
+      const path = file.startsWith("/") ? file.slice(1) : `src/paperatlas/${file}`;
+      const link = el("a", "ref", `${file.replace(/^\//, "")}${lines ? ":" + lines : ""}`);
+      link.href = `https://github.com/mbanitk/paperatlas/blob/${revision}/${path}${lines ? "#L" + lines.replace("-", "-L") : ""}`;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.title = `Open ${path} at ${revision.slice(0, 7)} (new tab)`;
+      return link;
+    }
+    const svgNS = "http://www.w3.org/2000/svg";
+    function svgElement(tag, attrs) {
+      const node = document.createElementNS(svgNS, tag);
+      for (const [name, value] of Object.entries(attrs)) node.setAttribute(name, value);
+      return node;
+    }
+    function glyph(name) {
+      const icon = svgElement("svg", {"aria-hidden": "true", fill: "none", stroke: "currentColor", "stroke-width": 1.7, "stroke-linejoin": "round"});
+      icon.append(svgElement("use", {href: `#${name}`}));
+      return icon;
+    }
+
+    function laneWire(kind, label) {
+      const wire = el("span", `lane-wire ${kind}`, "");
+      const svg = svgElement("svg", {viewBox: "0 0 36 16", "aria-hidden": "true"});
+      svg.append(svgElement("path", {d: "M1 8H30", class: "shaft", fill: "none"}),
+        svgElement("path", {d: "M1 8H30", class: `packet ${kind}`}),
+        svgElement("path", {d: "M28 3L36 8 28 13Z", fill: "currentColor"}));
+      wire.append(svg, el("span", "sr-only", label));
+      return wire;
+    }
+    function lane(stops, wires) {
+      const row = el("div", "handoff-lane", "");
+      row.classList.toggle("multi", stops.length > 2);
+      stops.forEach((stop, i) => {
+        if (i) row.append(wires[i-1]);
+        row.append(stop);
+      });
+      return row;
+    }
+    let redrawDetail = () => {};
+    function openModule(key, zone, moduleIcon) {
+      const module = modules[key];
+      const dialog = $("#detail");
+      $("#detail-id").textContent = `02 / ${zone}`;
+      $("#detail-title").textContent = module.title;
+      $("#detail-purpose").textContent = module.purpose;
+      $("#detail-next").textContent = module.next;
+      $("#detail-tone").replaceChildren(badge(el("span", "badge", ""), rating(module.parts)));
+      const entry = {
+        console: "Start: the researcher opens the console and chooses an action.",
+        cli: "Start: the operator runs a paperatlas command, or launchd invokes a scheduled scan.",
+        scaffold: "Independent entry: uvicorn api.main:app starts the prototype HTTP routes. The live worker never invokes the scaffold."
+      }[key];
+      const neighbors = Object.values(handoffs).filter(h => h.from === key || h.to === key);
+      $("#neighbors ul").replaceChildren(...(entry ? [el("li", "", entry)] : []), ...neighbors.map(h => {
+        const li = document.createElement("li");
+        li.append(el("strong", "", names(h)), ` — ${h.text}`);
+        return li;
+      }));
+      $("#neighbors").open = false;
+      function selectPart(index) {
+        const part = module.parts[index];
+        const note = clone("#note-template");
+        note.dataset.tone = part.tone;
+        badge($(".badge", note), part.tone);
+        $("h3", note).textContent = part.title;
+        $("p", note).textContent = part.note;
+        $("div", note).append(...part.refs.map(source));
+        $("#notes").replaceChildren(note);
+        for (const button of dialog.querySelectorAll("[data-part]")) {
+          button.setAttribute("aria-pressed", String(Number(button.dataset.part) === index));
+        }
+      }
+      function renderLens() {
+        const data = $("[name=lens]:checked").value === "data";
+        const map = $("#detail-map");
+        map.dataset.mode = data ? "data" : "execution";
+        $("#inside-title").textContent = module.title;
+        $("#left-title").textContent = data ? "Input payload" : "Entry points";
+        $("#right-title").textContent = data ? "Output payload" : "Outcomes";
+        $("#detail-line").classList.toggle("data", data);
+        $("#flow-caption").textContent = data ? "One example: follow the dashed arrows to see what changes hands." :
+          "Solid arrows show execution order. Select a component to see its code.";
+        for (const id of ["#inputs", "#components", "#outputs", "#detail-paths"]) $(id).replaceChildren();
+        const nodes = new Map(), links = [];
+        function port(id, parent, icon, label, description) {
+          if (!nodes.has(id)) {
+            const box = el("div", "port", "");
+            box.append(glyph(icon), el("strong", "", label));
+            if (description) box.append(el("small", "", description));
+            nodes.set(id, box);
+            $(parent).append(box);
+          }
+          return id;
+        }
+        function component(index) {
+          const part = module.parts[index];
+          const button = el("button", "node", "");
+          button.type = "button";
+          button.dataset.part = index;
+          button.dataset.tone = part.tone;
+          button.setAttribute("aria-controls", "notes");
+          button.append(glyph(moduleIcon), el("strong", "", part.title),
+            badge(el("span", "badge", ""), part.tone), el("small", "", part.refs[0].split(":")[0].split("/").pop()));
+          $("#components").append(button);
+          nodes.set(index, button);
+        }
+        const routes = data ? [[module.data[0][0], ...module.via, module.data[2][0]]] : module.paths;
+        const interior = data ? module.via : module.parts.map((_, i) => i);
+        for (const hop of interior) {
+          if (hop === "record") port("record", "#components", "file", ...module.data[1]);
+          else component(hop);
+        }
+        for (const route of routes) {
+          const ids = route.map((hop, i) => {
+            if (i === 0) return port(`in:${hop}`, "#inputs", data ? "file" : "routing", hop, data && module.data[0][1]);
+            if (i === route.length - 1) return port(`out:${hop}`, "#outputs", data ? "file" : "routing", hop, data && module.data[2][1]);
+            return hop;
+          });
+          ids.slice(1).forEach((to, i) => {
+            const from = ids[i];
+            if (!links.some(link => link.from === from && link.to === to)) links.push({from, to, kind: data ? "data" : "control"});
+          });
+          $("#detail-paths").append(el("li", "", ids.map(id => $("strong", nodes.get(id)).textContent).join(" → ")));
+        }
+        selectPart(interior.find(hop => typeof hop === "number"));
+        redrawDetail = () => {
+          if (dialog.open) drawConnections($("#detail-wires"), nodes, links, map.querySelectorAll("legend"));
+        };
+        redrawDetail();
+      }
+      $("[name=lens][value=execution]").checked = true;
+      $(".lens").onchange = renderLens;
+      dialog.onclick = event => {
+        const button = event.target.closest("button[data-part]");
+        if (!button) return;
+        selectPart(Number(button.dataset.part));
+        $("#notes").scrollIntoView({block: "nearest"});
+      };
+      dialog.showModal();
+      renderLens();
+      dialog.scrollTop = 0;
+    }
+    new ResizeObserver(() => redrawDetail()).observe($("#detail-map"));
+
+    for (const tone of ["focused", "review", "hotspot", "scaffold"]) {
+      $("#legend").append(badge(el("span", "badge", ""), tone));
+    }
+    for (const button of document.querySelectorAll("button[data-key]")) {
+      const {key, icon} = button.dataset;
+      const zone = button.closest("fieldset")?.querySelector("legend")?.textContent || "Outside the running loop";
+      const module = modules[key];
+      button.type = "button";
+      button.className = "node";
+      button.title = module.summary;
+      button.dataset.tone = rating(module.parts);
+      button.setAttribute("aria-haspopup", "dialog");
+      button.append(glyph(icon), el("strong", "", module.title), badge(el("span", "badge", ""), button.dataset.tone));
+      button.addEventListener("click", () => openModule(key, zone, icon));
+    }
+
+    const call = (from, to, text) => ({from, to, text, kind: "control"});
+    const transfer = (from, to, text) => ({from, to, text, kind: "data"});
+    const handoffs = {
+      scan: call("console", "gateway", "A researcher starts a scan. The console posts the project ID and options to /api/lab/projects/{id}/triage."),
+      labRoute: call("gateway", "lab", "The gateway selects lab-api, strips /api/lab and forwards the HTTP request."),
+      start: call("lab", "service", "The triage endpoint calls start_triage to check the project and create a scan."),
+      queueScan: transfer("service", "db", "The service stores a triage record and queues triage.run with its ID."),
+      leaseScan: transfer("db", "worker", "The worker polls and claims the queued job. Postgres returns the payload; it does not push or start a worker."),
+      find: call("worker", "discover", "The triage graph refreshes topics if needed, then invokes discovery to select papers."),
+      claim: transfer("discover", "distill", "The graph passes selected paper IDs into distillation. The extractor reads their text from the paper store."),
+      rank: call("distill", "match", "After distillation the graph invokes match_project. It scores persisted claims for the project, then records a shortlist. Gate 1 waits for a pick."),
+      approve: call("cli", "service", "An operator approves a waiting experiment spec. The CLI calls decide_spec directly, bypassing HTTP."),
+      queueResume: transfer("service", "db", "With the experiment row locked, the service writes the decision, event and experiment.resume job together."),
+      leaseResume: transfer("db", "worker", "The polling worker claims the resume job and supplies its gate-tagged decision to the checkpointed experiment graph."),
+      run: call("worker", "build", "Only after approval does the graph resume at build, then run smoke, tuning if configured, and evaluation."),
+      bench: call("build", "target", "In the target worktree the runner takes the GPU lock and invokes the project's bench_ab command with the two arms."),
+      results: transfer("target", "build", "The target harness writes paired rounds and quality results. The runner validates the JSON and records the run."),
+      assess: transfer("build", "judge", "The judge node loads the recorded runs, computes paired deltas and confidence intervals, and checks guardrails."),
+      report: transfer("judge", "files", "When judging finishes, the renderer writes report.html. Gate 3 waits for a person to merge or drop."),
+      catalog: call("gateway", "research", "A catalog request with /api/research is routed to the research API instead of the lab API."),
+      read: call("research", "service", "For GET /papers the handler calls list_papers; a read does not start a benchmark."),
+      ingest: call("discover", "feeds", "For an enabled feed and topic query, a source adapter requests matching paper or patent metadata."),
+      extract: call("distill", "models", "When configured, the extractor requests structured concepts and claim cards from the generation client."),
+      ops: call("cli", "ops", "An explicit digest, schedule or batch CLI command starts the corresponding operator tool outside the interactive scan."),
+      events: transfer("db", "lab", "During an SSE request the lab API reads event rows newer than the client's cursor.")
+    };
+    const names = h => `${modules[h.from].title} → ${modules[h.to].title}`;
+
+    const stage = (role, title, input, action, output, ...refs) => ({role, title, input, action, output, refs});
+    const agentStages = {
+      extract: stage("Model-assisted", "Extract claims", "Paper text, title and abstract.",
+        "Request structured concepts with evidence. If extraction falls back to heuristics, the resulting concepts are marked non-testable.",
+        "Validated claim cards stored for matching.", "distill/extractor.py:101-150", "distill/pipeline.py:83-112"),
+      match: stage("Scoring + optional LLM", "Match to project", "Claim cards, project profile, metrics and past verdicts.",
+        "Score fit and blockers; optionally review top candidates with the model. The triage graph ends after recording its shortlist.",
+        "Ranked candidates in awaiting_pick, not a running experiment.", "lab/matcher.py:186-322", "lab/orchestrator.py:883-911"),
+      pick: stage("Human · Gate 1", "Pick a claim", "Shortlist and project context.",
+        "Choose what to test. The pick creates experiment records; the scan alone cannot authorize a build.",
+        "An experiment ready for planning (or waiting for prerequisites).", "lab/service.py:449-519"),
+      plan: stage("Model-assisted", "Draft the spec", "Picked claim, project profile, metric, prior feedback and any prerequisite flags.",
+        "Start with a template; optionally ask a model to refine it. Validate and normalize the spec against the target's constraints.",
+        "Proposed flag, comparison arms, workload, success threshold and guardrails.", "lab/planner.py:229-341", "lab/orchestrator.py:194-228"),
+      spec: stage("Human · Gate 2", "Review the spec", "Proposed experiment spec.",
+        "Approve to build, revise with feedback to replan, or reject to stop. Explicit batch mode can approve Gate 2 automatically.",
+        "A gate-tagged decision, not a model-issued approval.", "lab/orchestrator.py:259-288", "lab/batch.py:59-72"),
+      build: stage("Coding agent", "Implement the flag", "Approved spec, target worktree, project contract and any repair feedback.",
+        "The builder invokes Copilot CLI (or Codex) to edit the target project behind a feature flag. PaperAtlas records the changes and invokes verification.",
+        "A candidate implementation on the experiment branch.", "lab/builder.py:52-106", "lab/builder.py:365-390"),
+      verify: stage("Runtime", "Verify the build", "Candidate diff and the target's declared commands.",
+        "Check for changes and protected paths; run the flag registry and tests when configured. Failures go back to the builder, with three attempts by default.",
+        "A verified build, or a failed experiment when attempts are exhausted.", "lab/builder.py:326-357", "lab/builder.py:374-403"),
+      measure: stage("Target harness", "Measure A/B", "Verified flag, fixed workload, baseline and variant settings.",
+        "Run a smoke check, tune if configured, then run the claim check and a separate adoption check if needed. GPU-bound benchmark work takes the shared lock.",
+        "Paired measurements, quality results and environment data.", "lab/orchestrator.py:326-397", "lab/runner.py:117-183"),
+      judge: stage("Statistical code", "Compute verdict", "Paired rounds, the approved success threshold and quality guardrails.",
+        "Compute improvement and confidence intervals, then apply structural and quality checks. A language model does not decide the verdict.",
+        "A measured verdict and reasons; insufficient evidence may be inconclusive.", "lab/judge.py:102-191"),
+      analyst: stage("Model-assisted", "Diagnose the result", "Measured verdict, tuning history, fidelity notes and the paper's claim.",
+        "Explain discrepancies and suggest concrete next changes. Without a model, or on a provider failure, the rule-based diagnosis requests no further iteration.",
+        "Diagnosis, evidence, worth_iterating and next_changes.", "lab/analyst.py:90-118", "lab/analyst.py:145-167"),
+      budget: stage("LangGraph policy", "Retry or finish", "Diagnosis, proposed changes, iteration history and the spec's max_iterations.",
+        "Return to build only for an actionable retry within the iteration budget. This measured-results loop is separate from fixing a build that failed verification.",
+        "Feedback for a new build, or the retained measurements for reporting.", "lab/orchestrator.py:487-529", "lab/planner.py:78-84"),
+      report: stage("Runtime", "Publish evidence", "Kept iteration, spec, measurements, verdict and analysis.",
+        "Render the report, persist the verdict and mark the experiment awaiting_decision. A draft PR may be attempted; it is not a merge.",
+        "Reviewable HTML and a pending Gate 3 decision.", "lab/orchestrator.py:526-557"),
+      decide: stage("Human · Gate 3", "Merge or drop", "Experiment report and retained branch.",
+        "Choose whether the project should adopt the change. A positive verdict does not grant permission to merge.",
+        "Explicit merge or drop decision.", "lab/orchestrator.py:591-598", "lab/service.py:965-980"),
+      finish: stage("Runtime", "Finalize", "Gate 3 decision, branch, worktree and experiment record.",
+        "Merge the retained branch or drop it and remove the worktree. A drop keeps the recorded experiment results.",
+        "Final status and an update for dependent experiments.", "lab/orchestrator.py:612-646")
+    };
+    function inspectStage(id) {
+      const s = agentStages[id], note = $("#agent-notes"), fields = document.createElement("dl");
+      note.hidden = false;
+      for (const [label, text] of [["Input", s.input], ["Action", s.action], ["Output", s.output]]) {
+        const field = document.createElement("div");
+        field.append(el("dt", "", label), el("dd", "", text));
+        fields.append(field);
+      }
+      const refs = el("div", "flex flex-wrap gap-2", "");
+      refs.append(...s.refs.map(source));
+      note.replaceChildren(el("p", "kicker", s.role), el("h3", "", s.title), fields, refs);
+      for (const button of document.querySelectorAll("[data-agent-stage]")) button.setAttribute("aria-pressed", String(button.dataset.agentStage === id));
+    }
+    function agentLane(container, caption, ids, kinds) {
+      const stops = ids.map(id => {
+        const s = agentStages[id], button = el("button", "agent-stage", "");
+        button.type = "button";
+        button.dataset.agentStage = id;
+        button.setAttribute("aria-controls", "agent-notes");
+        button.setAttribute("aria-pressed", "false");
+        button.append(el("small", "", s.role), el("strong", "", s.title));
+        button.onclick = () => {
+          inspectStage(id);
+          $("#agent-notes").scrollIntoView({block: "nearest"});
+        };
+        return button;
+      });
+      container.append(el("p", "lane-label", caption), lane(stops, kinds.map(k => laneWire(k, k === "data" ? "Evidence to" : "Then"))));
+    }
+    const phases = [
+      ["01 / Choose an experiment", [["Triage ends with a human pick", ["extract", "match", "pick"], ["data", "data"]]]],
+      ["02 / Agree on the test", [["A spec is a proposal, not permission to build", ["pick", "plan", "spec"], ["control", "data"]]]],
+      ["03 / Change code and measure", [["Only an approved spec reaches the builder", ["spec", "build", "verify", "measure"], ["control", "control", "control"]]]],
+      ["04 / Interpret and decide", [
+        ["Use evidence to decide whether to iterate", ["measure", "judge", "analyst", "budget"], ["data", "data", "control"]],
+        ["When iteration ends, a person decides adoption", ["budget", "report", "decide", "finish"], ["control", "data", "control"]]
+      ]]
+    ];
+    for (const [title, rows] of phases) {
+      const group = el("section", "lane-group", "");
+      group.append(el("h3", "", title));
+      for (const row of rows) agentLane(group, ...row);
+      $("#agent-lanes").append(group);
+    }
+    agentLane($("#agent-feedback"), "Revise with a comment → draft again. Reject → stop.", ["spec", "plan"], ["control"]);
+    agentLane($("#agent-feedback"), "Build verification failed and attempts remain", ["verify", "build"], ["data"]);
+    agentLane($("#agent-feedback"), "Fixable diagnosis, next changes and iteration budget remaining", ["budget", "build"], ["control"]);
+    $("#state-source").append(source("lab/orchestrator.py:717-742"), " · ", source("lab/service.py:915-936"));
+    const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
+    function setMotion(on) {
+      document.body.classList.toggle("flowing", on);
+      for (const button of document.querySelectorAll(".motion-toggle")) {
+        button.setAttribute("aria-pressed", String(on));
+        button.textContent = on ? "Pause flow" : "Animate flow";
+      }
+    }
+    document.querySelectorAll(".motion-toggle").forEach(button => {
+      button.onclick = () => setMotion(!document.body.classList.contains("flowing"));
+    });
+    reducedMotion.addEventListener("change", () => setMotion(!reducedMotion.matches));
+    setMotion(!reducedMotion.matches);
+
+    // Search only channels on the sides and centerlines of measured boxes. This keeps
+    // orthogonal arrows off labels without shrinking the text or hard-coding viewport coordinates.
+    function wireRouter(rects, obstacles, width, height, clearance, spacious) {
+      const offsets = [0, -1.5*clearance, 1.5*clearance];
+      function axis(lo, mid, hi, limit) {
+        const tracks = [2, 9, 16, 23, limit-23, limit-16, limit-9, limit-2, ...obstacles.flatMap(r => [r[lo], r[hi]])];
+        for (const r of rects.values()) tracks.push(r[lo]-clearance-2, r[hi]+clearance+2, ...offsets.map(d => r[mid]+d));
+        return [...new Set(tracks)].filter(v => v >= 0 && v <= limit).sort((a,b) => a-b);
+      }
+      const xs = axis("left","cx","right",width), ys = axis("top","cy","bottom",height);
+      const cols = xs.length, size = cols * ys.length;
+      const open = (x, y) => !obstacles.some(r => x > r.left && x < r.right && y > r.top && y < r.bottom);
+      const adj = Array.from({length: size}, () => []);
+      const join = (a, b) => { adj[a].push(b); adj[b].push(a); };
+      for (let j = 0; j < ys.length; j++) for (let i = 0; i < cols; i++) {
+        const n = j * cols + i, x = xs[i], y = ys[j];
+        if (!open(x, y)) continue;
+        if (i && open(xs[i-1], y) && open((xs[i-1]+x)/2, y)) join(n, n-1);
+        if (j && open(x, ys[j-1]) && open(x, (ys[j-1]+y)/2)) join(n, n-cols);
+      }
+      function ports(r) {
+        return offsets.flatMap(d => [[r.left,r.cy+d,clearance,0],[r.right,r.cy+d,-clearance,0],
+          [r.cx+d,r.top,0,clearance],[r.cx+d,r.bottom,0,-clearance]])
+          .filter(([x,y]) => open(x,y) && xs.includes(x) && ys.includes(y))
+          .map(([x,y,dx,dy]) => ({n: ys.indexOf(y)*cols + xs.indexOf(x), axis: dx ? 0 : 1, tip: [x+dx,y+dy]}));
+      }
+      const point = n => [xs[n%cols], ys[Math.floor(n/cols)]];
+      const traffic = new Array(size);
+      const nearbyLane = new Uint8Array(size);
+      function reserveLane([x,y], [X,Y]) {
+        const vertical = x === X;
+        const along = vertical ? ys : xs, across = vertical ? xs : ys;
+        const lo = vertical ? Math.min(y,Y) : Math.min(x,X), hi = vertical ? Math.max(y,Y) : Math.max(x,X);
+        for (let j = 0; j < across.length; j++) {
+          if (Math.abs(across[j] - (vertical ? x : y)) >= Math.max(6, clearance+2)) continue;
+          for (let i = 0; i < along.length-1; i++) {
+            if (along[i] < hi && along[i+1] > lo) nearbyLane[vertical ? i*cols+j : j*cols+i] |= vertical ? 2 : 1;
+          }
+        }
+      }
+      const portsById = new Map([...rects].map(([id, r]) => [id, ports(r)]));
+      function route(wire, relaxedPorts = false) {
+        const starts = portsById.get(wire.from).filter(p => !traffic[p.n]);
+        const ends = new Map(portsById.get(wire.to).filter(p => !traffic[p.n]).map(p => [p.n,p]));
+        const seeds = new Map();
+        // Only calls of the same kind leaving the very same component may share a trunk.
+        // A branch starts at a straight point on that trunk, never at a visual crossing.
+        for (let n = 0; n < size; n++) {
+          const t = traffic[n];
+          if (t?.axis >= 0 && t.wire.from === wire.from && t.wire.kind === wire.kind) {
+            seeds.set(n, {n, axis: 1-t.axis, tip: point(n), branch: true});
+          }
+        }
+        const hasTrunk = seeds.size > 0;
+        for (const p of starts) seeds.set(p.n, p);
+        const cost = new Float64Array(size*2).fill(Infinity), previous = new Int32Array(size*2), queue = [];
+        function enqueue(state, distance, parent) {
+          if (distance >= cost[state]) return;
+          cost[state] = distance;
+          previous[state] = parent;
+          let lo = 0, hi = queue.length;
+          while (lo < hi) {
+            const mid = (lo+hi) >> 1;
+            if (queue[mid][1] > distance) lo = mid+1; else hi = mid;
+          }
+          queue.splice(lo, 0, [state, distance]);
+        }
+        for (const p of seeds.values()) enqueue(p.n*2+p.axis, !p.branch && hasTrunk ? (spacious ? 8 : 40) : 0, -1);
+        while (queue.length) {
+          let [state, distance] = queue.pop();
+          if (distance !== cost[state]) continue;
+          let n = state >> 1;
+          const end = ends.get(n);
+          if (end && (relaxedPorts || state%2 === end.axis)) {
+            const walk = [];
+            for (;;) {
+              walk.push(n);
+              state = previous[state];
+              if (state === -1) break;
+              n = state >> 1;
+            }
+            walk.reverse();
+            const start = seeds.get(n);
+            const points = [start.tip, ...walk.map(point), end.tip];
+            if (start.branch) wire.junction = start.tip;
+            const bends = [points[0]];
+            walk.forEach((cell, i) => {
+              const [x,y] = points[i+1], before = points[i], after = points[i+2];
+              const straight = before[0] === x && after[0] === x ? 1 : before[1] === y && after[1] === y ? 0 : -1;
+              const existing = traffic[cell];
+              traffic[cell] = {wire, axis: existing || i === 0 || i === walk.length-1 ? -1 : straight};
+              if (straight === -1) bends.push([x,y]);
+            });
+            bends.push(end.tip);
+            for (let i = 1; i < bends.length; i++) reserveLane(bends[i-1], bends[i]);
+            for (const cell of walk) {
+              const [x,y] = point(cell);
+              if (bends.some(([X,Y]) => Math.abs(x-X)+Math.abs(y-Y) < 6)) traffic[cell].axis = -1;
+            }
+            return bends;
+          }
+          for (const next of adj[n]) {
+            const axis = Number(Math.abs(next-n) === cols);
+            const here = traffic[n], there = traffic[next];
+            if (!relaxedPorts && previous[state] === -1 && axis !== state%2) continue;
+            // Occupied tracks cannot be retraced. A different net may pass straight
+            // across a straight track, not turn onto it, touch an elbow, or use its port.
+            if (here && (axis === here.axis || axis !== state%2)) continue;
+            if (there && (there.axis < 0 || there.axis === axis)) continue;
+            const length = axis ? Math.abs(ys[Math.floor(next/cols)]-ys[Math.floor(n/cols)]) : Math.abs(xs[next%cols]-xs[n%cols]);
+            const near = nearbyLane[Math.min(n,next)] & (axis ? 2 : 1);
+            const turn = axis !== state%2 ? (spacious ? 96 : 42) : 0;
+            const crossing = there ? (spacious ? 320 : 80) : 0;
+            enqueue(next*2+axis, distance + length*(near ? 70 : 1) + turn + crossing, state);
+          }
+        }
+        // At a cramped breakpoint a port may only be accessible around a corner.
+        // Relax the preferred approach angle, never the no-overlap or junction rules.
+        return relaxedPorts ? null : route(wire, true);
+      }
+      return route;
+    }
+    function drawConnections(svg, nodes, links, labels) {
+      const frame = svg.getBoundingClientRect();
+      if (!frame.width) return;
+      const spacious = svg.id === "wires" && frame.width > 1000;
+      const clearance = spacious ? 8 : 3;
+      const measure = (r, pad) => ({
+        left: Math.floor(r.left-frame.left)-pad, right: Math.ceil(r.right-frame.left)+pad,
+        top: Math.floor(r.top-frame.top)-pad, bottom: Math.ceil(r.bottom-frame.top)+pad,
+        cx: Math.round(r.left-frame.left+r.width/2), cy: Math.round(r.top-frame.top+r.height/2)
+      });
+      const rects = new Map([...nodes].map(([id, node]) => [id, measure(node.getBoundingClientRect(), clearance)]));
+      const obstacles = [...rects.values()];
+      for (const label of labels) {
+        const range = document.createRange();
+        range.selectNodeContents(label);
+        for (const r of range.getClientRects()) if (r.width && r.height) obstacles.push(measure(r, 3));
+      }
+      const route = wireRouter(rects, obstacles, Math.floor(frame.width), Math.floor(frame.height), clearance, spacious);
+      const span = ({from,to}) => Math.abs(rects.get(from).cx-rects.get(to).cx) + Math.abs(rects.get(from).cy-rects.get(to).cy);
+      // Reserve direct, local connections first; long peripheral routes can use the outside lanes.
+      const wires = links.map(link => ({...link, gaps: []})).sort((a,b) => span(a)-span(b));
+      const segments = [];
+      for (const wire of wires) {
+        const points = route(wire);
+        if (!points) continue;
+        wire.d = "M" + points.map(p => p.join(" ")).join(" L");
+        // Only cut a gap where the final, simplified polylines actually pass
+        // through one another. Grid-search visits near a turn aren't crossings.
+        const current = points.slice(1).map(([x,y], i) => {
+          const [X,Y] = points[i], horizontal = y === Y;
+          const a = horizontal ? x : y, b = horizontal ? X : Y;
+          return {wire, horizontal, at: horizontal ? y : x, lo: Math.min(a,b), hi: Math.max(a,b)};
+        });
+        for (const s of current) for (const t of segments) {
+          if (s.horizontal !== t.horizontal && s.lo < t.at && t.at < s.hi && t.lo < s.at && s.at < t.hi) {
+            t.wire.gaps.push(s.horizontal ? [t.at,s.at] : [s.at,t.at]);
+          }
+        }
+        segments.push(...current);
+      }
+      const defs = svgElement("defs", {}), paths = [], dots = [];
+      wires.forEach(({from,to,kind,d,gaps,junction}, index) => {
+        if (!d) { console.warn(`No clear channel for ${from} → ${to}; see the text connections.`); return; }
+        const group = svgElement("g", {"data-net-source": from, "data-net-target": to, "data-kind": kind});
+        if (gaps.length) {
+          const id = `${svg.id}-gap-${index}`;
+          const mask = svgElement("mask", {id, maskUnits: "userSpaceOnUse", x: 0, y: 0, width: frame.width, height: frame.height});
+          mask.append(svgElement("rect", {width: frame.width, height: frame.height, fill: "white"}),
+            ...gaps.map(([cx,cy]) => svgElement("circle", {cx, cy, r: 5, fill: "black"})));
+          defs.append(mask);
+          group.setAttribute("mask", `url(#${id})`);
+        }
+        group.append(svgElement("path", {d, class: `${kind}-line`, "data-from": from, "data-to": to}),
+          svgElement("path", {d, class: `packet ${kind}`}));
+        paths.push(group);
+        if (junction) dots.push(svgElement("circle", {cx: junction[0], cy: junction[1], r: 3.6, class: `junction ${kind}`, "data-net-source": from, "data-net-target": to, "data-kind": kind}));
+      });
+      $(":scope > g", svg).replaceChildren(defs, ...paths, ...dots);
+    }
+    const mapNodes = new Map([...document.querySelectorAll(".topology [data-key]")].map(n => [n.dataset.key, n]));
+    // A logical branch can start midway along its source's trunk. Keep that entire
+    // source/kind network legible rather than highlighting a disconnected arrowhead.
+    function emphasize(key) {
+      const elements = [...document.querySelectorAll("#wires [data-net-source]")];
+      const net = e => `${e.dataset.netSource}:${e.dataset.kind}`;
+      const related = new Set(elements.filter(e => e.dataset.netSource === key || e.dataset.netTarget === key).map(net));
+      for (const e of elements) e.classList.toggle("wire-quiet", related.size > 0 && !related.has(net(e)));
+    }
+    const topology = $(".topology");
+    function updateEmphasis() {
+      const node = topology.querySelector("button:focus-visible") || topology.querySelector("button:hover");
+      emphasize(node?.dataset.key);
+    }
+    for (const node of mapNodes.values()) {
+      node.addEventListener("pointerenter", updateEmphasis);
+      node.addEventListener("pointerleave", updateEmphasis);
+      node.addEventListener("focus", updateEmphasis);
+      node.addEventListener("blur", () => requestAnimationFrame(updateEmphasis));
+    }
+    const links = Object.values(handoffs).filter((h, i, all) =>
+      !all.slice(0,i).some(other => other.from === h.from && other.to === h.to && other.kind === h.kind));
+    function drawWires() {
+      drawConnections($("#wires"), mapNodes, links, document.querySelectorAll(".topology legend, .tier h3, .boundary-note, .gate-label, .drop"));
+      updateEmphasis();
+    }
+    new ResizeObserver(drawWires).observe(topology);
+    drawWires();
+  </script>
+</body>
+</html>

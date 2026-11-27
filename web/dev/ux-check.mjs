@@ -23,7 +23,8 @@
  *   --quiet                print only the summary
  *
  * Failures (exit 1): document horizontal scroll, elements past the viewport, text-on-text overlaps, sibling
- * box overlaps, SVG text overlaps / outside its svg / rendered < 11px, tooltip outside the viewport, under
+ * box overlaps, SVG text overlaps / outside its svg / rendered < 11px, stacked floating layers (one opened by
+ * focus/click/tap while another is hovered/tapped), tooltip outside the viewport, under
  * the header or covered, truncated numbers, a toast over the action bar, nav destinations unreachable, and
  * tiny text classes in --lint-strict files.
  * Warnings: text < 12px, targets < 24px, clipped/truncated text, native `title` tooltips, focus without a
@@ -480,6 +481,17 @@ function checkFloating(triggerSel) {
   if (covered.length) issues.push('covered')
   return { open: true, trigger: triggerSel, rect: [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)], issues, covered }
 }
+
+/** Visible floating layers (tooltips, popovers, menus), outermost only. */
+function countFloating() {
+  const visible = Array.from(document.querySelectorAll('[role=tooltip], [data-floating]')).filter((el) => {
+    if (el.closest('[hidden]')) return false
+    const cs = getComputedStyle(el)
+    const r = el.getBoundingClientRect()
+    return cs.display !== 'none' && cs.visibility !== 'hidden' && parseFloat(cs.opacity) > 0 && r.width > 4 && r.height > 4
+  })
+  return visible.filter((el) => !visible.some((other) => other !== el && other.contains(el))).length
+}
 /* eslint-enable no-undef */
 
 // ---- static lint: tiny text classes ---------------------------------------------------------------------
@@ -573,6 +585,34 @@ async function probeTooltips(page, vw, route, touch) {
       await page.mouse.move(1, 1).catch(() => {})
       await page.waitForTimeout(150)
     }
+  }
+  // Stacking: open one layer (focus, click on a popover trigger, or tap), then hover/tap its neighbour.
+  // Only one floating layer may be visible afterwards.
+  const pairable = triggers.filter((t) => !t.fixed && !(touch && (t.button || t.tag === 'A')))
+  for (let i = 0; i + 1 < pairable.length && i < 6; i += 2) {
+    const [a, b] = [pairable[i], pairable[i + 1]]
+    await a.handle.evaluate((el) => el.scrollIntoView({ block: 'center' })).catch(() => {})
+    await page.waitForTimeout(80)
+    const popover = await a.handle.evaluate((el) => el.getAttribute('aria-haspopup') === 'dialog').catch(() => false)
+    const how = touch ? 'tap' : popover ? 'click' : 'focus'
+    if (how === 'tap') await a.handle.tap().catch(() => {})
+    else if (how === 'click') await a.handle.click().catch(() => {})
+    else
+      await a.handle.evaluate((el) => {
+        const target = el.matches('a[href], button, input, select, textarea, [tabindex]') ? el : el.querySelector('a[href], button, [tabindex]')
+        target?.focus()
+      })
+    await page.waitForTimeout(450)
+    const first = await page.evaluate(countFloating)
+    if (touch) await b.handle.tap().catch(() => {})
+    else await b.handle.hover().catch(() => {})
+    await page.waitForTimeout(600)
+    const open = await page.evaluate(countFloating)
+    if (open > 1) issues.push({ route, vw, mode: `${how}+${touch ? 'tap' : 'hover'}`, trigger: `${a.text} → ${b.text}`, issues: ['stacked'], open, openedFirst: first })
+    for (let k = 0; k < 2; k++) await page.keyboard.press('Escape').catch(() => {})
+    await page.evaluate(() => document.activeElement instanceof HTMLElement && document.activeElement.blur())
+    await page.mouse.move(1, 1).catch(() => {})
+    await page.waitForTimeout(200)
   }
   // Keyboard focus on the first non-fixed trigger.
   const first = triggers.find((t) => !t.fixed)

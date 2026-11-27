@@ -434,6 +434,20 @@ class Job(Base):
     created_at: Mapped[datetime] = _now()
 
 
+class Worker(Base):
+    """Worker processes and when each was last alive: on start, a worker resumes jobs that failed while a
+    previous worker was being shut down (see lab/recovery.py)."""
+
+    __tablename__ = "workers"
+    __table_args__ = {"schema": LAB}
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    started_at: Mapped[datetime] = _now()
+    last_seen_at: Mapped[datetime] = _now()
+    stopped_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    recovered_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+
 class Event(Base):
     """Progress events for the UI (streamed over SSE) and the CLI."""
 

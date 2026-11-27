@@ -97,6 +97,16 @@ def test_schedule_quotes_paths_with_spaces(tmp_path):
     assert tokens[tokens.index("--project") + 1] == "demo lab"
 
 
+def test_daily_schedule_runs_every_day_and_lets_its_children_live(tmp_path):
+    from paperatlas.r2e.schedule import plist_for
+
+    plist = plist_for("demo lab", 1, 0, tmp_path, daily=True)
+    tokens = shlex.split(plist["ProgramArguments"][2])
+    assert plist["StartCalendarInterval"] == {"Hour": 0, "Minute": 0}
+    assert plist["AbandonProcessGroup"] is True
+    assert tokens[tokens.index("r2e") + 1] == "daily" and tokens[-1] == "demo lab"
+
+
 def test_temperature_rejection_on_the_last_attempt_is_resent(monkeypatch):
     from paperatlas.llm import client as llm_client
 
@@ -151,3 +161,84 @@ def test_gateway_keeps_encoded_path_and_closes_failed_streams(monkeypatch):
     with pytest.raises(httpx.ReadError):
         web.get("/api/research/fail")
     assert closed
+
+
+def test_llm_provider_option_selects_openai_copilot_or_an_ordered_fallback(monkeypatch):
+    from paperatlas.llm import client as llm
+
+    monkeypatch.delenv("PAPERATLAS_LLM_API_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    providers = {
+        "copilot": [llm.CopilotCliLLMClient],
+        "openai": [llm.LLMClient],
+        "openai,copilot": [llm.LLMClient, llm.CopilotCliLLMClient],
+        " Copilot , openai ": [llm.CopilotCliLLMClient, llm.LLMClient],
+    }
+    for value, expected in providers.items():
+        monkeypatch.setenv("PAPERATLAS_LLM_PROVIDER", value)
+        client = llm.build_default_llm_client(use_cache=False)
+        chain = client.clients if isinstance(client, llm.FallbackLLMClient) else [client]
+        assert [type(c) for c in chain] == expected, value
+
+    monkeypatch.setenv("PAPERATLAS_LLM_PROVIDER", "claude")
+    with pytest.raises(ValueError, match="unknown provider"):
+        llm.build_default_llm_client(use_cache=False)
+
+    monkeypatch.delenv("PAPERATLAS_LLM_PROVIDER")
+    assert type(llm.build_default_llm_client(use_cache=False)) is llm.LLMClient
+    monkeypatch.delenv("OPENAI_API_KEY")
+    assert llm.build_default_llm_client(use_cache=False) is None
+    monkeypatch.setenv("PAPERATLAS_LLM_PROVIDER", "openai,copilot")
+    assert isinstance(llm.build_default_llm_client(use_cache=False), llm.CopilotCliLLMClient)
+
+
+def test_copilot_model_context_and_effort_reach_both_llm_and_builder_calls(monkeypatch, tmp_path):
+    import subprocess
+
+    from paperatlas.lab import builder
+    from paperatlas.llm.client import CopilotCliLLMClient
+
+    monkeypatch.setenv("PAPERATLAS_COPILOT_CONTEXT", "long_context")
+    monkeypatch.setenv("PAPERATLAS_COPILOT_REASONING_EFFORT", "high")
+    monkeypatch.setenv("PAPERATLAS_BUILDER_MODEL", "claude-opus-5.5")
+    monkeypatch.setattr("shutil.which", lambda name: "/bin/" + name)
+    commands = []
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: commands.append(cmd) or subprocess.CompletedProcess(cmd, 0, "OK", ""))
+    monkeypatch.setattr(builder, "run_command", lambda cmd, *a, **kw: commands.append(cmd))
+
+    CopilotCliLLMClient("claude-opus-5.5").generate("s", "u")
+    builder.CopilotCliBuilder().implement(tmp_path, "p", tmp_path / "build.log", 60, None, None)
+    expected = ["--model", "claude-opus-5.5", "--context", "long_context", "--reasoning-effort", "high"]
+    assert [cmd[-6:] for cmd in commands] == [expected, expected]
+
+
+def test_fallback_client_uses_copilot_when_openai_fails_and_skips_a_rejected_key():
+    from paperatlas.llm.client import FallbackLLMClient, LLMClient, LLMConfig, LLMError
+
+    class Provider(LLMClient):
+        def __init__(self, name, error=None):
+            super().__init__(LLMConfig(api_key="", model=name))
+            self.error, self.calls = error, 0
+
+        def _call(self, system_prompt, user_prompt, schema):
+            self.calls += 1
+            if self.error:
+                raise self.error
+            return '{"answer": "%s"}' % self.model
+
+    flaky = Provider("openai", LLMError("LLM error 500: overloaded"))
+    copilot = Provider("copilot")
+    chain = FallbackLLMClient([flaky, copilot])
+    assert chain.generate_json("s", "u", "answer", {}) == {"answer": "copilot"}
+    assert chain.model == "copilot"
+    flaky.error = None
+    assert chain.generate("s", "u") == '{"answer": "openai"}' and chain.model == "openai"
+
+    revoked = Provider("openai", LLMError("LLM error 401: invalid key", unavailable=True))
+    chain = FallbackLLMClient([revoked, Provider("copilot")])
+    chain.generate("s", "u")
+    chain.generate("s", "u")
+    assert revoked.calls == 1
+
+    with pytest.raises(LLMError, match="All LLM providers failed"):
+        FallbackLLMClient([Provider("a", LLMError("down")), Provider("b", LLMError("down"))]).generate("s", "u")

@@ -6,6 +6,7 @@ import { AnswerBlock, Chip, cx, Disclosure } from '../../components/ui'
 import { formatCI, formatNumber, formatSigned, formatWorkload, humanize, roundNumbersInText } from '../../lib/format'
 import { chosenBy, claimTarget, diagnosisInfo, formatConfig, formatKnobValue, recommendDecision, type CheckResult } from '../../lib/protocol'
 import { semanticTone } from '../../lib/semantics'
+import { formatChangeCounts } from '../../lib/codeChanges'
 
 const ci = (check: Pick<CheckResult, 'low' | 'high'>) => (check.low !== null && check.high !== null ? `95% CI ${formatCI(check.low, check.high)}` : null)
 
@@ -376,6 +377,11 @@ export function IterationsTimeline({ iterations, kept }: { iterations: Iteration
               </dl>
               {entry.summary && <p className="mt-1 text-sm text-muted">{roundNumbersInText(entry.summary)}</p>}
               {entry.tuned?.variant && Object.keys(entry.tuned.variant).length > 0 && <p className="mt-0.5 text-xs text-muted">Tuned method: {formatConfig(entry.tuned.variant)}</p>}
+              {entry.changes?.files_changed != null && (
+                <p className="mt-0.5 text-xs text-muted">
+                  Code: {entry.changes.files_changed} file{entry.changes.files_changed === 1 ? '' : 's'}, <span className="font-mono">{formatChangeCounts(entry.changes.additions, entry.changes.deletions)}</span> from the base
+                </p>
+              )}
               {!last && entry.next_changes && (
                 <p className="mt-1 rounded-md border border-line-muted bg-canvas-subtle px-2 py-1 text-xs">
                   <span className="font-semibold">Changed for the next iteration:</span> {entry.next_changes}

@@ -24,7 +24,7 @@ import { claimedFigure, formatResultValue, monthLabel as researchMonthLabel, sou
 import { sentenceCase } from '../lib/semantics'
 import { CategoryChip, EffortChip, OutcomeBadge, StatusChip, Tag } from './Badges'
 import { AlertIcon, ChevronDown } from './Icons'
-import { floatingMiddleware, Tooltip, Truncate } from './Tooltip'
+import { floatingMiddleware, Tooltip, Truncate, useExclusiveOpen } from './Tooltip'
 import { AnswerBlock, Button, CardHeader, ChipRow, Chip, cx, Disclosure, MathText, StatTile } from './ui'
 
 export const monthLabel = researchMonthLabel
@@ -245,6 +245,7 @@ export function ActionMenu({ label, children, items, icon, placement = 'bottom-e
     whileElementsMounted: autoUpdate,
     middleware: floatingMiddleware(arrowRef, 340),
   })
+  useExclusiveOpen(open, () => setOpen(false), { sticky: true, reference: () => refs.domReference.current, floating: () => refs.floating.current })
   const { getReferenceProps, getFloatingProps, getItemProps } = useInteractions([
     useClick(context),
     useDismiss(context),
@@ -319,7 +320,7 @@ export function KeyResults({ results, max = 4, className }: { results: PaperExpl
       {results.slice(0, max).map((result, index) => (
         <li key={index} className="min-w-0">
           <StatTile
-            className="h-full"
+            fill
             label={sanitizeText(result.label)}
             value={formatResultValue(result.value) || MISSING.value}
             info={result.context ? <span>{sanitizeText(result.context)}</span> : undefined}

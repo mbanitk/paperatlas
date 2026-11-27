@@ -277,6 +277,11 @@ export function DecisionSummary({ experiment, verdict }: { experiment: Experimen
               {experiment.build.kept_iteration != null && ` · iteration ${experiment.build.kept_iteration} kept`}
             </span>
           )}
+          {details.code_effect && (
+            <a href="#code-changes" className="min-h-6 font-medium">
+              What the code changed, and why ↓
+            </a>
+          )}
           {details.analysis && (
             <a href="#evidence" className="min-h-6 font-medium">
               Why it came out this way ↓

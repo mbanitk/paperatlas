@@ -16,7 +16,7 @@ import { ClaimDeepDive, ClaimHeadline, ClaimOverview } from '../components/Claim
 import { RelatedStrip } from '../components/Related'
 import { PredictionPanel } from '../components/Prediction'
 import { Stepper } from '../components/Stepper'
-import { floatingMiddleware } from '../components/Tooltip'
+import { floatingMiddleware, useExclusiveOpen } from '../components/Tooltip'
 import { useToast } from '../components/Toast'
 import {
   AnswerBlock,
@@ -40,6 +40,7 @@ import {
 import { formatClaimed, formatRange } from '../lib/format'
 import { canCancel, canRerun, canRetry, isActiveStatus, normalizeStages, rerunsOf, statusInfo } from '../lib/stages'
 import { currentIteration, isProtocolV2, protocolOf, summarizeFailure } from '../lib/protocol'
+import { CodeChangesCard, hasCodeChanges } from './experiment/CodeChanges'
 import { BuildCard, LogCard, ProjectFacts, RunsCard } from './experiment/Sections'
 import { SpecDetails, SpecGate } from './experiment/SpecGate'
 import { ProtocolSummary } from './experiment/Protocol'
@@ -399,6 +400,7 @@ function MoreMenu({ experiment, onSelect }: { experiment: Experiment; onSelect: 
     whileElementsMounted: autoUpdate,
     middleware: floatingMiddleware(arrowRef, 300),
   })
+  useExclusiveOpen(open, () => setOpen(false), { sticky: true, reference: () => refs.domReference.current, floating: () => refs.floating.current })
   const { getReferenceProps, getFloatingProps } = useInteractions([useClick(context), useDismiss(context), useRole(context, { role: 'menu' })])
   const rerunnable = canRerun(experiment.status)
   const cancellable = canCancel(experiment.status)
@@ -673,6 +675,7 @@ function ExperimentPage({ data, project, reruns, events, streamStatus }: { data:
 
         <div className="grid gap-6 xl:grid-cols-3">
           <div className="min-w-0 space-y-6 xl:col-span-2">
+            {hasCodeChanges(data) && <CodeChangesCard experiment={data} />}
             {data.verdict_detail && <VerdictPanel experiment={data} verdict={data.verdict_detail} project={project} />}
 
             <Card

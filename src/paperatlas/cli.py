@@ -315,6 +315,19 @@ def cmd_report(args: argparse.Namespace) -> None:
     print(f"report written to {rerender_report(args.experiment)}")
 
 
+def cmd_changes(args: argparse.Namespace) -> None:
+    from paperatlas.lab.backfill import backfill_code_changes
+
+    counts = backfill_code_changes(
+        args.experiments or None, explain=not args.no_explain, use_llm=not args.no_llm, force=args.force,
+        say=lambda line: print(line, flush=True),
+    )
+    print(
+        f"{counts['experiments']} experiments: {counts['diffs']} diffs saved, {counts['explained']} results explained, "
+        f"{counts['no_diff']} without a recoverable diff, {counts['skipped']} skipped (in progress)"
+    )
+
+
 def cmd_explain(args: argparse.Namespace) -> None:
     from paperatlas.r2e.explainers import backfill
 
@@ -332,11 +345,24 @@ def cmd_explain(args: argparse.Namespace) -> None:
 def cmd_schedule(args: argparse.Namespace) -> None:
     from paperatlas.r2e.schedule import schedule, unschedule
 
+    what = "daily run" if args.daily else "weekly scan"
     if args.remove:
-        print("weekly scan removed" if unschedule() else "no weekly scan installed")
+        print(f"{what} removed" if unschedule(args.daily) else f"no {what} installed")
         return
-    result = schedule(args.project, args.weekday, args.hour, install=args.install)
+    result = schedule(args.project, args.weekday, args.hour, install=args.install, daily=args.daily, minute=args.minute)
     print(f"installed {result}" if args.install else result)
+
+
+def cmd_daily(args: argparse.Namespace) -> None:
+    from datetime import datetime
+
+    from paperatlas.r2e.daily import run_daily
+
+    def say(message: str) -> None:
+        print(f"{datetime.now():%Y-%m-%d %H:%M:%S} {message}", flush=True)
+
+    run_daily(args.project, parallel=args.parallel, min_likelihood=args.min_likelihood, per_topic=args.per_topic,
+              distill_limit=args.distill_limit, say=say)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -513,6 +539,16 @@ def build_parser() -> argparse.ArgumentParser:
     report.add_argument("experiment", type=int)
     report.set_defaults(func=cmd_report)
 
+    code = r2e_sub.add_parser(
+        "changes",
+        help="save experiments' diffs from git and explain their results from the code change (backfill)",
+    )
+    code.add_argument("experiments", type=int, nargs="*", help="experiment ids (default: all)")
+    code.add_argument("--no-explain", action="store_true", help="only save the diffs")
+    code.add_argument("--no-llm", action="store_true", help="rule-based explanations (no LLM calls)")
+    code.add_argument("--force", action="store_true", help="re-save diffs and regenerate explanations that exist")
+    code.set_defaults(func=cmd_changes)
+
     explain = r2e_sub.add_parser("explain", help="generate plain-language explainers + diagrams")
     explain.add_argument("--project", help="also explain the top claims for this project")
     explain.add_argument("--claims", type=int, default=25, help="top N recommendations to explain")
@@ -524,13 +560,27 @@ def build_parser() -> argparse.ArgumentParser:
     explain.add_argument("--workers", type=int, default=4)
     explain.set_defaults(func=cmd_explain)
 
-    weekly = r2e_sub.add_parser("schedule", help="weekly scan + digest via launchd (prints the plist unless --install)")
+    weekly = r2e_sub.add_parser(
+        "schedule", help="weekly scan + digest, or --daily run, via launchd (prints the plist unless --install)"
+    )
     weekly.add_argument("--project", default="inference-lab")
     weekly.add_argument("--weekday", type=int, default=1, help="0=Sunday … 6=Saturday")
     weekly.add_argument("--hour", type=int, default=8)
+    weekly.add_argument("--minute", type=int, default=0)
+    weekly.add_argument("--daily", action="store_true", help="every day: `r2e daily` (new papers → experiments)")
     weekly.add_argument("--install", action="store_true")
     weekly.add_argument("--remove", action="store_true")
     weekly.set_defaults(func=cmd_schedule)
+
+    daily = r2e_sub.add_parser(
+        "daily", help="new papers → claim cards → experiments: scan, explain, and start a batch unless one is running"
+    )
+    daily.add_argument("--project", default="inference-lab")
+    daily.add_argument("--parallel", type=int, default=3, help="experiments at a time for a batch it starts")
+    daily.add_argument("--min-likelihood", default="marginal", choices=["likely", "marginal", "unknown", "unlikely"])
+    daily.add_argument("--per-topic", type=int)
+    daily.add_argument("--distill-limit", type=int, default=60)
+    daily.set_defaults(func=cmd_daily)
     return parser
 
 

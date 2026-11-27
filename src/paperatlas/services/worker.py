@@ -23,6 +23,7 @@ from paperatlas.lab.events import (
     requeue_stale_jobs,
 )
 from paperatlas.lab.process import WorkerShutdown, request_shutdown
+from paperatlas.lab.recovery import mark_stopped, register_worker, resume_interrupted, touch_worker
 from paperatlas.settings import env
 
 logger = logging.getLogger(__name__)
@@ -153,6 +154,7 @@ def _keep_leases(done: threading.Event, interval_s: float = HEARTBEAT_S) -> None
     """Renew this worker's job leases and reclaim jobs whose worker stopped heartbeating."""
     while not done.wait(interval_s):
         try:
+            touch_worker()
             heartbeat_jobs(running_job_ids())
             requeued = requeue_stale_jobs()
             if requeued:
@@ -181,6 +183,11 @@ def run_worker(concurrency: int = 3, poll_s: float = 1.0) -> None:
     requeued = requeue_stale_jobs()
     if requeued:
         logger.info("Re-queued %d job(s) left running by a previous worker", requeued)
+    resumed = resume_interrupted()
+    if resumed["jobs"]:
+        experiments = ", ".join(f"#{i}" for i in dict.fromkeys(resumed["experiments"])) or "none"
+        logger.warning("Resumed %d job(s) interrupted by the last shutdown (experiments: %s)", len(resumed["jobs"]), experiments)
+    register_worker()
     stop = threading.Event()
 
     def on_signal(*_: Any) -> None:
@@ -191,8 +198,14 @@ def run_worker(concurrency: int = 3, poll_s: float = 1.0) -> None:
 
     signal.signal(signal.SIGTERM, on_signal)
     signal.signal(signal.SIGINT, on_signal)
-    with lease_keeper():
-        _serve(stop, concurrency, poll_s)
+    try:
+        with lease_keeper():
+            _serve(stop, concurrency, poll_s)
+    finally:
+        try:
+            mark_stopped()
+        except Exception:  # noqa: BLE001 - Postgres may already be gone at shutdown
+            logger.warning("Could not record the worker stop", exc_info=True)
 
 
 def _serve(stop: threading.Event, concurrency: int, poll_s: float) -> None:
