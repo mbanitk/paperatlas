@@ -27,6 +27,7 @@ export const keys = {
   projects: ['projects'] as const,
   project: (id: number) => ['projects', id] as const,
   recommendations: (projectId: number, params: RecommendationParams) => ['recommendations', projectId, params] as const,
+  assets: (projectId: number) => ['recommendations', projectId, 'assets'] as const,
   triageList: (projectId?: number) => ['triage', 'list', projectId ?? 'all'] as const,
   triage: (id: number) => ['triage', id] as const,
   experiments: (params: { project_id?: number; status?: string }) => ['experiments', params] as const,
@@ -77,6 +78,10 @@ export const useReprofile = (id: number) => {
     onSuccess: (project) => {
       client.setQueryData(keys.project(project.id), project)
       client.invalidateQueries({ queryKey: keys.projects })
+      // A re-profile re-checks every claim against the project's capabilities.
+      client.invalidateQueries({ queryKey: ['recommendations', project.id] })
+      client.invalidateQueries({ queryKey: ['claims'] })
+      client.invalidateQueries({ queryKey: ['claim'] })
     },
   })
 }
@@ -205,6 +210,15 @@ export const usePapers = (params: PaperParams) =>
   })
 
 export const usePaper = (id: string) => useQuery({ queryKey: keys.paper(id), queryFn: () => api.research.paper(id), enabled: !!id })
+
+/** The project's capabilities and how many claims need assets it doesn't have (the pre-screen). */
+export const useProjectAssets = (projectId: number | undefined) =>
+  useQuery({
+    queryKey: keys.assets(projectId ?? 0),
+    queryFn: ({ signal }) => api.lab.assets(projectId!, signal),
+    enabled: !!projectId,
+    staleTime: 60_000,
+  })
 
 export const useClaims = (params: ClaimParams) =>
   useQuery({

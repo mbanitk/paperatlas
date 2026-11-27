@@ -159,7 +159,7 @@ export function PaperReports({ claim, explainer, compact = false, showLossless =
         </span>
         {report ? (
           <span className="flex min-w-0 flex-1 items-baseline gap-x-1.5 @lg:block">
-            <span className="shrink-0 font-semibold text-fg tabular-nums @lg:block @lg:text-body-lg">{report.value}</span>
+            <span className="max-w-full shrink-0 font-semibold text-fg tabular-nums @lg:block @lg:text-body-lg">{report.value}</span>
             {report.metric && <Truncate className="min-w-0 text-muted">{report.metric}</Truncate>}
           </span>
         ) : (
@@ -639,6 +639,7 @@ export function ClaimSummary({
   facts,
   evidence,
   note,
+  notice,
   related = claim.related,
   canGenerate = true,
   selected = false,
@@ -662,6 +663,8 @@ export function ClaimSummary({
   facts?: ReactNode[]
   evidence?: ReactNode
   note?: string
+  /** Shown under the summary at every width (e.g. what the claim needs that the project lacks). */
+  notice?: ReactNode
   related?: Claim['related']
   /** Offer "Generate explanation" when there is none (queues an LLM call). */
   canGenerate?: boolean
@@ -694,7 +697,7 @@ export function ClaimSummary({
           <div className="grid gap-x-6 gap-y-1.5 @lg:gap-y-2 @3xl:grid-cols-[minmax(0,1fr)_minmax(0,30rem)] @5xl:grid-cols-[minmax(0,1fr)_minmax(0,34rem)]">
             <div className="min-w-0">
               <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-1">
-                <div className="eyebrow min-w-0 flex-1">{eyebrow ?? <ClaimEyebrow claim={claim} explainer={explainer} />}</div>
+                <div className="eyebrow min-w-0 grow basis-48">{eyebrow ?? <ClaimEyebrow claim={claim} explainer={explainer} />}</div>
                 {status && <div className="flex max-w-full flex-wrap items-center justify-end gap-1">{status}</div>}
               </div>
               <Heading id={headingId} className="mt-0.5 text-body-lg font-semibold text-fg [overflow-wrap:anywhere]">
@@ -707,6 +710,7 @@ export function ClaimSummary({
                 ))}
               </Heading>
               <p className="mt-0.5 line-clamp-2 text-sm text-muted">{claimSentence(claim, explainer)}</p>
+              {notice && <div className="mt-1.5">{notice}</div>}
               <div className="mt-2 hidden @md:block">
                 {factItems ? <ChipRow items={factItems} label="More about this claim" /> : <ClaimFacts claim={claim} explainer={explainer} fit={fit} blockers={blockers} />}
               </div>

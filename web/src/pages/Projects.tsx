@@ -12,8 +12,9 @@ import {
   useRole,
 } from '@floating-ui/react'
 import { ApiError } from '../api/client'
-import { useMatchJobs, useProjects, useRegisterProject, useRematch, useReprofile } from '../api/queries'
+import { useMatchJobs, useProjectAssets, useProjects, useRegisterProject, useRematch, useReprofile } from '../api/queries'
 import type { Project, ProjectMetric } from '../api/types'
+import { CapabilitiesList } from '../components/Assets'
 import { CodeToken, MetricName, Tag } from '../components/Badges'
 import { ConfirmDialog, Modal } from '../components/Dialog'
 import { ArrowRightIcon, BranchIcon, ChevronDown, FlaskIcon, RefreshIcon, ServerIcon, SparkIcon } from '../components/Icons'
@@ -325,6 +326,7 @@ const METRIC_COLUMNS = [
 ]
 
 function ProjectProfile({ project }: { project: Project }) {
+  const assets = useProjectAssets(project.capabilities ? project.id : undefined)
   const hardware = hardwareFacts(project.hardware)
   const models = Object.entries(project.models ?? {})
   const metrics = project.metrics ?? []
@@ -365,6 +367,20 @@ function ProjectProfile({ project }: { project: Project }) {
           <DefinitionList items={hardware.map((fact) => [fact.label, <span key={fact.key}>{fact.value}</span>] as [ReactNode, ReactNode])} />
         )}
       </Section>
+
+      {project.capabilities && (
+        <Section
+          title="Capabilities"
+          hint={
+            <>
+              What claims can rely on (<code className="code-inline">capabilities</code> in lab.yaml). Claims that need more are marked “Needs assets”;
+              re-profile after editing it.
+            </>
+          }
+        >
+          <CapabilitiesList capabilities={project.capabilities} assets={assets.data} projectId={project.id} />
+        </Section>
+      )}
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Section title="Models" count={models.length}>

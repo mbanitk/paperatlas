@@ -2,15 +2,19 @@ import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router'
 import { useCategories, useClaims, useProjects, useTopics } from '../../api/queries'
 import type { Claim, Project } from '../../api/types'
+import { NeedsAssetsNote } from '../../components/Assets'
+import { BlockerBadge } from '../../components/Badges'
 import { ClaimSummary } from '../../components/ClaimStory'
 import { ChevronDown, SearchIcon, SparkIcon, XIcon } from '../../components/Icons'
 import { Button, EmptyState, ErrorState, Loading, Pagination, cx, useDebounced } from '../../components/ui'
+import { missingAssets } from '../../lib/assets'
 import { formatAcronyms, formatScore, humanize, pluralize } from '../../lib/format'
 import { sentenceCase } from '../../lib/semantics'
 
 const LIMIT = 30
 
 function ClaimRow({ claim, project }: { claim: Claim; project?: Project }) {
+  const missing = claim.match ? missingAssets({ asset_check: claim.match.asset_check, blockers: claim.match.blockers }) : []
   return (
     <li>
       <ClaimSummary
@@ -18,6 +22,8 @@ function ClaimRow({ claim, project }: { claim: Claim; project?: Project }) {
         project={project}
         to={`/research/claims/${claim.id}`}
         canGenerate={claim.testable}
+        status={missing.length > 0 && <BlockerBadge blocker={`needs assets: ${missing.join('; ')}`} />}
+        notice={missing.length > 0 && <NeedsAssetsNote missing={missing} project={project?.name} />}
         footer={typeof claim.search_score === 'number' && <span className="tabular-nums">Relevance {formatScore(claim.search_score)}</span>}
       />
     </li>
@@ -42,6 +48,7 @@ export default function Claims() {
     category: category || undefined,
     topic: topic || undefined,
     testable: testable === '' ? undefined : testable === 'true',
+    project_id: project?.id,
     limit: LIMIT,
     offset: q ? 0 : offset,
   })

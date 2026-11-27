@@ -347,3 +347,83 @@ def test_cost_model_credits_only_gains_on_top_of_the_baseline_and_this_hardware(
     assert draft["likelihood"] == "unlikely" and any("measured acceptance" in r for r in draft["reasons"])
     lookup = predict({"category": "speculative_decoding", "technique": "prompt lookup n-gram drafting"}, roofline)
     assert lookup["predicted_gain_pct"]["high"] > draft["predicted_gain_pct"]["high"]
+
+
+def test_prescreen_capabilities_default_conservatively_and_compare_with_needs():
+    from paperatlas.lab.assets import CAPABILITY_KEYS, capabilities, check_needs, need_met
+
+    profile = {
+        "hardware": {"chip": "Apple M5 Pro", "accelerator": "apple-gpu (metal, via mlx)", "cuda": False},
+        "models": {"eval": {"id": "Qwen3.5-35B-A3B-4bit"}},
+    }
+    caps = capabilities(profile)
+    assert caps["architecture"] == "moe" and caps["accelerator"] == "apple-gpu-mlx"
+    assert caps["draft_models"] == [] and caps["mtp_heads"] is False and caps["max_context_tokens"] == 32768
+    assert set(caps["assumed"]) == set(CAPABILITY_KEYS)
+
+    caps = capabilities(
+        {
+            **profile,
+            "capabilities": {
+                "architecture": "dense",
+                "trained_adapters": ["EAGLE-3"],
+                "offline_artifacts": ["awq_calibration"],
+                "max_context_tokens": 131072,
+            },
+        }
+    )
+    assert "architecture" not in caps["assumed"] and "draft_models" in caps["assumed"]
+
+    def need(category, key, label, essential=True):
+        return {"category": category, "key": key, "label": label, "essential": essential, "why": ""}
+
+    needs = [
+        need("draft_model", "eagle3", "a trained EAGLE-3 head"),
+        need("draft_model", "medusa", "trained Medusa heads"),
+        need("offline_artifact", "awq", "an AWQ checkpoint"),
+        need("offline_artifact", "hqq", "an HQQ checkpoint"),
+        need("calibration_data", "any", "a calibration dataset"),
+        need("architecture", "moe", "an MoE model"),
+        need("min_context", "262144", "a 256K-token context"),
+        need("min_context", "33792", "a 33K-token context"),
+        need("custom_kernels", "cuda", "CUDA kernels"),
+        need("custom_kernels", "metal", "a Metal kernel"),
+        need("training", "", "fine-tuning", essential=False),
+        need("other", "", "a fast SSD"),
+    ]
+    check = check_needs({"needs": needs, "source": "llm"}, caps)
+    assert check["status"] == "needs_assets"
+    assert [item["label"] for item in check["missing"]] == [
+        "trained Medusa heads",
+        "an HQQ checkpoint",
+        "an MoE model",
+        "a 256K-token context",
+        "CUDA kernels",
+    ]
+    assert [item["met"] for item in check["needs"]][-2:] == [None, None]
+    assert check_needs({"needs": [], "source": "rules"}, caps)["status"] == "ok"
+
+    hybrid = capabilities({"models": {"eval": {"architecture": "dense hybrid (full attention every 4th, Gated DeltaNet otherwise)"}}})
+    assert hybrid["architecture"] == "dense"
+    met = {key: need_met(need("architecture", key, key), hybrid) for key in ("sparse_attention", "gated_deltanet", "ssm", "mla")}
+    assert met == {"sparse_attention": False, "gated_deltanet": True, "ssm": True, "mla": False}
+
+
+def test_prescreen_rules_find_drafters_artifacts_and_moe_but_not_model_free_drafting():
+    from types import SimpleNamespace
+
+    from paperatlas.lab.assets import classify_rules
+
+    def claim(technique, change="", prerequisites=()):
+        card = {"prerequisites": list(prerequisites), "risks": [], "paper_setup": {}, "effects": []}
+        return SimpleNamespace(id=1, category="speculative_decoding", technique=technique, change_required=change, card=card)
+
+    def categories(item):
+        return {(need["category"], need["key"]) for need in classify_rules(item)}
+
+    assert ("draft_model", "eagle3") in categories(claim("Verify drafts from an EAGLE-3 head"))
+    assert ("offline_artifact", "awq") in categories(claim("Quantize weights", prerequisites=["AWQ checkpoint"]))
+    assert ("architecture", "moe") in categories(claim("Restrict MoE dispatch to the top experts"))
+    assert ("min_context", "262144") in categories(claim("Evict KV at 256K tokens of context"))
+    assert categories(claim("Draft tokens with n-gram prompt lookup instead of a draft model")) == set()
+    assert categories(claim("Draft tokens with suffix-tree drafting, without a trained drafter")) == set()

@@ -273,6 +273,16 @@ export function diagnosisSemantics(value: string | null | undefined): SemanticIn
   return DIAGNOSIS[value ?? ''] ?? fallbackInfo(value)
 }
 
+// ---- pre-screen (lab/assets.py): prerequisites the project lacks ------------------------------------------
+
+export const NEEDS_ASSETS: SemanticInfo = {
+  label: 'Needs assets',
+  tone: 'caution',
+  icon: 'alert',
+  description:
+    'The claim needs something this project doesn’t have (a trained draft model, an offline-quantized checkpoint, calibration data, an MoE model…). Testing it would hang at the smoke test or measure a stand-in.',
+}
+
 // ---- fidelity (how closely the test follows the paper) ----------------------------------------------------
 
 export const FIDELITY: Record<FidelityLevel, SemanticInfo> = {

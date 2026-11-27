@@ -268,6 +268,8 @@ export interface Claim {
   search_score?: number | null
   explainer?: ClaimExplainer | null
   related?: ClaimRelated | null
+  /** The claim's match on the project passed as `project_id` (null when it isn't matched there). */
+  match?: ClaimMatch | null
 }
 
 export interface ClaimDetail extends Claim {
@@ -333,6 +335,77 @@ export interface Prediction {
   [extra: string]: unknown
 }
 
+// ---- pre-screen: what a claim needs vs what the project provides (lab/assets.py) ---------------------------
+
+export type AssetCategory =
+  | 'draft_model'
+  | 'mtp_heads'
+  | 'offline_artifact'
+  | 'calibration_data'
+  | 'architecture'
+  | 'custom_kernels'
+  | 'multi_gpu'
+  | 'min_context'
+  | 'training'
+  | 'trained_adapter'
+  | 'other'
+
+export interface AssetNeed {
+  category: AssetCategory
+  key: string
+  /** Completes "needs …", e.g. "a trained EAGLE-3 draft head". */
+  label: string
+  essential: boolean
+  why: string
+  /** null: can't be checked against the project (category `other`, or not essential). */
+  met: boolean | null
+}
+
+export interface AssetCheck {
+  status: 'ok' | 'needs_assets'
+  missing: { category: AssetCategory; key: string; label: string }[]
+  needs: AssetNeed[]
+  source: 'llm' | 'rules' | null
+  /** Capabilities lab.yaml doesn't declare, so the defaults were assumed. */
+  assumed: string[]
+  classified_at: string | null
+}
+
+export interface ClaimMatch {
+  project_id: number
+  testable_here: boolean
+  blockers: string[]
+  asset_check: AssetCheck | null
+}
+
+/** `capabilities:` in lab.yaml, with defaults for missing keys (listed in `assumed`). */
+export interface ProjectCapabilities {
+  architecture: string
+  draft_models: string[]
+  mtp_heads: boolean
+  offline_artifacts: string[]
+  calibration_data: boolean
+  max_context_tokens: number
+  trained_adapters: string[]
+  accelerator: string
+  multi_gpu: boolean
+  cuda: boolean
+  assumed: string[]
+}
+
+export interface ProjectAssets {
+  project_id: number
+  capabilities: ProjectCapabilities
+  matched: number
+  testable: number
+  checked: number
+  /** Claims that need assets the project lacks (some are blocked for other reasons too). */
+  needs_assets: number
+  /** Claims blocked only for missing assets: testable once the project has them. */
+  held_back: number
+  by_category: Partial<Record<AssetCategory, number>>
+}
+
 export interface Recommendation extends Claim {
   rank: number
   project_id: number
@@ -348,6 +421,7 @@ export interface Recommendation extends Claim {
   experiment_id: number | null
   experiment_status: ExperimentStatus | null
   prediction?: Prediction | null
+  asset_check?: AssetCheck | null
 }
 
 export interface Paged<T> {
@@ -461,6 +535,9 @@ export interface Project {
   techniques: { name: string; description?: string; hooks?: string[] }[] | null
   repo: { path?: string; branch?: string; sha?: string; remote?: string | null } | null
   profiled_at: string | null
+  /** When hardware, models or stack in lab.yaml last changed (`r2e batch --retest` re-runs older experiments). */
+  engine_changed_at?: string | null
+  capabilities?: ProjectCapabilities | null
   /** null until `POST /projects/{id}/roofline` has measured it */
   roofline?: Roofline | null
   roofline_at?: string | null

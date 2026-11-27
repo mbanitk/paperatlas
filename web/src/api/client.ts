@@ -17,6 +17,7 @@ import type {
   PaperSummary,
   PickBody,
   Project,
+  ProjectAssets,
   Recommendation,
   Seeds,
   ServicesHealth,
@@ -121,6 +122,8 @@ const patch = <T>(path: string, body: unknown) => request<T>('PATCH', path, body
 export interface RecommendationParams {
   limit?: number
   include_blocked?: boolean
+  /** Also claims whose only blocker is missing assets (drafters, artifacts, MoE…). */
+  include_needs_assets?: boolean
   category?: string
   topic?: string
   q?: string
@@ -139,6 +142,8 @@ export interface ClaimParams {
   topic?: string
   testable?: boolean
   paper_id?: string
+  /** Adds each claim's match on this project (`match`). */
+  project_id?: number
   limit?: number
   offset?: number
 }
@@ -200,6 +205,7 @@ export const api = {
       post<JobQueued>(`/lab/projects/${id}/roofline${buildQuery({ model, rematch })}`),
     recommendations: (projectId: number, params: RecommendationParams = {}, signal?: AbortSignal) =>
       get<Recommendation[]>(`/lab/projects/${projectId}/recommendations${buildQuery({ ...params })}`, signal),
+    assets: (projectId: number, signal?: AbortSignal) => get<ProjectAssets>(`/lab/projects/${projectId}/assets`, signal),
     startTriage: (projectId: number, options: TriageOptions) => post<Triage>(`/lab/projects/${projectId}/triage`, options),
     triageList: (projectId?: number) => get<TriageSummary[]>(`/lab/triage${buildQuery({ project_id: projectId })}`),
     triage: (id: number) => get<Triage>(`/lab/triage/${id}`),

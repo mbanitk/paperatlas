@@ -249,6 +249,23 @@ class Claim(Base):
     created_at: Mapped[datetime] = _now()
 
 
+class ClaimNeeds(Base):
+    """What a claim needs before it can be tested faithfully (trained drafter, offline artifacts, MoE model…),
+    classified once per claim text (`lab/assets.py`); each project compares it with its `capabilities`."""
+
+    __tablename__ = "claim_needs"
+    __table_args__ = {"schema": RESEARCH}
+
+    claim_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey(f"{RESEARCH}.claims.id", ondelete="CASCADE"), primary_key=True
+    )
+    input_hash: Mapped[str] = mapped_column(Text)
+    needs: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, server_default="[]")
+    source: Mapped[str] = mapped_column(Text)  # llm | rules
+    model: Mapped[Optional[str]] = mapped_column(Text)
+    classified_at: Mapped[datetime] = _now()
+
+
 class Project(Base):
     __tablename__ = "projects"
     __table_args__ = {"schema": LAB}
@@ -259,6 +276,9 @@ class Project(Base):
     profile: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default="{}")
     embedding = mapped_column(Vector(EMBEDDING_DIM), nullable=True)
     profiled_at: Mapped[datetime] = _now()
+    # When hardware, models or stack last changed (`--retest` re-runs experiments older than this); a re-profile
+    # that only changes e.g. `capabilities` leaves it alone.
+    engine_changed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     # Measured hardware/engine roofline (`commands.profile`), used to predict gains before building.
     roofline: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB)
     roofline_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
@@ -287,6 +307,9 @@ class Match(Base):
     explainer: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB)
     explained_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     prediction: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB)
+    # Pre-screen (`lab/assets.py`): the claim's prerequisites vs the project's capabilities; unmet ones are a
+    # "needs assets: …" blocker.
+    asset_check: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB)
     created_at: Mapped[datetime] = _now()
 
 
