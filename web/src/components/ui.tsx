@@ -378,7 +378,7 @@ export function AnswerBlock({ register, value, unit, label, tone = 'neutral', co
  * Labelled stat (§3.9): label → value → context → delta. The value never truncates; the whole tile is a link
  * when `to` is set. `attention` gives it the caution ring used for "needs you".
  */
-export function StatTile({ label, value, context, delta, to, attention, className, info }: {
+export function StatTile({ label, value, context, delta, to, attention, className, info, fill }: {
   label: ReactNode
   value: ReactNode
   context?: ReactNode
@@ -388,6 +388,8 @@ export function StatTile({ label, value, context, delta, to, attention, classNam
   className?: string
   /** Optional explanation in an InfoPopover next to the label. */
   info?: ReactNode
+  /** Stretch to the height of its grid cell, so tiles side by side are the same size. */
+  fill?: boolean
 }) {
   const body = (
     <>
@@ -401,10 +403,11 @@ export function StatTile({ label, value, context, delta, to, attention, classNam
     'block min-w-0 rounded-lg border bg-canvas p-3',
     attention ? 'border-caution-emphasis/70 ring-1 ring-caution-emphasis/40' : 'border-line',
     to && 'text-fg transition-colors hover:border-accent hover:no-underline',
+    fill && 'h-full',
     className,
   )
   return (
-    <div className="relative min-w-0">
+    <div className={cx('relative min-w-0', fill && 'h-full')}>
       {to ? (
         <Link to={to} className={classes}>
           {body}
