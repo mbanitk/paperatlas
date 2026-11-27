@@ -129,6 +129,27 @@ def test_verdict_rules(variant, quality, expected):
     assert verdict["quality_ok"] is (quality is None)
 
 
+def test_judge_warns_when_the_variant_gets_better_the_longer_a_server_runs():
+    # Like a technique that drafts from the benchmark's repeated prompts: round 2 on each variant server is twice as fast.
+    drifting = bench_results([9.8] * 6, [21.8, 42.5, 21.9, 42.4, 21.8, 42.5])
+    verdict = judge(drifting, SPEC, PROFILE, adopt_results=drifting)
+    assert verdict["server_drift"]["variant_change_pct"] > 90 and verdict["server_drift"]["servers"] == 3
+    assert "same server" in verdict["validity_warnings"][0]
+    assert verdict["adoption"]["validity_warnings"] == verdict["validity_warnings"]
+    steady = bench_results([100, 101, 99, 100, 100, 101], [122, 121, 119, 120, 123, 121])
+    assert judge(steady, SPEC, PROFILE)["validity_warnings"] == []
+
+
+def test_engine_fingerprint_counts_only_the_models_experiments_run_on():
+    from paperatlas.lab.profiler import engine_fingerprint
+
+    base = {"hardware": {"chip": "M"}, "stack": {"mlx": "1"}, "models": {"eval": {"id": "big"}, "smoke": {"id": "small"}}}
+    with_draft = {**base, "models": {**base["models"], "draft": {"id": "tiny"}}}
+    assert engine_fingerprint(with_draft) == engine_fingerprint(base)
+    assert engine_fingerprint({**base, "models": {**base["models"], "eval": {"id": "bigger"}}}) != engine_fingerprint(base)
+    assert engine_fingerprint({**base, "stack": {"mlx": "2"}}) != engine_fingerprint(base)
+
+
 def test_lower_is_better_metrics_count_reductions_as_improvements():
     spec = {**SPEC, "primary_metric": "ttft_ms", "direction": "lower_is_better", "claimed_gain_pct": 10.0}
     results = bench_results([200, 202, 198, 201], [170, 172, 168, 171], metric="ttft_ms")

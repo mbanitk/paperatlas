@@ -1,5 +1,10 @@
 """Serialize GPU-bound steps (benchmarks) across worker threads/processes with a Postgres
-advisory lock, so only one benchmark uses the Apple GPU at a time."""
+advisory lock, so only one benchmark uses the Apple GPU at a time.
+
+Waiters are served first-come, first-served: each takes a ticket from a sequence and holds a session-level advisory
+lock on it while it waits (so a crashed waiter's ticket disappears with its connection). Only the oldest live ticket
+may take the GPU. An experiment that releases the GPU between its own stages (smoke → tune → claim → adoption)
+gets a new ticket at the back of the queue, so it can't keep re-taking the GPU while others wait."""
 
 from __future__ import annotations
 
@@ -13,29 +18,47 @@ from paperatlas.lab.process import Cancelled, WorkerShutdown, shutting_down
 from paperatlas.settings import libpq_url
 
 GPU_LOCK_KEY = 7_242_001
+GPU_QUEUE_KEY = 7_242_004  # (GPU_QUEUE_KEY, ticket) advisory locks mark the waiters in line
+
+_HEAD_OF_LINE = """
+    SELECT min(objid::bigint) FROM pg_locks
+    WHERE locktype = 'advisory' AND classid::bigint = %s AND objsubid = 2 AND granted
+"""
 
 
 @contextmanager
 def gpu_lock(
     on_wait: Optional[Callable[[], None]] = None,
     should_cancel: Optional[Callable[[], bool]] = None,
-    poll_s: float = 5.0,
+    poll_s: float = 2.0,
 ) -> Iterator[None]:
     with psycopg.connect(libpq_url(), autocommit=True) as conn:
-        waited = False
-        while not conn.execute("SELECT pg_try_advisory_lock(%s)", (GPU_LOCK_KEY,)).fetchone()[0]:
-            if not waited and on_wait:
-                on_wait()
-            waited = True
-            if shutting_down():
-                raise WorkerShutdown("worker is shutting down")
-            if should_cancel and should_cancel():
-                raise Cancelled("cancelled while waiting for the GPU")
-            time.sleep(poll_s)
+        ticket = conn.execute("SELECT nextval('lab.gpu_ticket_seq') % 2147483647").fetchone()[0]
+        conn.execute("SELECT pg_advisory_lock(%s, %s)", (GPU_QUEUE_KEY, ticket))
+        in_line = True
         try:
-            yield
+            waited = False
+            while True:
+                head = conn.execute(_HEAD_OF_LINE, (GPU_QUEUE_KEY,)).fetchone()[0]
+                if head in (None, ticket) and conn.execute("SELECT pg_try_advisory_lock(%s)", (GPU_LOCK_KEY,)).fetchone()[0]:
+                    break
+                if not waited and on_wait:
+                    on_wait()
+                waited = True
+                if shutting_down():
+                    raise WorkerShutdown("worker is shutting down")
+                if should_cancel and should_cancel():
+                    raise Cancelled("cancelled while waiting for the GPU")
+                time.sleep(poll_s)
+            conn.execute("SELECT pg_advisory_unlock(%s, %s)", (GPU_QUEUE_KEY, ticket))
+            in_line = False
+            try:
+                yield
+            finally:
+                conn.execute("SELECT pg_advisory_unlock(%s)", (GPU_LOCK_KEY,))
         finally:
-            conn.execute("SELECT pg_advisory_unlock(%s)", (GPU_LOCK_KEY,))
+            if in_line:
+                conn.execute("SELECT pg_advisory_unlock(%s, %s)", (GPU_QUEUE_KEY, ticket))
 
 
 def gpu_utilization() -> Optional[int]:

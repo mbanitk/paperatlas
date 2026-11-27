@@ -353,6 +353,16 @@ def cmd_schedule(args: argparse.Namespace) -> None:
     print(f"installed {result}" if args.install else result)
 
 
+def cmd_validity(args: argparse.Namespace) -> None:
+    from paperatlas.lab import service
+
+    flagged = service.recheck_validity(args.experiments or None)
+    for item in flagged:
+        for warning in item["warnings"]:
+            print(f"#{item['experiment_id']}: {warning}")
+    print(f"{len(flagged)} experiment(s) with validity warnings")
+
+
 def cmd_daily(args: argparse.Namespace) -> None:
     from datetime import datetime
 
@@ -571,6 +581,12 @@ def build_parser() -> argparse.ArgumentParser:
     weekly.add_argument("--install", action="store_true")
     weekly.add_argument("--remove", action="store_true")
     weekly.set_defaults(func=cmd_schedule)
+
+    validity = r2e_sub.add_parser(
+        "validity", help="recheck judged experiments for validity warnings (e.g. results drifting on the same server)"
+    )
+    validity.add_argument("experiments", nargs="*", type=int, help="experiment ids (default: all judged)")
+    validity.set_defaults(func=cmd_validity)
 
     daily = r2e_sub.add_parser(
         "daily", help="new papers → claim cards → experiments: scan, explain, and start a batch unless one is running"

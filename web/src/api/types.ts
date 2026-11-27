@@ -650,6 +650,8 @@ export interface ExperimentSummary {
    */
   adoption_verdict?: AdoptionVerdict | string | null
   adoption_median_delta_pct?: number | null
+  /** The judge found a reason to doubt the measured difference (see VerdictDetails.validity_warnings). */
+  validity_warning?: boolean
 }
 
 /** One value of a list filter and how many experiments it would match (given the other filters). */
@@ -796,6 +798,14 @@ export interface MechanismTable {
 
 export type AdoptionVerdict = 'worth_adopting' | 'small_gain' | 'not_reproduced' | 'regression' | 'inconclusive'
 
+/** The variant's metric changed steadily from the first to the last round each server instance served. */
+export interface ServerDrift {
+  metric: string
+  variant_change_pct: number
+  baseline_change_pct: number
+  servers: number
+}
+
 export interface AdoptionResult {
   verdict: AdoptionVerdict | string
   reason: string
@@ -804,6 +814,8 @@ export interface AdoptionResult {
   ci_high_pct: number | null
   quality_ok: boolean
   quality_problems: string[]
+  validity_warnings?: string[]
+  server_drift?: ServerDrift | null
   workload?: unknown
   per_metric?: Record<string, MetricResult>
   mechanism?: MechanismTable
@@ -1081,6 +1093,9 @@ export interface VerdictDetails {
   per_metric?: Record<string, MetricResult>
   quality?: QualityInfo
   quality_problems?: string[]
+  /** Why the measured difference may not be trustworthy, e.g. the metric drifted with rounds on the same server. */
+  validity_warnings?: string[]
+  server_drift?: ServerDrift | null
   environment?: Record<string, unknown> | null
   model?: { id?: string; dtype?: string } | string | null
   workload?: string | WorkloadInfo | null

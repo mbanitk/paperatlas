@@ -407,7 +407,7 @@ export interface DecisionInput {
   claimed_gain_pct?: number | null
   quality_ok?: boolean | null
   details?:
-    | (Pick<VerdictDetails, 'worth_adopting' | 'success_threshold_pct' | 'target_pct' | 'quality_problems' | 'comparison'> & {
+    | (Pick<VerdictDetails, 'worth_adopting' | 'success_threshold_pct' | 'target_pct' | 'quality_problems' | 'validity_warnings' | 'comparison'> & {
         adoption?: Partial<NonNullable<VerdictDetails['adoption']>> | null
       })
     | null
@@ -444,6 +444,8 @@ export interface DecisionRecommendation {
   paperOnly: boolean
   /** One line for dialogs and rows: "Claim check: Partly reproduced +2.8% · Adoption check: Worse than default −63.1%". */
   recap: string
+  /** Reasons to doubt the measured difference (from the judge), shown next to the recommendation. */
+  warnings: string[]
 }
 
 const num = (value: unknown): number | null => (typeof value === 'number' && Number.isFinite(value) ? value : null)
@@ -518,6 +520,7 @@ export function recommendDecision(input: DecisionInput): DecisionRecommendation 
   const target = num(details.target_pct) ?? claimTarget(input.claimed_gain_pct, threshold)
   const size = adoption.delta !== null ? `${Math.abs(Number(adoption.delta.toFixed(1)))}%` : null
 
+  const warnings = [...new Set([...(details.validity_warnings ?? []), ...(details.adoption?.validity_warnings ?? [])])]
   let action: DecisionAction
   let reason: string
   const problems = [...new Set([...(claim.qualityOk ? [] : claim.qualityProblems), ...(adoption.qualityOk ? [] : adoption.qualityProblems)])]
@@ -527,6 +530,9 @@ export function recommendDecision(input: DecisionInput): DecisionRecommendation 
   } else if (adoptionVerdict === 'regression') {
     action = 'drop'
     reason = size ? `${metric} is ${size} worse than the current default on your workload.` : 'It made things worse than the current default on your workload.'
+  } else if (adoptionVerdict === 'worth_adopting' && warnings.length > 0) {
+    action = 'your_call'
+    reason = `${metric} measured ${size ?? 'clearly'} better than the current default, but the measurement may not hold for fresh requests (see the warning). Re-measure before merging.`
   } else if (adoptionVerdict === 'worth_adopting') {
     action = 'merge'
     reason = `${metric} is ${size ?? 'clearly'} better than the current default on your workload, with quality intact.`
@@ -557,6 +563,7 @@ export function recommendDecision(input: DecisionInput): DecisionRecommendation 
     separateAdoption: separate,
     paperOnly,
     recap,
+    warnings,
   }
 }
 
@@ -566,14 +573,19 @@ export function recommendDecision(input: DecisionInput): DecisionRecommendation 
  * `worth_adopting` and the comparison, which rows don't carry). A claim-check regression next to a
  * worth-adopting result is left open: only the detail page knows whether that regression was a quality failure.
  */
-export function recommendForSummary(summary: Pick<ExperimentSummary, 'verdict' | 'median_delta_pct' | 'claimed_gain_pct' | 'adoption_verdict' | 'adoption_median_delta_pct'>): DecisionRecommendation | null {
+export function recommendForSummary(
+  summary: Pick<ExperimentSummary, 'verdict' | 'median_delta_pct' | 'claimed_gain_pct' | 'adoption_verdict' | 'adoption_median_delta_pct' | 'validity_warning'>,
+): DecisionRecommendation | null {
   if (!summary.verdict || !summary.adoption_verdict) return null
   if (summary.verdict === 'regression' && summary.adoption_verdict === 'worth_adopting') return null
   return recommendDecision({
     verdict: summary.verdict,
     median_delta_pct: summary.median_delta_pct,
     claimed_gain_pct: summary.claimed_gain_pct,
-    details: { adoption: { verdict: summary.adoption_verdict, median_delta_pct: summary.adoption_median_delta_pct ?? null } },
+    details: {
+      adoption: { verdict: summary.adoption_verdict, median_delta_pct: summary.adoption_median_delta_pct ?? null },
+      validity_warnings: summary.validity_warning ? ['The measured difference may not hold for fresh requests.'] : [],
+    },
   })
 }
 

@@ -314,6 +314,56 @@ def test_resume_for_another_gate_is_ignored(lab):
     assert service.experiment_status(experiment_id) == "merged"
 
 
+def test_recheck_validity_flags_results_that_drift_on_the_same_server(lab):
+    from paperatlas.db.engine import session_scope
+    from paperatlas.db.schema import Run
+    from sqlalchemy import select
+
+    experiment_id = _at_gate_3(lab)
+    assert service.recheck_validity([experiment_id]) == []
+    with session_scope() as session:
+        run = session.scalars(
+            select(Run).where(Run.experiment_id == experiment_id, Run.kind == "eval").order_by(Run.id.desc())
+        ).first()
+        run.results = bench_results([9.8] * 4, [21.8, 42.5, 21.8, 42.5])
+    flagged = service.recheck_validity([experiment_id])
+    assert flagged[0]["experiment_id"] == experiment_id and "same server" in flagged[0]["warnings"][0]
+    assert service.get_experiment(experiment_id)["verdict_detail"]["details"]["validity_warnings"]
+    row = next(item for item in service.list_experiments() if item["id"] == experiment_id)
+    assert row["validity_warning"] is True
+
+
+def test_gpu_lock_serves_waiters_first_come_first_served(db):
+    import threading
+    import time
+
+    from paperatlas.lab.gpu import gpu_lock
+
+    order, holding, release = [], threading.Event(), threading.Event()
+
+    def holder():
+        with gpu_lock(poll_s=0.02):
+            holding.set()
+            release.wait(5)
+        with gpu_lock(poll_s=0.02):  # its next stage asks again straight away
+            order.append("holder again")
+
+    def waiter():
+        with gpu_lock(poll_s=0.02):
+            order.append("waiter")
+
+    first = threading.Thread(target=holder)
+    first.start()
+    assert holding.wait(5)
+    second = threading.Thread(target=waiter)
+    second.start()
+    time.sleep(0.3)  # the waiter is in line
+    release.set()
+    first.join(10)
+    second.join(10)
+    assert order == ["waiter", "holder again"]
+
+
 def test_resume_job_requeued_mid_build_continues_from_checkpoint(lab, monkeypatch):
     from paperatlas.lab.process import WorkerShutdown
 

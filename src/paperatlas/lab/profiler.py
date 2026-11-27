@@ -93,12 +93,19 @@ def profile_text(profile: dict[str, Any]) -> str:
 
 
 # The parts of lab.yaml that define the engine under test: when they change, earlier experiments ran on an older
-# engine (`r2e batch --retest` re-runs them). Other edits (e.g. `capabilities`) and merges leave it alone.
+# engine (`r2e batch --retest` re-runs them). Only the models experiments are measured on count: adding or editing
+# another profile (e.g. a draft model) adds capabilities without changing earlier results. Other edits (e.g.
+# `capabilities`) and merges leave it alone.
 ENGINE_KEYS = ("hardware", "models", "stack")
+ENGINE_MODEL_PROFILES = ("eval", "smoke")
 
 
 def engine_fingerprint(profile: dict[str, Any]) -> str:
-    return json.dumps({key: profile.get(key) for key in ENGINE_KEYS}, sort_keys=True, default=str)
+    engine = {key: profile.get(key) for key in ENGINE_KEYS}
+    models = engine["models"]
+    if isinstance(models, dict):
+        engine["models"] = {name: models[name] for name in ENGINE_MODEL_PROFILES if name in models}
+    return json.dumps(engine, sort_keys=True, default=str)
 
 
 def register_project(repo_path: str | Path, name: Optional[str] = None) -> dict[str, Any]:
