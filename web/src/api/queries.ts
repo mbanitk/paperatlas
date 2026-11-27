@@ -1,5 +1,5 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, type ClaimParams, type PaperParams, type RecommendationParams } from './client'
+import { api, type ClaimParams, type ExperimentSearchParams, type PaperParams, type RecommendationParams } from './client'
 import type {
   Claim,
   ClaimDetail,
@@ -30,6 +30,7 @@ export const keys = {
   triageList: (projectId?: number) => ['triage', 'list', projectId ?? 'all'] as const,
   triage: (id: number) => ['triage', id] as const,
   experiments: (params: { project_id?: number; status?: string }) => ['experiments', params] as const,
+  experimentSearch: (params: ExperimentSearchParams) => ['experiments', 'search', params] as const,
   experiment: (id: number) => ['experiment', id] as const,
   experimentLog: (id: number) => ['experiment', id, 'log'] as const,
   experimentChanges: (id: number, iteration: number | undefined, patch: boolean, version = '') =>
@@ -135,6 +136,15 @@ export const useExperiments = (params: { project_id?: number; status?: string })
   useQuery({
     queryKey: keys.experiments(params),
     queryFn: ({ signal }) => api.lab.experiments(params, signal),
+    refetchInterval: 30_000,
+    placeholderData: keepPreviousData,
+  })
+
+/** Filtered page of experiments with facet counts; keeps the previous page on screen while filters change. */
+export const useExperimentSearch = (params: ExperimentSearchParams) =>
+  useQuery({
+    queryKey: keys.experimentSearch(params),
+    queryFn: ({ signal }) => api.lab.searchExperiments(params, signal),
     refetchInterval: 30_000,
     placeholderData: keepPreviousData,
   })
