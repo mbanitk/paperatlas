@@ -82,6 +82,18 @@ interrupted work from its last completed step: jobs that failed while the previo
 (within `PAPERATLAS_SHUTDOWN_WINDOW_S`, default 120 s) and experiments left without a job are re-queued.
 Failures from before the shutdown stay failed. A `paperatlas r2e batch` run has to be started again.
 
+To search for new papers and test them every day (at 00:00 here), install the daily run:
+
+```bash
+paperatlas r2e schedule --daily --hour 0 --install   # launchd; --remove to uninstall
+paperatlas r2e daily --project inference-lab         # the same run, now
+```
+
+It starts the services if no worker is alive, scans (topics → discover → distill → match; papers already in the
+database are not fetched or distilled again), explains new testable claim cards, and starts a background batch
+for claims not yet tested on the current engine unless a batch is already running (only one runs per project; a
+running batch picks up new claims itself). Its log is `data/logs/daily.log`.
+
 ## Command line
 
 The CLI uses the same service layer and job queue as the console, so either can approve a gate.

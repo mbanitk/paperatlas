@@ -97,6 +97,16 @@ def test_schedule_quotes_paths_with_spaces(tmp_path):
     assert tokens[tokens.index("--project") + 1] == "demo lab"
 
 
+def test_daily_schedule_runs_every_day_and_lets_its_children_live(tmp_path):
+    from paperatlas.r2e.schedule import plist_for
+
+    plist = plist_for("demo lab", 1, 0, tmp_path, daily=True)
+    tokens = shlex.split(plist["ProgramArguments"][2])
+    assert plist["StartCalendarInterval"] == {"Hour": 0, "Minute": 0}
+    assert plist["AbandonProcessGroup"] is True
+    assert tokens[tokens.index("r2e") + 1] == "daily" and tokens[-1] == "demo lab"
+
+
 def test_temperature_rejection_on_the_last_attempt_is_resent(monkeypatch):
     from paperatlas.llm import client as llm_client
 
