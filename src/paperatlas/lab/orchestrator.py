@@ -913,8 +913,14 @@ def node_discover(state: TriageState, report) -> dict:
         per_topic=options.get("per_topic"),
         expand=options.get("expand", True),
         report=report,
+        project_id=state["project_id"],
     )
-    report("discover", f"Selected {len(stats.selected)} papers across {stats.topics} topics ({stats.text_fetched} PDFs parsed)", None)
+    report(
+        "discover",
+        f"Selected {len(stats.selected)} papers across {stats.topics} topics ({stats.text_fetched} PDFs parsed)"
+        + (f", including {len(stats.upstream)} engineering items" if stats.upstream else ""),
+        None,
+    )
     return {"options": {**options, "paper_ids": stats.selected}}
 
 

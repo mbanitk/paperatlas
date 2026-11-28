@@ -4,6 +4,7 @@ import type { Claim, ClaimExplainer, ClaimTheme, Prediction, Project } from '../
 import { effortLevel, expectedMetricLabel, fitLevel, riskLevel } from '../lib/claims'
 import { aspectLabel, claimTheme, formatReportedValue, heroResult, isPlainLanguage, paperReport, THEME_LABEL } from '../lib/explainer'
 import { formatRange, MISSING, sanitizeText } from '../lib/format'
+import { docTypeLabel } from '../lib/research'
 import { likelihoodInfo } from '../lib/roofline'
 import { CategoryChip, DocTypeChip, LevelTag, OutcomeBadge } from './Badges'
 import { ClaimCardDetails, Requirements } from './ClaimCard'
@@ -525,7 +526,7 @@ export function ClaimFacts({ claim, explainer, fit, blockers = [], max = 3, extr
     explainer?.lossless !== undefined && explainer?.lossless !== null && <LosslessBadge key="lossless" lossless={explainer.lossless} />,
     (claim.requires_cuda || claim.requires_multi_gpu || claim.requires_training) && <Requirements key="requires" claim={claim} />,
     claim.category && <CategoryChip key="category" category={claim.category} />,
-    claim.paper_doc_type === 'patent' && <DocTypeChip key="doc" docType={claim.paper_doc_type} />,
+    docTypeLabel(claim.paper_doc_type) && <DocTypeChip key="doc" docType={claim.paper_doc_type} />,
     !claim.testable && <LevelTagless key="testable">Not testable</LevelTagless>,
     ...extra,
   ].filter(Boolean)

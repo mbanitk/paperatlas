@@ -47,3 +47,16 @@ ranking:
     upvotes: 0.10
     code: 0.10
     patent: 0.05
+
+# Engineering sources: merged pull requests, release notes and blog posts of the projects a target project's stack
+# is built on. The repositories and feeds are the target's own choice (`upstream` in its lab.yaml); these settings
+# decide how much is read and kept. Each scan reads what is new since the last one, drops bug fixes, chores and
+# items about other hardware with a keyword filter (no LLM; word lists such as `perf_tags`, `noise_tags`,
+# `improvement_words`, `metric_words` and `topic_words` can be overridden here) and distills the best few.
+engineering:
+  initial_lookback_days: 14   # first run per repository / feed
+  max_pages: 5                # GitHub search pages (100 merged PRs each) per repository and run
+  min_score: 4                # keyword score an item needs (a `[Perf]` tag 3, "faster" 2, "kv cache" 1, numbers 2…)
+  per_run: 8                  # items distilled per scan (best of each repository / blog in turn; ~3 LLM calls each)
+  max_age_days: 60            # undistilled items older than this are no longer selected
+  release_lines: 40           # performance lines kept per release

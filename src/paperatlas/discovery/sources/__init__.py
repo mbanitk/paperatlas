@@ -16,6 +16,9 @@ SOURCE_TYPES: dict[str, type[HttpSource]] = {
     "hf_papers": HuggingFacePapersSource,
     "patents": UsptoPatentSource,
 }
+# `source` values of the engineering items a project's `upstream` brings in (discovery/upstream.py); they are not
+# searched per topic query like the sources above.
+ENGINEERING_SOURCES = ("github_pr", "github_release", "engineering_blog")
 
 
 def build_sources(names: Iterable[str]) -> list[Source]:
@@ -25,4 +28,4 @@ def build_sources(names: Iterable[str]) -> list[Source]:
     return [SOURCE_TYPES[name]() for name in names]
 
 
-__all__ = ["SOURCE_TYPES", "Source", "build_sources"]
+__all__ = ["ENGINEERING_SOURCES", "SOURCE_TYPES", "Source", "build_sources"]

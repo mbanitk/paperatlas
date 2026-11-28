@@ -17,6 +17,11 @@ flowchart LR
 - **Discover** — auto-picks the top trending topics inside the seed areas in
   [`src/paperatlas/config/r2e.yaml`](src/paperatlas/config/r2e.yaml) using arXiv, Semantic Scholar,
   OpenAlex, Hugging Face Papers and USPTO patents; ranks papers per topic and fetches full text.
+  For a project scan it also reads the project's **engineering sources** (`upstream` in its `lab.yaml`): merged
+  pull requests and release notes of the repositories its stack is built on and engineering / research blogs, new
+  since the last scan. A keyword filter (no LLM) keeps only performance changes — `[Perf]` tags, words such as
+  *faster*, *fused* or *kv cache*, reported numbers (1.3x, +18% throughput, tok/s, ms) — and drops bug fixes, chores
+  and items about hardware the project doesn't run; the best few per scan are distilled like papers.
 - **Distill** — one structured LLM call per paper produces technical concepts, each with a
   *claim card*: technique, change required, claimed effects (value/unit/direction/baseline),
   paper setup, prerequisites (CUDA, multi-GPU, training), effort, risks and a verbatim evidence quote.
@@ -99,8 +104,8 @@ paperatlas r2e schedule --daily --hour 0 --install   # launchd; --remove to unin
 paperatlas r2e daily --project inference-lab         # the same run, now
 ```
 
-It starts the services if no worker is alive, scans (topics → discover → distill → match; papers already in the
-database are not fetched or distilled again), explains new testable claim cards, and starts a background batch
+It starts the services if no worker is alive, scans (topics → discover, including the project's engineering sources
+→ distill → match; papers already in the database are not fetched or distilled again), explains new testable claim cards, and starts a background batch
 for claims not yet tested on the current engine unless a batch is already running (only one runs per project; a
 running batch picks up new claims itself). Its log is `data/logs/daily.log`.
 
@@ -123,6 +128,8 @@ paperatlas r2e status --filter needs_you
 Without `paperatlas services up`, run jobs with `paperatlas r2e worker` (or add `--inline`).
 Individual stages: `paperatlas r2e topics refresh`, `paperatlas r2e discover`,
 `paperatlas r2e distill`, `paperatlas r2e claims --q "kv cache"`, `paperatlas r2e match`,
+`paperatlas r2e upstream --project inference-lab [--dry-run] [--lab-yaml PATH]` (the engineering sources alone: what
+was read, kept and dropped per repository and feed; `--lab-yaml` tries an `upstream` list before re-profiling),
 `paperatlas r2e digest --project inference-lab` (weekly HTML digest),
 `paperatlas r2e assets --project inference-lab [--reprofile] [--dry-run]` (pre-screen the matched claims for
 missing assets and report which would be held back; classifications are stored per claim text, so only new or
@@ -159,13 +166,47 @@ Re-profiling (`paperatlas r2e project profile <name>` or the console's Re-profil
 it without LLM calls. Only changes to `hardware`, `models` or `stack` count as a new engine for
 `r2e batch --retest`.
 
+`upstream` (optional) lists the engineering sources of the project: the GitHub repositories its stack is built on
+(their merged pull requests and release notes) and blogs (RSS or Atom). `exclude` drops items about hardware or
+backends the project doesn't run — matched in title tags such as `[CUDA]`, `cuda:`, titles and PR labels — unless
+they also mention an `include` term. inference-lab's entry:
+
+```yaml
+upstream:
+  github:
+    - ml-explore/mlx
+    - ml-explore/mlx-lm
+    - ggml-org/llama.cpp   # releases are per-commit pre-releases (skipped by default); its merged PRs carry the changes
+    - vllm-project/vllm
+    - sgl-project/sglang
+    # long form: {repo: owner/name, pulls: true, releases: true, prereleases: false}
+  feeds:
+    - {name: Apple Machine Learning Research, url: "https://machinelearning.apple.com/rss.xml"}
+  exclude: [CUDA, ROCm, HIP, AMD, NVIDIA, NPU, XPU, TPU, Intel, Ascend, Vulkan, SYCL, OpenCL, Hexagon, zDNN, WebGPU,
+            OpenVINO, MUSA, MLU, Blackwell, Hopper, H20, H100, H200, B200, B300, GB200, GB300, MI300, MI325, MI350,
+            MI355, SM90, SM100, SM120, Triton, FlashInfer, CUTLASS, CuTeDSL, DeepGEMM, Marlin, NCCL, RDMA, NIXL,
+            Mooncake, ggml-cpu, SVE, AVX, VNNI, s390x, RISC-V, tensor parallel, pipeline parallel, expert parallel,
+            EPLB, disaggregation, disaggregated, multi-node, diffusion]
+  include: [Metal, MLX, Apple, apple-silicon]
+```
+
+Items are stored like papers with `doc_type` `pull_request`, `release` or `blog` and `source` `github_pr`,
+`github_release` or `engineering_blog` (so their yield can be compared with the paper sources), with ids such as
+`github:vllm-project/vllm/pull/123`. Each scan reads only what is new since the previous one (cursors in
+`<data dir>/r2e/upstream-cursors.json`; the first run looks back `engineering.initial_lookback_days`) and distills
+`engineering.per_run` items, the best of each repository and blog in turn in the order listed; the rest wait for
+the next scans. How much is read and kept is set under `engineering` in `r2e.yaml`.
+
 ## Configuration
 
 Environment variables (or `.env`, see [`.env.example`](.env.example)):
 `OPENAI_API_KEY`/`PAPERATLAS_LLM_API_KEY`, `PAPERATLAS_LLM_MODEL`, `PAPERATLAS_DATABASE_URL`,
 `PAPERATLAS_S2_API_KEY`, `PAPERATLAS_OPENALEX_API_KEY`, `PAPERATLAS_USPTO_API_KEY`,
 `PAPERATLAS_BUILDER` (`copilot`/`codex`), service ports and worker concurrency.
-Without source keys, Semantic Scholar is rate limited and patents are skipped.
+Without source keys, Semantic Scholar is rate limited and patents are skipped. Engineering sources use a GitHub
+token from `GITHUB_TOKEN`, `GH_TOKEN` or `PAPERATLAS_GITHUB_TOKEN`, else `gh auth token`; without one GitHub allows
+60 requests an hour and 10 searches a minute, and when the limit is reached the remaining repositories wait for the
+next scan.
 
 `PAPERATLAS_LLM_PROVIDER` selects the LLM: `openai` (needs `OPENAI_API_KEY`), `copilot` (the GitHub
 Copilot CLI, no key), or an ordered fallback list such as `openai,copilot`, which uses Copilot when an OpenAI
@@ -182,7 +223,8 @@ python -m paperatlas.concepts.extraction.generate --limit 50               # sam
 ```
 
 Papers, claim cards and the LLM response cache (`research.llm_cache`) all live in PostgreSQL;
-`PAPERATLAS_DATA_DIR` only holds experiment worktrees, run logs/artifacts, reports and digests.
+`PAPERATLAS_DATA_DIR` only holds experiment worktrees, run logs/artifacts, reports, digests and the engineering-source
+cursors (losing them only makes the next scan look back `initial_lookback_days` again).
 
 ## Tests
 

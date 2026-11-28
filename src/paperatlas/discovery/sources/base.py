@@ -28,7 +28,9 @@ class Source(Protocol):
 
 
 class SourceError(RuntimeError):
-    pass
+    def __init__(self, message: str, response: Optional[httpx.Response] = None) -> None:
+        super().__init__(message)
+        self.response = response
 
 
 class HttpSource:
@@ -81,7 +83,7 @@ class HttpSource:
                 time.sleep(min(delay, 30.0))
                 continue
             if response.status_code >= 400:
-                raise SourceError(f"HTTP {response.status_code}: {response.text[:200]}")
+                raise SourceError(f"HTTP {response.status_code}: {response.text[:200]}", response)
             return response
         raise SourceError("retries exhausted")
 

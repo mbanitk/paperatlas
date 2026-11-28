@@ -14,6 +14,7 @@ import { Link } from 'react-router'
 import type { Effort, ExperimentStatus } from '../api/types'
 import { formatAcronyms, formatCI, formatPct, humanize, humanizeMetric } from '../lib/format'
 import { assetBlockerItems, needsSentence } from '../lib/assets'
+import { docTypeLabel } from '../lib/research'
 import { isCostModelBlocker } from '../lib/roofline'
 import {
   adoptionSemantics,
@@ -29,7 +30,7 @@ import {
   statusSemantics,
   type SemanticInfo,
 } from '../lib/semantics'
-import { AlertIcon, ArrowDownIcon, ArrowUpIcon, FileIcon, Glyph, SemanticIcon } from './Icons'
+import { AlertIcon, ArrowDownIcon, ArrowUpIcon, BookIcon, FileIcon, Glyph, MergeIcon, SemanticIcon } from './Icons'
 import { Tooltip, Truncate } from './Tooltip'
 import { CHIP_TARGET, cx, TONE_CLASSES, TONE_TEXT } from './ui'
 
@@ -278,8 +279,10 @@ export function BlockerBadge({ blocker }: { blocker: string }) {
 }
 
 export function DocTypeChip({ docType }: { docType: string | null | undefined }) {
-  if (docType !== 'patent') return null
-  return <Tag icon={<FileIcon size={12} className="shrink-0" />}>Patent</Tag>
+  const label = docTypeLabel(docType)
+  if (!label) return null
+  const Icon = docType === 'pull_request' ? MergeIcon : docType === 'blog' ? BookIcon : FileIcon
+  return <Tag icon={<Icon size={12} className="shrink-0" />}>{label}</Tag>
 }
 
 export function LiveDot({ status }: { status: string }) {
