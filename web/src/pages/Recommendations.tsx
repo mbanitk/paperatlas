@@ -94,7 +94,7 @@ function ScanDialog({ open, onClose, projectId, onStarted }: { open: boolean; on
       }
     >
       <p className="mb-4 text-muted">
-        Finds recent papers and patents on the trending topics, summarises them into claim cards and re-ranks them for this project. It ends here
+        Finds recent papers and patents on the trending topics, plus performance changes from the project's upstream repositories and blogs (merged pull requests, release notes, posts), summarises them into claim cards and re-ranks them for this project. It ends here
         at Gate 1 with a fresh shortlist. It runs on the worker and takes several minutes; you can leave this page.
       </p>
       <div className="space-y-4">

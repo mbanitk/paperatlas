@@ -22,7 +22,7 @@ from paperatlas.llm.client import LLMClient, LLMError
 logger = logging.getLogger(__name__)
 _EMBED_LOCK = threading.Lock()
 
-SYSTEM_PROMPT = """You are a senior ML-systems researcher reviewing a research paper or patent for an \
+SYSTEM_PROMPT = """You are a senior ML-systems researcher reviewing {document} for an \
 engineering team that builds and operates LLM inference services.
 
 Extract between {min_concepts} and {max_concepts} distinct technical concepts from the document: \
@@ -60,6 +60,16 @@ and where it appears (section, table or figure).
 
 Write neutral, precise technical language. Do not write marketing copy, social-media posts, hooks, \
 emojis or calls to action. Concepts must be distinct; merge near-duplicates."""
+
+
+PAPER_DOCUMENT = "a research paper or patent"
+# Engineering documents (discovery/upstream.py) describe one or a few changes, so they get fewer concepts.
+ENGINEERING_DOCUMENTS = {
+    "pull_request": "a merged pull request of an open-source project (its description and benchmarks)",
+    "release": "the performance-related lines of an open-source project's release notes",
+    "blog": "an engineering or research blog post",
+}
+ENGINEERING_MAX_CONCEPTS = 4
 
 
 def build_user_prompt(row: dict[str, Any], max_chars: int) -> str:
@@ -119,9 +129,15 @@ class ClaimExtractor:
         return [concepts[item["index"]] for item in unique][: self.max_concepts]
 
     def _extract_llm(self, row: dict[str, Any]) -> list[DistilledConcept]:
-        system = SYSTEM_PROMPT.format(
-            min_concepts=self.min_concepts, max_concepts=self.max_concepts
-        )
+        document = ENGINEERING_DOCUMENTS.get(row.get("doc_type") or "")
+        if document:
+            system = SYSTEM_PROMPT.format(
+                document=document, min_concepts=1, max_concepts=min(ENGINEERING_MAX_CONCEPTS, self.max_concepts)
+            )
+        else:
+            system = SYSTEM_PROMPT.format(
+                document=PAPER_DOCUMENT, min_concepts=self.min_concepts, max_concepts=self.max_concepts
+            )
         payload = self.client.generate_json(
             system,
             build_user_prompt(row, self.max_chars),

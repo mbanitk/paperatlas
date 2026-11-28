@@ -2,21 +2,24 @@
 
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Optional, Sequence
 
 import numpy as np
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from paperatlas.concepts.extraction.pipeline import download_pdf_text
 from paperatlas.db.engine import session_scope
 from paperatlas.db.schema import Paper, PaperTopic, Topic
 from paperatlas.db.store import PaperStore
-from paperatlas.discovery.config import R2EConfig, load_config
-from paperatlas.discovery.sources import Source, build_sources
+from paperatlas.discovery.config import EngineeringSettings, R2EConfig, load_config
+from paperatlas.discovery.sources import ENGINEERING_SOURCES, Source, build_sources
 from paperatlas.discovery.topics import Reporter, ensure_paper_embeddings, log_reporter
+
+logger = logging.getLogger(__name__)
 
 EXPAND_MIN_RELEVANCE = 0.45
 
@@ -27,6 +30,7 @@ class DiscoverStats:
     candidates: int = 0
     selected: list[str] = field(default_factory=list)
     text_fetched: int = 0
+    upstream: list[str] = field(default_factory=list)
 
 
 def paper_score(
@@ -51,6 +55,59 @@ def paper_score(
         "patent": 1.0 if is_patent else 0.0,
     }
     return round(sum(weights.get(key, 0.0) * value for key, value in features.items()), 4)
+
+
+def upstream_score(
+    signal: float, max_signal: float, relevance: float, publication_date: Optional[date], half_life_days: float
+) -> float:
+    """Engineering item: keyword signal (relative to the best candidate), closeness to the project, recency."""
+    age = (date.today() - publication_date).days if publication_date else half_life_days * 3
+    recency = math.exp(-max(age, 0) * math.log(2) / half_life_days)
+    signal_part = signal / max_signal if max_signal > 0 else 0.0
+    return round(0.4 * signal_part + 0.4 * max(relevance, 0.0) + 0.2 * recency, 4)
+
+
+def rank_upstream(
+    venues: Sequence[str],
+    settings: EngineeringSettings,
+    project_vector: Optional[np.ndarray] = None,
+    limit: Optional[int] = None,
+) -> list[tuple[str, float]]:
+    """Undistilled engineering items of these repositories / blogs: the best of each in turn, in the order the
+    project lists them (so one busy repository can't take every slot).
+
+    Items not distilled in one run stay candidates for the next until they are `max_age_days` old."""
+    venues = list(dict.fromkeys(venues))
+    if not venues:
+        return []
+    oldest = date.today() - timedelta(days=settings.max_age_days)
+    with session_scope() as session:
+        rows = session.execute(
+            select(Paper.paper_id, Paper.venue, Paper.publication_date, Paper.source_payload, Paper.embedding).where(
+                Paper.sources.overlap(list(ENGINEERING_SOURCES)),
+                Paper.venue.in_(list(venues)),
+                Paper.distilled_at.is_(None),
+                or_(Paper.publication_date.is_(None), Paper.publication_date >= oldest),
+            )
+        ).all()
+    signals = {row.paper_id: float(((row.source_payload or {}).get("upstream") or {}).get("score") or settings.min_score) for row in rows}
+    max_signal = max(signals.values(), default=0.0)
+    queues: dict[str, list[tuple[float, str]]] = {venue: [] for venue in venues}
+    for row in rows:
+        relevance = 0.0
+        if project_vector is not None and row.embedding is not None:
+            relevance = float(np.asarray(row.embedding, dtype=np.float32) @ project_vector)
+        score = upstream_score(signals[row.paper_id], max_signal, relevance, row.publication_date, settings.max_age_days / 2)
+        queues[row.venue].append((score, row.paper_id))
+    for queue in queues.values():
+        queue.sort(reverse=True)
+    chosen: list[tuple[str, float]] = []
+    while any(queues.values()) and (limit is None or len(chosen) < limit):
+        for venue in venues:
+            if queues[venue] and (limit is None or len(chosen) < limit):
+                score, paper_id = queues[venue].pop(0)
+                chosen.append((paper_id, score))
+    return chosen
 
 
 def expand_topic(topic: Topic, sources: Sequence[Source], since: date, per_query: int) -> int:
@@ -124,7 +181,9 @@ def discover(
     config: Optional[R2EConfig] = None,
     sources: Optional[Sequence[Source]] = None,
     report: Reporter = log_reporter,
+    project_id: Optional[int] = None,
 ) -> DiscoverStats:
+    """Rank papers per topic (and fetch their text); with a project, also bring in its upstream engineering items."""
     config = config or load_config()
     per_topic = per_topic or config.ranking.per_topic
     sources = sources if sources is not None else build_sources(config.sources)
@@ -160,5 +219,16 @@ def discover(
                 if text:
                     store.set_raw_text(row["paper_id"], text)
                     stats.text_fetched += 1
+    if project_id is not None:
+        from paperatlas.discovery.upstream import discover_upstream
+
+        try:
+            upstream = discover_upstream(project_id, config=config, report=report, fetch_text=fetch_text)
+        except Exception as exc:  # noqa: BLE001 - engineering sources are extra; papers still go on to distill
+            logger.exception("Engineering sources failed")
+            report("discover", f"Engineering sources skipped: {exc}", None)
+        else:
+            stats.upstream = upstream.selected
+            stats.selected.extend(upstream.selected)
     stats.selected = list(dict.fromkeys(stats.selected))
     return stats

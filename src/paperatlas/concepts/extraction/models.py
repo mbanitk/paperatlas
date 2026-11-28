@@ -4,6 +4,7 @@ import hashlib
 import re
 from datetime import date
 from typing import Dict, List, Optional
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field, HttpUrl
 
@@ -36,8 +37,12 @@ class PaperMetadata(BaseModel):
     hf_upvotes: Optional[int] = None
     keywords: List[str] = Field(default_factory=list)
     source: str
+    # Stable id for documents without a DOI / arXiv id (e.g. "github:owner/repo/pull/123"); used as the paper id.
+    doc_id: Optional[str] = None
 
     def canonical_id(self) -> str:
+        if self.doc_id:
+            return self.doc_id
         if self.patent_number:
             return f"patent:{self.patent_number.strip().upper()}"
         return canonical_paper_id(
@@ -57,6 +62,16 @@ class PaperIdentifier(BaseModel):
     doi: Optional[str] = None
     arxiv_id: Optional[str] = None
     openalex_id: Optional[str] = None
+
+
+def normalize_url(url: str) -> str:
+    """Scheme-less, lower-case host, no query/fragment/trailing slash: one id per web page."""
+    parsed = urlparse(url.strip())
+    return f"{parsed.netloc.lower().removeprefix('www.')}{parsed.path.rstrip('/')}"
+
+
+def blog_post_id(url: str) -> str:
+    return f"blog:{hashlib.sha1(normalize_url(url).encode('utf-8')).hexdigest()}"
 
 
 def canonical_paper_id(doi: Optional[str], arxiv_id: Optional[str], fallback: str) -> str:

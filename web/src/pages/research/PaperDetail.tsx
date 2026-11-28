@@ -31,7 +31,7 @@ import {
 } from '../../components/ui'
 import { readingPathParts } from '../../lib/conceptMap'
 import { formatDate, formatNumber, MISSING, pluralize, sanitizeText } from '../../lib/format'
-import { experimentsByClaim, formatResultValue, paperShortLabel, sourceLabel } from '../../lib/research'
+import { documentLinkLabel, experimentsByClaim, formatResultValue, paperShortLabel, sourceLabel } from '../../lib/research'
 
 const BREADCRUMB_ROOT = [
   { label: 'Research', to: '/research' },
@@ -42,7 +42,7 @@ function Links({ data, className }: { data: PaperDetail; className?: string }) {
   if (!data.url && !data.pdf_url && !data.code_url) return null
   return (
     <div className={cx('flex flex-wrap items-center gap-x-4 gap-y-1 text-sm', className)}>
-      {data.url && <ExternalLink href={data.url} className="inline-flex min-h-6 items-center">{data.doc_type === 'patent' ? 'Patent page' : data.paper_id.startsWith('blog:') ? 'Original post' : 'Paper page'}</ExternalLink>}
+      {data.url && <ExternalLink href={data.url} className="inline-flex min-h-6 items-center">{documentLinkLabel(data.doc_type, data.paper_id)}</ExternalLink>}
       {data.pdf_url && <ExternalLink href={data.pdf_url} className="inline-flex min-h-6 items-center">PDF</ExternalLink>}
       {data.code_url && <ExternalLink href={data.code_url} className="inline-flex min-h-6 items-center">Code</ExternalLink>}
     </div>

@@ -3,6 +3,8 @@ import type { Claim, ExperimentSummary, Recommendation } from '../api/types'
 import {
   bestClaims,
   claimedFigure,
+  docTypeLabel,
+  documentLinkLabel,
   experimentsByClaim,
   formatResultValue,
   isAutoDescription,
@@ -142,5 +144,17 @@ describe('paperShortLabel', () => {
     expect(paperShortLabel('arxiv:2610.07659')).toBe('arXiv 2610.07659')
     expect(paperShortLabel('blog:c4b61c85055853a6740e3f0de459554c9e7fb2d8')).toBe('Blog post')
     expect(paperShortLabel('patent:US1234567B2', 'patent')).toBe('Patent')
+    expect(paperShortLabel('github:vllm-project/vllm/pull/63590', 'pull_request')).toBe('vllm #63590')
+    expect(paperShortLabel('github:ml-explore/mlx/releases/v0.32.5', 'release')).toBe('mlx v0.32.5')
+  })
+})
+
+describe('document kinds', () => {
+  it('labels engineering documents and links to their own page', () => {
+    expect(docTypeLabel('paper')).toBeNull()
+    expect(docTypeLabel('pull_request')).toBe('Pull request')
+    expect(documentLinkLabel('release', 'github:ml-explore/mlx/releases/v0.32.5')).toBe('Release notes')
+    expect(documentLinkLabel('blog', 'blog:abc')).toBe('Original post')
+    expect(documentLinkLabel('paper', 'arxiv:2610.07659')).toBe('Paper page')
   })
 })

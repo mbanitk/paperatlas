@@ -103,9 +103,56 @@ def cmd_topics(args: argparse.Namespace) -> None:
 
 def cmd_discover(args: argparse.Namespace) -> None:
     from paperatlas.discovery.ranking import discover
+    from paperatlas.lab.profiler import get_project
 
-    stats = discover(args.topic, args.per_topic, expand=not args.no_expand, fetch_text=not args.no_text)
+    project_id = get_project(args.project).id if args.project else None
+    stats = discover(args.topic, args.per_topic, expand=not args.no_expand, fetch_text=not args.no_text, project_id=project_id)
     print(f"{len(stats.selected)} papers selected across {stats.topics} topics; {stats.text_fetched} PDFs parsed")
+    if args.project:
+        print(f"{len(stats.upstream)} of them from the project's engineering sources")
+
+
+def cmd_upstream(args: argparse.Namespace) -> None:
+    from collections import defaultdict
+
+    from paperatlas.discovery.upstream import discover_upstream, read_lab_upstream
+    from paperatlas.lab.profiler import get_project
+
+    if not args.project and not args.lab_yaml:
+        sys.exit("give --project (its registered lab.yaml) or --lab-yaml PATH")
+    project_id = get_project(args.project).id if args.project else None
+    upstream = read_lab_upstream(args.lab_yaml) if args.lab_yaml else None
+    stats = discover_upstream(
+        project_id, upstream=upstream, dry_run=args.dry_run, report=lambda stage, message, data=None: print(message)
+    )
+    _table(
+        [vars(result) for result in stats.results],
+        [("name", "source", 40), ("fetched", "read", 5), ("kept", "kept", 5), ("new", "new", 4), ("truncated", "more?", 6), ("error", "error", 50)],
+    )
+    print(f"\n{stats.fetched} read, {len(stats.kept)} kept" + (" (dry run: nothing stored)" if args.dry_run else f", {len(stats.stored)} stored"))
+    for candidate in sorted(stats.kept, key=lambda c: -c.assessment.score)[: args.examples]:
+        print(f"  + {candidate.assessment.score:4.1f}  {candidate.metadata.title[:100]}  [{candidate.origin}; {'; '.join(candidate.assessment.reasons)}]")
+    by_reason: dict[str, list] = defaultdict(list)
+    for candidate in sorted(stats.dropped, key=lambda c: -c.assessment.score):
+        reason = next((r.split(":")[0] for r in candidate.assessment.reasons if r.startswith(("not this", "bug fix", "chore", "title not", "no performance"))), "score too low")
+        by_reason[reason].append(candidate)
+    for reason, items in sorted(by_reason.items(), key=lambda item: -len(item[1])):
+        print(f"  dropped, {reason}: {len(items)}")
+        for candidate in items[: max(1, args.examples // 4)]:
+            print(f"    - {candidate.metadata.title[:100]}  [{candidate.origin}]")
+    if stats.selected:
+        print(f"\nNext to distill ({len(stats.selected)}): " + ", ".join(stats.selected))
+    if args.json:
+        def items(candidates: list) -> list[dict[str, Any]]:
+            return [
+                {"id": c.paper_id, "title": c.metadata.title, "origin": c.origin, "score": c.assessment.score, "reasons": c.assessment.reasons}
+                for c in candidates
+            ]
+
+        result = {"results": [vars(r) for r in stats.results], "kept": items(stats.kept), "dropped": items(stats.dropped), "selected": stats.selected}
+        with open(args.json, "w", encoding="utf-8") as handle:
+            json.dump(result, handle, indent=2, default=str)
+        print(f"\nreport written to {args.json}")
 
 
 def cmd_distill(args: argparse.Namespace) -> None:
@@ -401,7 +448,20 @@ def build_parser() -> argparse.ArgumentParser:
     discover.add_argument("--per-topic", type=int)
     discover.add_argument("--no-expand", action="store_true")
     discover.add_argument("--no-text", action="store_true")
+    discover.add_argument("--project", help="also bring in this project's engineering sources (lab.yaml `upstream`)")
     discover.set_defaults(func=cmd_discover)
+
+    upstream = r2e_sub.add_parser(
+        "upstream",
+        help="engineering sources: merged PRs, release notes and blog posts of a project's upstreams (new since "
+        "the last run), filtered for performance changes",
+    )
+    upstream.add_argument("--project", help="registered project (its lab.yaml `upstream` section)")
+    upstream.add_argument("--lab-yaml", help="read `upstream` from this lab.yaml instead (try a list before re-profiling)")
+    upstream.add_argument("--dry-run", action="store_true", help="read and filter only: store nothing, keep the cursors")
+    upstream.add_argument("--examples", type=int, default=12, help="kept / dropped titles to print")
+    upstream.add_argument("--json", help="also write the full report to this JSON file")
+    upstream.set_defaults(func=cmd_upstream)
 
     distill = r2e_sub.add_parser("distill", help="papers → concepts → claim cards")
     from paperatlas.concepts.extraction.generate import add_arguments

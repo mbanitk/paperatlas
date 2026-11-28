@@ -191,9 +191,31 @@ const SOURCE_LABELS: Record<string, string> = {
   hf_papers: 'Hugging Face Papers',
   patents: 'Patents',
   blogs: 'Blogs',
+  github_pr: 'GitHub pull requests',
+  github_release: 'GitHub releases',
+  engineering_blog: 'Engineering blogs',
 }
 
 export const sourceLabel = (source: string) => SOURCE_LABELS[source] ?? capitalise(source.replace(/_/g, ' '))
+
+/** What kind of document a "paper" is, when it isn't a research paper (null for papers). */
+const DOC_TYPE_LABELS: Record<string, string> = {
+  patent: 'Patent',
+  pull_request: 'Pull request',
+  release: 'Release notes',
+  blog: 'Blog post',
+}
+
+export const docTypeLabel = (docType: string | null | undefined): string | null => (docType ? (DOC_TYPE_LABELS[docType] ?? null) : null)
+
+/** Link text for a document's own page. */
+export function documentLinkLabel(docType: string | null | undefined, paperId: string): string {
+  if (docType === 'patent') return 'Patent page'
+  if (docType === 'pull_request') return 'Pull request'
+  if (docType === 'release') return 'Release notes'
+  if (docType === 'blog' || paperId.startsWith('blog:')) return 'Original post'
+  return 'Paper page'
+}
 
 /** Short label for a paper id (breadcrumbs): "arxiv:2610.07659" → "arXiv 2610.07659", "blog:3f…" → "Blog post". */
 export function paperShortLabel(paperId: string, docType?: string | null): string {
@@ -207,6 +229,13 @@ export function paperShortLabel(paperId: string, docType?: string | null): strin
       return `DOI ${id}`
     case 'blog':
       return 'Blog post'
+    case 'github': {
+      // github:owner/repo/pull/123 → "repo #123"; github:owner/repo/releases/v1.2 → "repo v1.2"
+      const [, repo, kind, ...ref] = id.split('/')
+      if (repo && kind === 'pull' && ref.length) return `${repo} #${ref.join('/')}`
+      if (repo && kind === 'releases' && ref.length) return `${repo} ${ref.join('/')}`
+      return 'GitHub'
+    }
     default:
       return docType === 'patent' ? 'Patent' : /^[\w.-]{1,24}$/.test(id) ? `${capitalise(prefix)} ${id}` : capitalise(prefix)
   }
